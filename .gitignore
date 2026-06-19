@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.DS_Store
+Thumbs.db
+
+# Generated simulation runs can be large. Keep reproducible scripts and
+# curated summaries in git, but leave raw run folders local unless promoted.
+runs/
+tesla_369_lab/runs/
