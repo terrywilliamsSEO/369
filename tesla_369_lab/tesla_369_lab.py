@@ -9734,15 +9734,36 @@ def bridge_control_authority_template(correction_type: str,
 def bridge_control_authority_correction(config: BridgeControlAuthorityConfig, t: float,
                                         runtime: float, random_correction: float) -> float:
     start_t = config.correction_start_fraction * runtime
-    if config.schedule_type == "no_correction":
+    if config.schedule_type in ("no_correction", "no_feedforward"):
         return 0.0
-    if config.schedule_type == "random_correction":
+    if config.schedule_type in ("random_correction", "random_ramp"):
         return 0.0 if t < start_t else random_correction
     if t < start_t:
         return 0.0
+    ramp_t = max(1e-9, config.ramp_fraction * runtime)
+    progress = min(1.0, max(0.0, (t - start_t) / ramp_t))
+    if config.schedule_type == "linear_ramp":
+        return config.correction_size * progress
+    if config.schedule_type == "piecewise_linear_ramp":
+        if progress < 0.5:
+            return config.correction_size * 0.70 * (progress / 0.5)
+        return config.correction_size * (0.70 + 0.30 * ((progress - 0.5) / 0.5))
+    if config.schedule_type in ("s_curve_ramp", "slow_s_curve_ramp"):
+        smooth = progress * progress * (3.0 - 2.0 * progress)
+        return config.correction_size * smooth
+    if config.schedule_type == "hold_after_capture_ramp":
+        capture_progress = min(1.0, progress / 0.35)
+        smooth = capture_progress * capture_progress * (3.0 - 2.0 * capture_progress)
+        return config.correction_size * smooth
+    if config.schedule_type == "two_stage_ramp":
+        if progress < 0.35:
+            local = progress / 0.35
+            return 0.55 * config.correction_size * (local * local * (3.0 - 2.0 * local))
+        if progress < 0.70:
+            return 0.55 * config.correction_size
+        local = (progress - 0.70) / 0.30
+        return config.correction_size * (0.55 + 0.45 * (local * local * (3.0 - 2.0 * local)))
     if config.schedule_type in ("slow_ramp", "hold_after_ramp"):
-        ramp_t = max(1e-9, config.ramp_fraction * runtime)
-        progress = min(1.0, max(0.0, (t - start_t) / ramp_t))
         smooth = 0.5 - 0.5 * math.cos(math.pi * progress)
         return config.correction_size * smooth
     return config.correction_size
@@ -10510,6 +10531,753 @@ def experiment_bridge_control_authority(out_dir: Path, seed: int, quick: bool = 
 
 
 # ----------------------------
+# Experiment 19: bridge drift feedforward
+# ----------------------------
+
+@dataclass
+class BridgeDriftFeedforwardConfig:
+    name: str
+    ramp_type: str
+    correction_type: str
+    base_config: BridgeMinNudgeConfig
+    ramp_size: float
+    ramp_shape: str
+    ramp_start_fraction: float = 0.18
+    ramp_end_fraction: float = 0.74
+    correction_clamp: float = 0.024
+    authority_gain_prior: float = 0.0
+    estimated_required_ramp_size: float = 0.0
+    runtime_factor: float = 4.0
+    seed_family: str = "base"
+    reference_role: str = "discovery_candidate"
+    family: str = "369"
+    control_role: str = "feedforward"
+    note: str = ""
+
+
+BRIDGE_DRIFT_FEEDFORWARD_ACTUATORS = {
+    "receiver_tuning_ramp": ("receiver_tuning_nudge", -19.31761912417351),
+    "stage_B_detuning_ramp": ("stage_B_detuning_nudge", 6.240033006222204),
+    "magnetic_bias_ramp": ("magnetic_bias_nudge", 6.590793278913237),
+}
+
+
+def bridge_drift_feedforward_signed_drift(summary: Dict[str, float | str]) -> float:
+    drift = float(summary.get("phase_drift_rate", 0.0))
+    direction = str(summary.get("drift_direction", "flat"))
+    if direction == "negative":
+        return -drift
+    if direction == "positive":
+        return drift
+    return 0.0
+
+
+def bridge_drift_feedforward_template(seed_family: str,
+                                      receiver_tuning: float = 8.90,
+                                      phase_bias: float = 30.0,
+                                      stage_b_strength: float = 0.84,
+                                      stage_b_detuning: float = 0.0,
+                                      magnetic_bias_strength: float = 2.0,
+                                      reference_role: str = "discovery_candidate",
+                                      family: str = "369") -> BridgeMinNudgeConfig:
+    return bridge_control_authority_template(
+        "receiver_tuning_nudge",
+        seed_family,
+        receiver_tuning=receiver_tuning,
+        phase_bias=phase_bias,
+        stage_b_strength=stage_b_strength,
+        stage_b_detuning=stage_b_detuning,
+        magnetic_bias_strength=magnetic_bias_strength,
+        reference_role=reference_role,
+        family=family,
+    )
+
+
+def bridge_drift_feedforward_seed_templates(quick: bool, include_sweeps: bool) -> List[Tuple[str, BridgeMinNudgeConfig]]:
+    seeds = [
+        ("receiver_best_4x_raw", bridge_drift_feedforward_template("receiver_best_4x_raw", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("magnetic_best_low_work", bridge_drift_feedforward_template("magnetic_best_low_work", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("stageB_best_budget_clean", bridge_drift_feedforward_template("stageB_best_budget_clean", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("autolock_seed_s0p9", bridge_drift_feedforward_template("autolock_seed_s0p9", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.90)),
+        ("magnetic_stageB0p84_lead", bridge_drift_feedforward_template("magnetic_stageB0p84_lead", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+    ]
+    if include_sweeps:
+        receiver_values = [8.86, 8.90, 8.93] if quick else [8.86, 8.875, 8.90, 8.915, 8.93]
+        phase_values = [15.0, 25.0, 35.0] if quick else [15.0, 20.0, 25.0, 30.0, 35.0]
+        strength_values = [0.80, 0.84, 0.94] if quick else [0.80, 0.84, 0.88, 0.90, 0.94]
+        for receiver in receiver_values:
+            seeds.append((f"sweep_receiver_{safe_token(receiver)}", bridge_drift_feedforward_template(f"sweep_receiver_{safe_token(receiver)}", receiver_tuning=receiver, phase_bias=30.0, stage_b_strength=0.84)))
+        for phase in phase_values:
+            seeds.append((f"sweep_phase_{safe_token(phase)}", bridge_drift_feedforward_template(f"sweep_phase_{safe_token(phase)}", receiver_tuning=8.90, phase_bias=phase, stage_b_strength=0.84)))
+        for strength in strength_values:
+            seeds.append((f"sweep_stageB_{safe_token(strength)}", bridge_drift_feedforward_template(f"sweep_stageB_{safe_token(strength)}", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=strength)))
+    return seeds
+
+
+def bridge_drift_feedforward_non369_template(source: float, target: float, seed_family: str) -> BridgeMinNudgeConfig:
+    magnetic = bridge_min_nudge_non369_seed(source, target)
+    bridge = replace(
+        magnetic.bridge,
+        stage_b_phase_bias_deg=30.0,
+        stage_b_nonlinear_strength=0.84,
+        note="non-369 drift-feedforward bridge control",
+    )
+    magnetic = replace(magnetic, bridge=bridge, reference_role="control", family="non369")
+    return BridgeMinNudgeConfig(
+        name=f"feedforward_non369_template_{safe_token(source)}_{safe_token(target)}",
+        correction_type="receiver_tuning_nudge",
+        magnetic_config=magnetic,
+        kp=0.0,
+        correction_clamp=0.0,
+        update_interval=1.0,
+        smoothing=1.0,
+        magnetic_bias_strength=2.0,
+        control_mode="no_nudge",
+        reference_role="control",
+        family="non369",
+        note=f"non-369 {source:g} -> {source * 2:g} -> {target:g} drift feedforward control",
+    )
+
+
+def bridge_drift_feedforward_to_authority_config(config: BridgeDriftFeedforwardConfig) -> BridgeControlAuthorityConfig:
+    base_config = replace(
+        config.base_config,
+        correction_type=config.correction_type,
+        reference_role=config.reference_role,
+        family=config.family,
+        control_mode="no_nudge",
+        correction_clamp=0.0,
+    )
+    return BridgeControlAuthorityConfig(
+        name=config.name,
+        correction_type=config.correction_type,
+        base_config=base_config,
+        correction_size=float(np.clip(config.ramp_size, -config.correction_clamp, config.correction_clamp)),
+        schedule_type=config.ramp_shape,
+        correction_start_fraction=config.ramp_start_fraction,
+        ramp_fraction=max(1e-6, config.ramp_end_fraction - config.ramp_start_fraction),
+        max_allowed_correction=config.correction_clamp,
+        seed_family=config.seed_family,
+        reference_role=config.reference_role,
+        family=config.family,
+        note=config.note,
+    )
+
+
+def bridge_drift_feedforward_ramp_smoothness(ledger: List[Dict[str, float | str]]) -> float:
+    if len(ledger) < 3:
+        return 1.0
+    values = np.asarray([float(r.get("correction_value", 0.0)) for r in ledger])
+    jumps = np.abs(np.diff(values))
+    max_jump = float(np.max(jumps)) if len(jumps) else 0.0
+    path = float(np.sum(jumps)) if len(jumps) else 0.0
+    return 1.0 / (1.0 + 45.0 * max_jump + 3.0 * path)
+
+
+def bridge_drift_feedforward_baseline_config(seed_family: str,
+                                             base_config: BridgeMinNudgeConfig,
+                                             runtime_factor: float,
+                                             reference_role: str,
+                                             family: str) -> BridgeDriftFeedforwardConfig:
+    return BridgeDriftFeedforwardConfig(
+        name=f"feedforward_{seed_family}_no_feedforward_{safe_token(runtime_factor)}x",
+        ramp_type="no_feedforward",
+        correction_type="receiver_tuning_nudge",
+        base_config=base_config,
+        ramp_size=0.0,
+        ramp_shape="no_feedforward",
+        runtime_factor=runtime_factor,
+        seed_family=seed_family,
+        reference_role=reference_role,
+        family=family,
+        control_role="no_feedforward",
+        note="no-feedforward 4x baseline for measured drift",
+    )
+
+
+def bridge_drift_feedforward_make_config(seed_family: str,
+                                         base_config: BridgeMinNudgeConfig,
+                                         runtime_factor: float,
+                                         ramp_type: str,
+                                         ramp_shape: str,
+                                         required_ramp: float,
+                                         multiplier: float,
+                                         start_fraction: float,
+                                         end_fraction: float,
+                                         correction_clamp: float,
+                                         reference_role: str = "discovery_candidate",
+                                         family: str = "369",
+                                         control_role: str = "feedforward") -> BridgeDriftFeedforwardConfig:
+    correction_type, gain = BRIDGE_DRIFT_FEEDFORWARD_ACTUATORS[ramp_type]
+    ramp_size = float(np.clip(required_ramp * multiplier, -correction_clamp, correction_clamp))
+    name = (
+        f"feedforward_{seed_family}_{ramp_type}_{ramp_shape}"
+        f"_m{safe_token(multiplier)}_s{safe_token(start_fraction)}_e{safe_token(end_fraction)}"
+        f"_r{safe_token(runtime_factor)}x"
+    )
+    if control_role not in ("feedforward", "discovery"):
+        name = f"{name}_{control_role}"
+    return BridgeDriftFeedforwardConfig(
+        name=name,
+        ramp_type=ramp_type,
+        correction_type=correction_type,
+        base_config=base_config,
+        ramp_size=ramp_size,
+        ramp_shape=ramp_shape,
+        ramp_start_fraction=start_fraction,
+        ramp_end_fraction=end_fraction,
+        correction_clamp=correction_clamp,
+        authority_gain_prior=gain,
+        estimated_required_ramp_size=required_ramp,
+        runtime_factor=runtime_factor,
+        seed_family=seed_family,
+        reference_role=reference_role,
+        family=family,
+        control_role=control_role,
+        note="precomputed drift feedforward ramp; no live feedback loop",
+    )
+
+
+def bridge_drift_feedforward_measure(config: BridgeDriftFeedforwardConfig, seed: int, quick: bool,
+                                     dt: float, runtime: float, sample_every: int,
+                                     direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]],
+                                     baseline_summary: Dict[str, float | str] | None = None,
+                                     baseline_row: Dict[str, float | str] | None = None
+                                     ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]], List[Dict[str, float | str]], Dict[str, float | str]]:
+    authority_config = bridge_drift_feedforward_to_authority_config(config)
+    sim, ledger = simulate_bridge_control_authority(authority_config, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    target_key = f"{effective.mode_freqs[0]:g}:{effective.target_6:g}:{effective.target_9:g}"
+    cache_key = (target_key, dt, runtime)
+    if cache_key not in direct_cache:
+        direct_cfg = bridge_min_nudge_direct_reference(effective)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 9100, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 9100, "direct_reference", "direct_source_plus_generated", "reference", 0.35, 1.0)
+        direct_cache[cache_key] = (direct_sim, direct_row)
+    direct_sim, direct_row = direct_cache[cache_key]
+
+    row = bridge_metrics_window(effective, sim, seed, "feedforward", config.ramp_shape, f"{config.ramp_size:g}", 0.35, 1.0)
+    drift_rows, after_summary = bridge_phase_diagnostic_series(effective, sim, direct_sim, 0.62, 1.0)
+    before_summary = baseline_summary if baseline_summary is not None else after_summary
+    before_abs = float(before_summary.get("phase_drift_rate", 0.0))
+    before_signed = bridge_drift_feedforward_signed_drift(before_summary)
+    after_abs = float(after_summary.get("phase_drift_rate", 0.0))
+    after_signed = bridge_drift_feedforward_signed_drift(after_summary)
+    drift_reduction = metric_ratio(abs(before_signed) - abs(after_signed), abs(before_signed)) if abs(before_signed) > 1e-12 else 0.0
+
+    row.update(after_summary)
+    row["experiment"] = "bridge_drift_feedforward"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:{config.runtime_factor:g}x"
+    row["ramp_type"] = config.ramp_type
+    row["actuator_type"] = config.ramp_type
+    row["correction_type"] = config.correction_type
+    row["ramp_shape"] = config.ramp_shape
+    row["schedule_type"] = config.ramp_shape
+    row["ramp_size"] = config.ramp_size
+    row["estimated_required_ramp_size"] = config.estimated_required_ramp_size
+    row["authority_gain_prior"] = config.authority_gain_prior
+    row["correction_clamp"] = config.correction_clamp
+    row["ramp_start_fraction"] = config.ramp_start_fraction
+    row["ramp_end_fraction"] = config.ramp_end_fraction
+    row["seed_family"] = config.seed_family
+    row["reference_role"] = config.reference_role
+    row["family"] = config.family
+    row["control_role"] = config.control_role
+    row["runtime_factor"] = config.runtime_factor
+    row["bridge_ratio"] = metric_ratio(float(row.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0)))
+    row["generated_vs_direct_bridge_ratio"] = row["bridge_ratio"]
+    row["energy_at_9_from_direct_3_plus_6_reference"] = direct_row.get("energy_at_9", 0.0)
+    total_input_before = max(float(row.get("total_input_work", 0.0)), 1e-18)
+    total_input_with_feedforward = total_input_before + float(sim["correction_work"])
+    row["total_input_work_before_feedforward"] = total_input_before
+    row["total_input_work"] = total_input_with_feedforward
+    row["feedforward_work"] = float(sim["correction_work"])
+    row["feedforward_work_signed"] = float(sim["correction_work_signed"])
+    row["feedforward_energy_in"] = float(sim["correction_energy_in"])
+    row["feedforward_energy_out"] = float(sim["correction_energy_out"])
+    row["feedforward_work_fraction"] = metric_ratio(float(sim["correction_work"]), total_input_with_feedforward)
+    row["correction_work"] = row["feedforward_work"]
+    row["correction_work_fraction"] = row["feedforward_work_fraction"]
+    row["feedforward_rms"] = float(sim["correction_rms"])
+    row["feedforward_peak"] = float(sim["correction_peak"])
+    row["ramp_smoothness"] = bridge_drift_feedforward_ramp_smoothness(ledger)
+    row["phase_drift_rate_before"] = before_signed
+    row["phase_drift_rate_before_abs"] = before_abs
+    row["phase_drift_rate_after"] = after_signed
+    row["phase_drift_rate_after_abs"] = after_abs
+    row["phase_drift_rate_after_correction"] = after_abs
+    row["drift_reduction_fraction"] = drift_reduction
+    row["drift_reduction_percent"] = 100.0 * drift_reduction
+    row["effective_generated_frequency_before"] = float(before_summary.get("effective_target_frequency", effective.target_9))
+    row["effective_generated_frequency_after"] = float(after_summary.get("effective_target_frequency", effective.target_9))
+    row["baseline_phase_lock_9"] = float(baseline_row.get("phase_lock_9", 0.0)) if baseline_row else float(row.get("phase_lock_9", 0.0))
+    row["phase_lock_improvement_vs_baseline"] = float(row.get("phase_lock_9", 0.0)) - float(row.get("baseline_phase_lock_9", 0.0))
+    row["lock_duration"] = after_summary.get("lock_duration", 0.0)
+    row["time_to_unlock"] = after_summary.get("time_to_unlock", 0.0)
+    row["lock_duration_fraction"] = metric_ratio(float(row.get("lock_duration", 0.0)), float(row.get("runtime", runtime)))
+    row["no_direct_6_drive"] = str(not any(abs(freq - effective.target_6) < 1e-9 and mode == 1 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_direct_9_drive"] = str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_target_frequency_injection"] = row["no_direct_9_drive"]
+    row["note"] = config.note
+    bridge_drift_feedforward_update_score(row)
+
+    for item in ledger:
+        item["experiment"] = "bridge_drift_feedforward"
+        item["candidate_id"] = row["candidate_id"]
+        item["seed_family"] = config.seed_family
+        item["ramp_type"] = config.ramp_type
+        item["ramp_shape"] = config.ramp_shape
+        item["ramp_size"] = config.ramp_size
+        item["feedforward_work"] = item.get("correction_work", 0.0)
+    for item in drift_rows:
+        item["experiment"] = "bridge_drift_feedforward"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["seed_family"] = config.seed_family
+        item["ramp_type"] = config.ramp_type
+        item["ramp_shape"] = config.ramp_shape
+        item["ramp_size"] = config.ramp_size
+    return row, ledger, drift_rows, after_summary
+
+
+def bridge_drift_feedforward_update_score(row: Dict[str, float | str]) -> None:
+    runtime_factor = float(row.get("runtime_factor", 1.0))
+    bridge_ratio = float(row.get("bridge_ratio", 0.0))
+    phase_lock = float(row.get("phase_lock_9", 0.0))
+    purity = float(row.get("spectral_purity_9", 0.0))
+    budget = float(row.get("energy_budget_error", 1.0))
+    work = float(row.get("feedforward_work_fraction", row.get("correction_work_fraction", 1.0)))
+    drift_reduction = float(row.get("drift_reduction_percent", 0.0))
+    discovery = str(row.get("reference_role")) == "discovery_candidate"
+    direct_clean = (
+        str(row.get("no_direct_6_drive", "False")) == "True"
+        and str(row.get("no_direct_9_drive", "False")) == "True"
+        and str(row.get("no_target_frequency_injection", "False")) == "True"
+    )
+    core_pass = (
+        runtime_factor >= 4.0
+        and bridge_ratio > 0.75
+        and phase_lock > 0.90
+        and purity > 0.60
+        and budget < 0.005
+        and work < 0.05
+        and direct_clean
+    )
+    has_dt_flags = "half_dt_preserved" in row or "quarter_dt_preserved" in row
+    dt_ok = (
+        str(row.get("half_dt_preserved", "False")) == "True"
+        and str(row.get("quarter_dt_preserved", "False")) == "True"
+    ) if has_dt_flags else True
+    passed = core_pass and dt_ok and discovery
+    strong = (
+        passed
+        and bridge_ratio > 0.85
+        and phase_lock > 0.95
+        and purity > 0.75
+        and work < 0.02
+        and drift_reduction > 75.0
+    )
+    failures = []
+    if runtime_factor < 4.0:
+        failures.append("not_4x_runtime")
+    if bridge_ratio <= 0.75:
+        failures.append("bridge_ratio")
+    if phase_lock <= 0.90:
+        failures.append("phase_lock_9")
+    if purity <= 0.60:
+        failures.append("spectral_purity_9")
+    if budget >= 0.005:
+        failures.append("energy_budget")
+    if work >= 0.05:
+        failures.append("feedforward_work_fraction")
+    if not direct_clean:
+        failures.append("direct_drive_or_target_injection")
+    if has_dt_flags and not dt_ok:
+        failures.append("dt_validation")
+
+    if not failures:
+        failure_mode = "4x_lock_held"
+    elif "phase_lock_9" in failures:
+        failure_mode = "phase_drift"
+    elif "energy_budget" in failures:
+        failure_mode = "energy_budget_drift"
+    elif "feedforward_work_fraction" in failures:
+        failure_mode = "overpowered_ramp"
+    elif "bridge_ratio" in failures:
+        failure_mode = "bridge_collapse"
+    else:
+        failure_mode = failures[0]
+
+    gentle_bonus = 1.0 / (
+        1.0
+        + 120.0 * max(0.0, work)
+        + 12.0 * max(0.0, abs(float(row.get("ramp_size", 0.0))))
+        + 650.0 * max(0.0, budget)
+    )
+    drift_bonus = 1.0 + max(0.0, min(1.0, drift_reduction / 100.0))
+    score = bridge_ratio * phase_lock * purity * drift_bonus * gentle_bonus
+    if not core_pass or not discovery:
+        score = 0.0
+
+    row["4x_pass"] = str(core_pass and discovery)
+    row["passed"] = str(passed)
+    row["strong_passed"] = str(strong)
+    row["promotion_ready"] = str(strong)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+    row["bridge_drift_feedforward_score"] = score
+    row["score"] = score
+
+
+def bridge_drift_feedforward_validation(config: BridgeDriftFeedforwardConfig, seed: int, quick: bool,
+                                       dt: float, runtime: float, sample_every: int
+                                       ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [("baseline_dt", dt), ("half_dt", dt * 0.5), ("quarter_dt", dt * 0.25)]
+    rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    drift_rows: List[Dict[str, float | str]] = []
+    for idx, (name, test_dt) in enumerate(tests):
+        direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+        baseline_config = bridge_drift_feedforward_baseline_config(
+            config.seed_family,
+            config.base_config,
+            config.runtime_factor,
+            config.reference_role,
+            config.family,
+        )
+        baseline_row, baseline_ledger, baseline_drift, baseline_summary = bridge_drift_feedforward_measure(
+            baseline_config, seed + idx * 173, quick, test_dt, runtime, sample_every, direct_cache
+        )
+        row, ledger, drift, _ = bridge_drift_feedforward_measure(
+            config, seed + idx * 173 + 19, quick, test_dt, runtime, sample_every, direct_cache, baseline_summary, baseline_row
+        )
+        row["validation_test"] = name
+        rows.append(row)
+        ledger_rows.extend(baseline_ledger)
+        ledger_rows.extend(ledger)
+        drift_rows.extend(baseline_drift)
+        drift_rows.extend(drift)
+    return rows, ledger_rows, drift_rows
+
+
+def apply_bridge_drift_feedforward_validation_status(candidate: Dict[str, float | str],
+                                                    validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    base = next((r for r in rows if str(r.get("validation_test")) == "baseline_dt"), {})
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt"), {})
+    base_phase = float(base.get("phase_lock_9", candidate.get("phase_lock_9", 0.0)))
+    base_reduction = float(base.get("drift_reduction_percent", candidate.get("drift_reduction_percent", 0.0)))
+
+    def preserved(row: Dict[str, float | str]) -> bool:
+        if not row:
+            return False
+        core = str(row.get("4x_pass", "False")) == "True"
+        phase_ok = float(row.get("phase_lock_9", 0.0)) >= 0.90 or ratio_stability_score(float(row.get("phase_lock_9", 0.0)), base_phase) > 0.85
+        reduction_ok = float(row.get("drift_reduction_percent", -100.0)) >= 0.50 * base_reduction
+        budget_ok = float(row.get("energy_budget_error", 1.0)) < 0.005
+        work_ok = float(row.get("feedforward_work_fraction", 1.0)) < 0.05
+        return core and phase_ok and reduction_ok and budget_ok and work_ok
+
+    half_ok = preserved(half)
+    quarter_ok = preserved(quarter)
+    candidate["half_dt_preserved"] = str(half_ok)
+    candidate["quarter_dt_preserved"] = str(quarter_ok)
+    candidate["half_dt_phase_lock_9"] = float(half.get("phase_lock_9", 0.0))
+    candidate["quarter_dt_phase_lock_9"] = float(quarter.get("phase_lock_9", 0.0))
+    candidate["half_dt_drift_reduction_percent"] = float(half.get("drift_reduction_percent", 0.0))
+    candidate["quarter_dt_drift_reduction_percent"] = float(quarter.get("drift_reduction_percent", 0.0))
+    bridge_drift_feedforward_update_score(candidate)
+
+
+def write_bridge_drift_feedforward_report(out_dir: Path,
+                                          ranked: List[Dict[str, float | str]],
+                                          validation_rows: List[Dict[str, float | str]],
+                                          controls: List[Dict[str, float | str]]) -> None:
+    discovery = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate"]
+    best = discovery[0] if discovery else {}
+    passed_rows = [r for r in discovery if str(r.get("passed")) == "True"]
+    core_rows = [r for r in discovery if str(r.get("4x_pass")) == "True"]
+    by_type: Dict[str, Dict[str, float | str]] = {}
+    for ramp_type in BRIDGE_DRIFT_FEEDFORWARD_ACTUATORS:
+        typed = [r for r in discovery if str(r.get("ramp_type")) == ramp_type]
+        if typed:
+            by_type[ramp_type] = max(typed, key=lambda r: (float(r.get("bridge_drift_feedforward_score", 0.0)), float(r.get("phase_lock_9", 0.0)), float(r.get("drift_reduction_percent", 0.0))))
+    no_feedforward = max([r for r in controls if str(r.get("control_role")) == "no_feedforward" and str(r.get("family")) == "369"], key=lambda r: float(r.get("phase_lock_9", 0.0)), default={})
+    wrong = max([r for r in controls if str(r.get("control_role")) == "wrong_sign_ramp"], key=lambda r: float(r.get("phase_lock_9", 0.0)), default={})
+    random_control = max([r for r in controls if str(r.get("control_role")) == "random_ramp"], key=lambda r: float(r.get("phase_lock_9", 0.0)), default={})
+    over = max([r for r in controls if str(r.get("control_role")) == "overcorrected_ramp"], key=lambda r: float(r.get("phase_lock_9", 0.0)), default={})
+    non369 = max([r for r in controls if str(r.get("family")) == "non369"], key=lambda r: (float(r.get("phase_lock_9", 0.0)), float(r.get("drift_reduction_percent", 0.0))), default={})
+    best_non369_beats = bool(non369) and float(non369.get("phase_lock_9", 0.0)) > float(best.get("phase_lock_9", 0.0))
+    gentle = float(best.get("feedforward_work_fraction", 1.0)) < 0.02 and abs(float(best.get("ramp_size", 0.0))) < 0.75 * max(float(best.get("correction_clamp", 1.0)), 1e-18)
+    if passed_rows:
+        hold_answer = "yes, at least one validated feedforward row held the 4x gate"
+        next_answer = "promote the best row into stronger proportional control only as a robustness check"
+    elif core_rows:
+        hold_answer = "partially; at least one 4x row met core gates but did not preserve half/quarter-dt validation"
+        next_answer = "tighten the feedforward estimate and rerun dt validation before moving to PLL"
+    else:
+        hold_answer = "no, not under the current promotion gates"
+        next_answer = "stronger proportional control is the next step; move to full PLL if fixed feedforward remains phase-limited"
+
+    lines = [
+        "# Bridge Drift Feedforward Report",
+        "",
+        "This mode applies precomputed tuning ramps from measured drift. It uses no PLL, no live feedback, no direct 6 drive, no direct 9 drive, and no target-frequency injection.",
+        "",
+        "## Direct Answers",
+        f"1. Can precomputed drift feedforward hold 4x lock? {hold_answer}.",
+        f"2. Best actuator: {best.get('ramp_type', 'none')}; phase_lock_9={float(best.get('phase_lock_9', 0.0)):.6g}, drift_reduction={float(best.get('drift_reduction_percent', 0.0)):.6g}%, score={float(best.get('bridge_drift_feedforward_score', 0.0)):.6g}.",
+        f"3. Feedforward work required: best_work_fraction={float(best.get('feedforward_work_fraction', 0.0)):.6g}, ramp_size={float(best.get('ramp_size', 0.0)):.6g}, estimated_required={float(best.get('estimated_required_ramp_size', 0.0)):.6g}.",
+        f"4. Ramp behavior: {'gentle drift cancellation' if gentle else 'not yet gentle enough or not effective enough'}; smoothness={float(best.get('ramp_smoothness', 0.0)):.6g}, budget={float(best.get('energy_budget_error', 0.0)):.6g}.",
+        f"5. Do non-369 controls beat 3 -> 6 -> 9? {'yes in this run' if best_non369_beats else 'no under the same ranking rules'}; best_non369_phase={float(non369.get('phase_lock_9', 0.0)):.6g}, best_369_phase={float(best.get('phase_lock_9', 0.0)):.6g}.",
+        f"6. If feedforward fails, next step: {next_answer}.",
+        f"Controls: no_feedforward_phase={float(no_feedforward.get('phase_lock_9', 0.0)):.6g}, wrong_sign_phase={float(wrong.get('phase_lock_9', 0.0)):.6g}, random_phase={float(random_control.get('phase_lock_9', 0.0)):.6g}, overcorrected_phase={float(over.get('phase_lock_9', 0.0)):.6g}.",
+        f"Promotion gate: {len(passed_rows)} validated rows passed; {len(core_rows)} discovery rows met the core 4x gates before dt preservation.",
+        "",
+        "## Best By Actuator",
+    ]
+    for ramp_type, row in by_type.items():
+        lines.append(
+            f"- {ramp_type}: case={row.get('candidate_id')}, phase={float(row.get('phase_lock_9', 0.0)):.6g}, "
+            f"bridge={float(row.get('bridge_ratio', 0.0)):.6g}, purity={float(row.get('spectral_purity_9', 0.0)):.6g}, "
+            f"drift_reduction={float(row.get('drift_reduction_percent', 0.0)):.6g}%, work={float(row.get('feedforward_work_fraction', 0.0)):.6g}, "
+            f"pass={row.get('passed')}, failure={row.get('failure_mode', '')}"
+        )
+    lines.extend(["", "## Top Rows"])
+    for row in ranked[:24]:
+        lines.append(
+            f"- {row.get('candidate_id')}: actuator={row.get('ramp_type')}, shape={row.get('ramp_shape')}, size={float(row.get('ramp_size', 0.0)):.6g}, "
+            f"score={float(row.get('bridge_drift_feedforward_score', 0.0)):.6g}, pass={row.get('passed')}, 4x={row.get('4x_pass')}, "
+            f"phase={float(row.get('phase_lock_9', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, purity={float(row.get('spectral_purity_9', 0.0)):.6g}, "
+            f"drift_reduction={float(row.get('drift_reduction_percent', 0.0)):.6g}%, work={float(row.get('feedforward_work_fraction', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, failure={row.get('failure_mode', '')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Dt Validation"])
+        for row in validation_rows[:20]:
+            lines.append(
+                f"- {row.get('candidate_id')}: test={row.get('validation_test', '')}, phase={float(row.get('phase_lock_9', 0.0)):.6g}, "
+                f"drift_reduction={float(row.get('drift_reduction_percent', 0.0)):.6g}%, work={float(row.get('feedforward_work_fraction', 0.0)):.6g}, "
+                f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, 4x={row.get('4x_pass')}"
+            )
+    (out_dir / "README_BRIDGE_DRIFT_FEEDFORWARD_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_drift_feedforward(out_dir: Path, seed: int, quick: bool = False,
+                                        include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    runtime_factors = [4.0]
+    if include_sweeps:
+        runtime_factors = [1.0, 2.0, 4.0]
+    shapes = ["linear_ramp", "piecewise_linear_ramp", "s_curve_ramp", "hold_after_capture_ramp", "two_stage_ramp"]
+    plan_specs = [(shape, 1.0, 0.18, 0.74) for shape in shapes]
+    if include_sweeps:
+        multiplier_values = [0.75, 1.25] if quick else [0.50, 0.75, 1.25, 1.50]
+        plan_specs.extend(("linear_ramp", multiplier, 0.18, 0.74) for multiplier in multiplier_values)
+        plan_specs.extend(("linear_ramp", 1.0, start, end) for start, end in [(0.10, 0.62), (0.25, 0.82)])
+    correction_clamp = 0.024 if quick and not include_sweeps else 0.036
+
+    summary_rows: List[Dict[str, float | str]] = []
+    sweep_rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    drift_rows: List[Dict[str, float | str]] = []
+    controls: List[Dict[str, float | str]] = []
+    config_by_case: Dict[str, BridgeDriftFeedforwardConfig] = {}
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    run_index = 0
+
+    for runtime_factor in runtime_factors:
+        runtime = base_tmax * 1.25 * runtime_factor
+        for seed_family, base_config in bridge_drift_feedforward_seed_templates(quick, include_sweeps):
+            is_sweep_seed = seed_family.startswith("sweep_")
+            if include_sweeps and is_sweep_seed and runtime_factor < 4.0:
+                continue
+            if include_sweeps and runtime_factor < 4.0 and seed_family != "receiver_best_4x_raw":
+                continue
+            baseline_config = bridge_drift_feedforward_baseline_config(seed_family, base_config, runtime_factor, "control", "369")
+            baseline_row, baseline_ledger, baseline_drift, baseline_summary = bridge_drift_feedforward_measure(
+                baseline_config, seed + run_index * 271, quick, dt, runtime, sample_every, direct_cache
+            )
+            run_index += 1
+            summary_rows.append(baseline_row)
+            controls.append(baseline_row)
+            if runtime_factor >= 4.0:
+                ledger_rows.extend(baseline_ledger)
+                drift_rows.extend(baseline_drift)
+
+            signed_drift = bridge_drift_feedforward_signed_drift(baseline_summary)
+            for ramp_type, (_, gain) in BRIDGE_DRIFT_FEEDFORWARD_ACTUATORS.items():
+                required = -signed_drift / gain if abs(gain) > 1e-12 else 0.0
+                active_plan_specs = [("linear_ramp", 1.0, 0.18, 0.74)] if is_sweep_seed else plan_specs
+                for shape, multiplier, start_fraction, end_fraction in active_plan_specs:
+                    config = bridge_drift_feedforward_make_config(
+                        seed_family,
+                        base_config,
+                        runtime_factor,
+                        ramp_type,
+                        shape,
+                        required,
+                        multiplier,
+                        start_fraction,
+                        end_fraction,
+                        correction_clamp,
+                    )
+                    config_by_case[config.name] = config
+                    row, ledger, drift, _ = bridge_drift_feedforward_measure(
+                        config, seed + run_index * 271, quick, dt, runtime, sample_every, direct_cache, baseline_summary, baseline_row
+                    )
+                    run_index += 1
+                    summary_rows.append(row)
+                    if include_sweeps or config.reference_role == "discovery_candidate":
+                        sweep_rows.append(row)
+                    if runtime_factor >= 4.0 and (include_sweeps or abs(float(row.get("ramp_size", 0.0))) >= 0.006):
+                        ledger_rows.extend(ledger)
+                        drift_rows.extend(drift)
+
+                if runtime_factor >= 4.0 and seed_family == "receiver_best_4x_raw":
+                    control_specs = [
+                        ("wrong_sign_ramp", -1.0, "linear_ramp"),
+                        ("overcorrected_ramp", 2.0, "linear_ramp"),
+                        ("random_ramp", 1.0, "random_ramp"),
+                    ]
+                    for role, multiplier, shape in control_specs:
+                        config = bridge_drift_feedforward_make_config(
+                            seed_family,
+                            base_config,
+                            runtime_factor,
+                            ramp_type,
+                            shape,
+                            required,
+                            multiplier,
+                            0.18,
+                            0.74,
+                            correction_clamp,
+                            reference_role="control",
+                            family="369",
+                            control_role=role,
+                        )
+                        row, ledger, drift, _ = bridge_drift_feedforward_measure(
+                            config, seed + run_index * 271, quick, dt, runtime, sample_every, direct_cache, baseline_summary, baseline_row
+                        )
+                        run_index += 1
+                        summary_rows.append(row)
+                        controls.append(row)
+                        ledger_rows.extend(ledger)
+                        drift_rows.extend(drift)
+
+    for source, target in ((4.0, 12.0), (5.0, 15.0)):
+        runtime_factor = 4.0
+        runtime = base_tmax * 1.25 * runtime_factor
+        seed_family = f"non369_{safe_token(source)}_{safe_token(target)}"
+        base_config = bridge_drift_feedforward_non369_template(source, target, seed_family)
+        baseline_config = bridge_drift_feedforward_baseline_config(seed_family, base_config, runtime_factor, "control", "non369")
+        baseline_row, baseline_ledger, baseline_drift, baseline_summary = bridge_drift_feedforward_measure(
+            baseline_config, seed + run_index * 271, quick, dt, runtime, sample_every, direct_cache
+        )
+        run_index += 1
+        summary_rows.append(baseline_row)
+        controls.append(baseline_row)
+        ledger_rows.extend(baseline_ledger)
+        drift_rows.extend(baseline_drift)
+        signed_drift = bridge_drift_feedforward_signed_drift(baseline_summary)
+        for ramp_type, (_, gain) in BRIDGE_DRIFT_FEEDFORWARD_ACTUATORS.items():
+            required = -signed_drift / gain if abs(gain) > 1e-12 else 0.0
+            config = bridge_drift_feedforward_make_config(
+                seed_family,
+                base_config,
+                runtime_factor,
+                ramp_type,
+                "linear_ramp",
+                required,
+                1.0,
+                0.18,
+                0.74,
+                correction_clamp,
+                reference_role="control",
+                family="non369",
+                control_role="non369_feedforward",
+            )
+            row, ledger, drift, _ = bridge_drift_feedforward_measure(
+                config, seed + run_index * 271, quick, dt, runtime, sample_every, direct_cache, baseline_summary, baseline_row
+            )
+            run_index += 1
+            summary_rows.append(row)
+            controls.append(row)
+            ledger_rows.extend(ledger)
+            drift_rows.extend(drift)
+
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_drift_feedforward_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            1.0 if str(r.get("4x_pass")) == "True" else 0.0,
+            float(r.get("phase_lock_9", 0.0)),
+            float(r.get("drift_reduction_percent", 0.0)),
+            -float(r.get("feedforward_work_fraction", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    validation_rows: List[Dict[str, float | str]] = []
+    top_candidates = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate" and float(r.get("runtime_factor", 1.0)) >= 4.0][:4 if include_sweeps else 2]
+    for idx, candidate in enumerate(top_candidates):
+        config = config_by_case.get(str(candidate.get("case")))
+        if config is None:
+            continue
+        runtime = base_tmax * 1.25 * float(config.runtime_factor)
+        rows, ledger, drift = bridge_drift_feedforward_validation(config, seed + 83000 + idx * 1000, quick, dt, runtime, sample_every)
+        validation_rows.extend(rows)
+        ledger_rows.extend(ledger)
+        drift_rows.extend(drift)
+        apply_bridge_drift_feedforward_validation_status(candidate, validation_rows)
+
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_drift_feedforward_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            1.0 if str(r.get("4x_pass")) == "True" else 0.0,
+            float(r.get("phase_lock_9", 0.0)),
+            float(r.get("drift_reduction_percent", 0.0)),
+            -float(r.get("feedforward_work_fraction", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    write_csv(out_dir / "bridge_drift_feedforward_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "bridge_drift_feedforward_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_drift_feedforward_sweeps.csv", sweep_rows)
+    write_csv(out_dir / "bridge_drift_feedforward_timeseries.csv", ledger_rows + drift_rows)
+    write_bridge_drift_feedforward_report(out_dir, ranked, validation_rows, controls)
+
+    return [
+        {
+            "experiment": "bridge_drift_feedforward",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_drift_feedforward_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "ramp_type": row.get("ramp_type", ""),
+            "ramp_shape": row.get("ramp_shape", ""),
+            "ramp_size": row.get("ramp_size", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "phase_lock_9": row.get("phase_lock_9", 0.0),
+            "spectral_purity_9": row.get("spectral_purity_9", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "feedforward_work_fraction": row.get("feedforward_work_fraction", 0.0),
+            "drift_reduction_percent": row.get("drift_reduction_percent", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -10550,8 +11318,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -10600,6 +11368,8 @@ def main() -> None:
         rows.extend(experiment_bridge_lock_threshold(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_control_authority",):
         rows.extend(experiment_bridge_control_authority(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_drift_feedforward",):
+        rows.extend(experiment_bridge_drift_feedforward(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

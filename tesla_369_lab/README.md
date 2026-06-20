@@ -104,6 +104,12 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Computes drift-rate pull, effective generated frequency pull, required correction to cancel drift, estimated correction work, and authority margin.
    - Keeps direct 6/9 drive and target-frequency injection out of discovery tests while preserving clean energy accounting.
 
+19. **Bridge drift feedforward**
+   - Measures no-feedforward 4x drift, then applies precomputed tuning ramps without PLL or live feedback.
+   - Uses only receiver tuning, Stage B detuning, and magnetic bias ramps.
+   - Tests linear, piecewise-linear, slow S-curve, hold-after-capture, and two-stage ramps with wrong-sign, random, overcorrected, and non-369 controls.
+   - Reports feedforward work fraction, ramp size/smoothness, before/after drift, generated-frequency pull, lock duration, and dt preservation.
+
 ## Install
 
 ```bash
@@ -178,6 +184,10 @@ python tesla_369_lab.py --mode bridge_control_authority
 python tesla_369_lab.py --mode bridge_control_authority --quick
 python tesla_369_lab.py --mode bridge_control_authority --sweeps
 python tesla_369_lab.py --mode bridge_control_authority --quick --sweeps
+python tesla_369_lab.py --mode bridge_drift_feedforward
+python tesla_369_lab.py --mode bridge_drift_feedforward --quick
+python tesla_369_lab.py --mode bridge_drift_feedforward --sweeps
+python tesla_369_lab.py --mode bridge_drift_feedforward --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -259,6 +269,10 @@ bridge_control_authority_summary.csv
 bridge_control_authority_ranked.csv
 bridge_control_authority_sweeps.csv
 bridge_control_authority_timeseries.csv
+bridge_drift_feedforward_summary.csv
+bridge_drift_feedforward_ranked.csv
+bridge_drift_feedforward_sweeps.csv
+bridge_drift_feedforward_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv

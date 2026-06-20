@@ -139,3 +139,14 @@ Added an open-loop actuator-authority test:
 - Measures generated-frequency pull, phase-drift pull, actuator gain, required correction to cancel drift, correction-work fraction, and authority margin.
 - Keeps direct 6/9 drive and target-frequency injection out of discovery rows and includes no-correction, wrong-sign, random, and non-369 controls.
 - Quick smoke found measurable pull but no promotion: best Stage B detuning row reduced 4x drift by about 5.7%, below the 50% gate.
+
+## Bridge Drift Feedforward
+
+Added a fixed-ramp feedforward test:
+
+- Runs a no-feedforward 4x baseline for each seed, measures signed phase drift, then applies a precomputed ramp using prior actuator gains.
+- Tests only receiver tuning, Stage B detuning, and magnetic bias ramps.
+- Uses no PLL, no live feedback, no direct 6/9 drive, and no target-frequency injection.
+- Includes linear, piecewise-linear, S-curve, hold-after-capture, and two-stage ramps plus wrong-sign, random, overcorrected, and non-369 controls.
+- Quick smoke did not promote: best row was `magnetic_bias_ramp` with phase_lock_9 0.780, feedforward work fraction 0.0000083, and only about 0.14% drift reduction.
+- A non-369 control reached phase_lock_9 0.996 under the same feedforward rules, so fixed feedforward does not currently support promotion.

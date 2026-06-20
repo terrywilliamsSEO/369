@@ -25,12 +25,13 @@ What has not survived yet:
 - No passive candidate has passed the strict 4x runtime phase-lock gate.
 - The long-runtime failure remains phase drift, sometimes with energy-budget growth.
 - Open-loop control-authority tests now measure whether allowed real-world actuators can pull that drift without direct 6/9 drive or target-frequency injection.
+- Precomputed drift feedforward ramps stayed energetically tiny but did not hold 4x lock in quick smoke.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Use `bridge_control_authority` to quantify whether receiver tuning, magnetic bias, or Stage B detuning can actually pull the 4x drift.
-- If open-loop authority remains weak, move to frequency-drift feedforward, stronger proportional control, or a real active PLL with correction work accounting.
+- Use `bridge_drift_feedforward --sweeps` only to confirm the fixed-ramp result across timing/ramp-size variants.
+- The stronger next path is proportional control; move to a real PLL if fixed feedforward remains phase-limited.
 
 ## Repo Map
 
@@ -74,6 +75,8 @@ python tesla_369_lab.py --mode bridge_lock_threshold --quick
 python tesla_369_lab.py --mode bridge_lock_threshold --quick --sweeps
 python tesla_369_lab.py --mode bridge_control_authority --quick
 python tesla_369_lab.py --mode bridge_control_authority --quick --sweeps
+python tesla_369_lab.py --mode bridge_drift_feedforward --quick
+python tesla_369_lab.py --mode bridge_drift_feedforward --quick --sweeps
 ```
 
 Key bridge modes:
@@ -86,6 +89,7 @@ python tesla_369_lab.py --mode magnetic_autolock --quick --sweeps
 python tesla_369_lab.py --mode bridge_min_nudge --quick --sweeps
 python tesla_369_lab.py --mode bridge_lock_threshold --quick --sweeps
 python tesla_369_lab.py --mode bridge_control_authority --quick --sweeps
+python tesla_369_lab.py --mode bridge_drift_feedforward --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -116,3 +120,14 @@ Quick smoke result:
 - `receiver_tuning_nudge` showed a low extrapolated authority margin in one small-signal row, but the measured open-loop drift reduction was only about 1.4%.
 - No quick-smoke authority row passed promotion. The result is evidence for measurable actuator pull, not a 4x lock.
 - Current recommendation: try frequency-drift feedforward or stronger proportional control before escalating to a real PLL.
+
+## Latest Drift Feedforward Read
+
+Quick smoke result:
+
+- Best 4x feedforward row used `magnetic_bias_ramp` with `hold_after_capture_ramp`.
+- It reached phase lock 0.780, bridge ratio 2.717, spectral purity 0.774, and budget error 0.00328.
+- Feedforward work was tiny, about 0.0000083 of total input work, but drift reduction was only about 0.14%.
+- No discovery row passed the 4x phase-lock gate.
+- A non-369 control reached phase lock 0.996 under the same feedforward rules, so the 3 -> 6 -> 9 bridge is not promoted.
+- Current recommendation: stronger proportional control next; move to PLL if fixed feedforward remains phase-limited.

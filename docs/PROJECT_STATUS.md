@@ -21,6 +21,7 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Passive magnetic damping/saturation can improve 2x behavior.
 - Open-loop magnetic autolock sweeps and hybrid tuning improve 1x capture in quick sweeps.
 - Open-loop control-authority tests now quantify whether receiver tuning, magnetic bias, or Stage B detuning can pull 4x phase drift under clean accounting.
+- Precomputed drift feedforward ramps do not currently hold 4x phase lock, even with tiny counted work.
 
 ## Current Blocker
 
@@ -76,13 +77,39 @@ Quick smoke result from `runs/bridge_control_authority_quick_smoke`:
 - No discovery row passed the 50% drift-reduction promotion gate.
 - Current read: the actuators show measurable pull, but the tested open-loop nudges are not enough to prove 4x lock.
 
+## Latest Drift Feedforward Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode bridge_drift_feedforward
+python tesla_369_lab.py --mode bridge_drift_feedforward --quick
+python tesla_369_lab.py --mode bridge_drift_feedforward --sweeps
+```
+
+What it tests:
+
+- A no-feedforward baseline, then a precomputed ramp from the measured signed phase drift and previous actuator authority.
+- Receiver tuning, Stage B detuning, and magnetic bias ramps only.
+- Linear, piecewise-linear, S-curve, hold-after-capture, and two-stage ramps.
+- No PLL, no live feedback, no direct 6 drive, no direct 9 drive, and no target-frequency injection.
+- Wrong-sign, random, overcorrected, and non-369 staged bridge controls.
+
+Quick smoke result from `runs/bridge_drift_feedforward_quick_smoke`:
+
+- Best row: `magnetic_bias_ramp` with `hold_after_capture_ramp`.
+- Metrics: phase_lock_9 0.780, bridge ratio 2.717, spectral purity 0.774, budget error 0.00328, feedforward work fraction 0.0000083.
+- Drift reduction was only about 0.14%, so the ramp did not cancel the long-runtime phase drift.
+- No discovery row passed the 4x phase-lock gate.
+- A non-369 control reached phase_lock_9 0.996 under the same feedforward rules.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run `bridge_control_authority --sweeps` to firm up actuator gain and authority margins across receiver tuning, magnetic bias, and Stage B detuning.
-2. Try frequency-drift feedforward or stronger proportional control using the measured actuator gains.
-3. Move to active self-lock / PLL and explicitly account for active work if feedforward/proportional control still cannot hold 4x.
+1. Run `bridge_drift_feedforward --sweeps` only if we need a broader fixed-ramp confirmation across timing, ramp size, and runtime.
+2. Move to stronger proportional control using the measured actuator gains.
+3. Move to active self-lock / PLL and explicitly account for active work if proportional control still cannot hold 4x.
 4. Add a geometry mode only after a 4x-stable seed exists.
