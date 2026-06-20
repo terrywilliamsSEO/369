@@ -92,6 +92,12 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Keeps direct 6/9 drive and target-frequency injection out of discovery tests.
    - Reports passive energy accounting plus explicit correction-work, wrong-sign/random/no-nudge controls, non-369 controls, and half/quarter-dt validation.
 
+17. **Bridge lock threshold**
+   - Starts from the best raw `bridge_min_nudge` rows plus the best magnetic/autolock seed.
+   - Sweeps actuator type, Kp, clamp, smoothing, update interval, receiver tuning, phase bias, and Stage B nonlinear strength.
+   - Uses only receiver tuning, magnetic bias, and Stage B detuning nudges; no direct 6/9 drive and no 9-frequency injection.
+   - Reports the minimum Kp/work needed for 4x lock, explicit correction work, controls, and half/quarter-dt preservation checks.
+
 ## Install
 
 ```bash
@@ -158,6 +164,10 @@ python tesla_369_lab.py --mode bridge_min_nudge
 python tesla_369_lab.py --mode bridge_min_nudge --quick
 python tesla_369_lab.py --mode bridge_min_nudge --sweeps
 python tesla_369_lab.py --mode bridge_min_nudge --quick --sweeps
+python tesla_369_lab.py --mode bridge_lock_threshold
+python tesla_369_lab.py --mode bridge_lock_threshold --quick
+python tesla_369_lab.py --mode bridge_lock_threshold --sweeps
+python tesla_369_lab.py --mode bridge_lock_threshold --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -231,6 +241,10 @@ magnetic_autolock_controls.csv
 bridge_min_nudge_summary.csv
 bridge_min_nudge_ranked.csv
 bridge_min_nudge_timeseries.csv
+bridge_lock_threshold_summary.csv
+bridge_lock_threshold_ranked.csv
+bridge_lock_threshold_sweeps.csv
+bridge_lock_threshold_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -255,6 +269,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In magnetic bridge mode, can passive flux coupling stabilize 2x/4x runtime without hidden energy injection?
 - In magnetic autolock mode, can open-loop capture, passive hybrid tuning, or tiny counted injection survive 4x without becoming hidden feedback?
 - In bridge minimum nudge mode, can an explicitly accounted tiny tuning correction stabilize 4x lock without overpowering the passive bridge?
+- In bridge lock threshold mode, what is the minimum explicitly accounted correction needed for 4x lock, if any?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results

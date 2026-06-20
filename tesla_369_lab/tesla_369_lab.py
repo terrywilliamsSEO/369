@@ -9218,6 +9218,472 @@ def experiment_bridge_min_nudge(out_dir: Path, seed: int, quick: bool = False,
 
 
 # ----------------------------
+# Experiment 17: bridge lock threshold
+# ----------------------------
+
+def bridge_lock_threshold_make_config(correction_type: str,
+                                      receiver_tuning: float = 8.90,
+                                      phase_bias: float = 30.0,
+                                      stage_b_strength: float = 0.84,
+                                      stage_b_detuning: float = 0.0,
+                                      kp: float = 0.002,
+                                      correction_clamp: float = 0.012,
+                                      smoothing: float = 0.18,
+                                      update_interval: float = 2.0,
+                                      magnetic_bias_strength: float = 2.0,
+                                      control_mode: str = "normal",
+                                      reference_role: str = "discovery_candidate",
+                                      family: str = "369",
+                                      name_suffix: str = "") -> BridgeMinNudgeConfig:
+    magnetic = bridge_min_nudge_seed_magnetic(receiver_tuning, 6.0 + stage_b_detuning, stage_b_strength, phase_bias)
+    name = (
+        f"threshold_{correction_type}_{control_mode}_r{safe_token(receiver_tuning)}"
+        f"_p{safe_token(phase_bias)}_s{safe_token(stage_b_strength)}"
+        f"_kp{safe_token(kp)}_c{safe_token(correction_clamp)}"
+        f"_sm{safe_token(smoothing)}_u{safe_token(update_interval)}"
+    )
+    if name_suffix:
+        name = f"{name}_{name_suffix}"
+    return BridgeMinNudgeConfig(
+        name=name,
+        correction_type=correction_type,
+        magnetic_config=magnetic,
+        kp=kp,
+        correction_clamp=correction_clamp,
+        update_interval=update_interval,
+        smoothing=smoothing,
+        magnetic_bias_strength=magnetic_bias_strength,
+        control_mode=control_mode,
+        reference_role=reference_role,
+        family=family,
+        note="threshold search from bridge_min_nudge and magnetic/autolock seed",
+    )
+
+
+def bridge_lock_threshold_non369_config(source: float, target: float,
+                                        correction_type: str,
+                                        kp: float = 0.002,
+                                        correction_clamp: float = 0.012,
+                                        smoothing: float = 0.18,
+                                        update_interval: float = 2.0) -> BridgeMinNudgeConfig:
+    magnetic = bridge_min_nudge_non369_seed(source, target)
+    bridge = replace(
+        magnetic.bridge,
+        stage_b_phase_bias_deg=30.0,
+        stage_b_nonlinear_strength=0.84,
+        note="non-369 bridge lock threshold control",
+    )
+    magnetic = replace(magnetic, bridge=bridge, reference_role="control", family="non369")
+    return BridgeMinNudgeConfig(
+        name=f"threshold_{correction_type}_non369_{safe_token(source)}_{safe_token(target)}",
+        correction_type=correction_type,
+        magnetic_config=magnetic,
+        kp=kp,
+        correction_clamp=correction_clamp,
+        update_interval=update_interval,
+        smoothing=smoothing,
+        magnetic_bias_strength=2.0,
+        control_mode="normal",
+        reference_role="control",
+        family="non369",
+        note="non-369 bridge threshold control under same nudge rules",
+    )
+
+
+def bridge_lock_threshold_specs(quick: bool, include_sweeps: bool) -> List[Tuple[str, str, BridgeMinNudgeConfig]]:
+    specs: List[Tuple[str, str, BridgeMinNudgeConfig]] = [
+        ("starting_receiver_best_raw_4x", "receiver", bridge_lock_threshold_make_config("receiver_tuning_nudge", kp=0.002, correction_clamp=0.012, smoothing=0.18, update_interval=2.0)),
+        ("starting_magnetic_low_work", "magnetic_bias", bridge_lock_threshold_make_config("magnetic_bias_nudge", kp=0.002, correction_clamp=0.012, smoothing=0.18, update_interval=2.0)),
+        ("starting_stageB_budget_clean", "stageB", bridge_lock_threshold_make_config("stage_B_detuning_nudge", kp=0.002, correction_clamp=0.012, smoothing=0.18, update_interval=2.0)),
+        ("autolock_seed_receiver", "autolock", bridge_lock_threshold_make_config("receiver_tuning_nudge", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.90, kp=0.002, correction_clamp=0.012, smoothing=0.18, update_interval=2.0)),
+    ]
+    if not include_sweeps:
+        return specs
+
+    correction_types = ["receiver_tuning_nudge", "magnetic_bias_nudge", "stage_B_detuning_nudge"]
+    kp_values = [0.0005, 0.002, 0.008] if quick else [0.0002, 0.0005, 0.001, 0.002, 0.004, 0.008, 0.016]
+    clamp_values = [0.008, 0.024] if quick else [0.004, 0.008, 0.012, 0.024, 0.040]
+    smoothing_values = [0.12, 0.28] if quick else [0.08, 0.12, 0.18, 0.28, 0.42]
+    update_values = [1.0, 4.0] if quick else [0.75, 1.5, 2.0, 4.0, 6.0]
+    receiver_values = [8.86, 8.90, 8.93] if quick else [8.86, 8.875, 8.89, 8.90, 8.915, 8.93]
+    phase_values = [15.0, 25.0, 35.0] if quick else [15.0, 20.0, 25.0, 30.0, 35.0]
+    strength_values = [0.80, 0.84, 0.94] if quick else [0.80, 0.84, 0.88, 0.90, 0.94]
+
+    for ctype in correction_types:
+        for value in kp_values:
+            specs.append(("Kp", f"{ctype}_{value:g}", bridge_lock_threshold_make_config(ctype, kp=value)))
+        for value in clamp_values:
+            specs.append(("correction_clamp", f"{ctype}_{value:g}", bridge_lock_threshold_make_config(ctype, correction_clamp=value)))
+        for value in smoothing_values:
+            specs.append(("correction_smoothing", f"{ctype}_{value:g}", bridge_lock_threshold_make_config(ctype, smoothing=value)))
+        for value in update_values:
+            specs.append(("update_interval", f"{ctype}_{value:g}", bridge_lock_threshold_make_config(ctype, update_interval=value)))
+        for value in receiver_values:
+            specs.append(("receiver_tuning", f"{ctype}_{value:g}", bridge_lock_threshold_make_config(ctype, receiver_tuning=value)))
+        for value in phase_values:
+            specs.append(("phase_bias", f"{ctype}_{value:g}", bridge_lock_threshold_make_config(ctype, phase_bias=value)))
+        for value in strength_values:
+            specs.append(("stage_B_nonlinear_strength", f"{ctype}_{value:g}", bridge_lock_threshold_make_config(ctype, stage_b_strength=value)))
+    return specs
+
+
+def bridge_lock_threshold_control_specs(include_sweeps: bool) -> List[Tuple[str, str, BridgeMinNudgeConfig]]:
+    control_types = ["receiver_tuning_nudge", "magnetic_bias_nudge", "stage_B_detuning_nudge"] if include_sweeps else ["receiver_tuning_nudge"]
+    specs: List[Tuple[str, str, BridgeMinNudgeConfig]] = []
+    for ctype in control_types:
+        specs.append(("no_nudge_baseline", ctype, bridge_lock_threshold_make_config(ctype, kp=0.0, control_mode="no_nudge", reference_role="control", name_suffix="control")))
+        specs.append(("wrong_sign_nudge", ctype, bridge_lock_threshold_make_config(ctype, kp=0.002, control_mode="wrong_sign", reference_role="control", name_suffix="control")))
+        specs.append(("random_nudge", ctype, bridge_lock_threshold_make_config(ctype, kp=0.002, control_mode="random", reference_role="control", name_suffix="control")))
+    for source, target in ((4.0, 12.0), (5.0, 15.0)):
+        for ctype in control_types:
+            specs.append((f"non369_{safe_token(source)}_{safe_token(target)}", ctype, bridge_lock_threshold_non369_config(source, target, ctype)))
+    return specs
+
+
+def bridge_lock_threshold_gate(row: Dict[str, float | str]) -> bool:
+    return (
+        float(row.get("bridge_ratio", 0.0)) > 0.75
+        and float(row.get("phase_lock_9", 0.0)) > 0.90
+        and float(row.get("spectral_purity_9", 0.0)) > 0.60
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+        and float(row.get("correction_work_fraction", 1.0)) < 0.05
+        and str(row.get("no_direct_6_drive", "False")) == "True"
+        and str(row.get("no_direct_9_drive", "False")) == "True"
+    )
+
+
+def bridge_lock_threshold_update_score(row: Dict[str, float | str]) -> None:
+    runtime_factor = float(row.get("runtime_factor", 1.0))
+    passed = runtime_factor >= 4.0 and bridge_lock_threshold_gate(row)
+    strong = (
+        passed
+        and float(row.get("bridge_ratio", 0.0)) > 0.85
+        and float(row.get("phase_lock_9", 0.0)) > 0.95
+        and float(row.get("spectral_purity_9", 0.0)) > 0.75
+        and float(row.get("correction_work_fraction", 1.0)) < 0.02
+    )
+    failures = []
+    if runtime_factor < 4.0:
+        failures.append("not_4x_runtime")
+    if float(row.get("bridge_ratio", 0.0)) <= 0.75:
+        failures.append("bridge_ratio")
+    if float(row.get("phase_lock_9", 0.0)) <= 0.90:
+        failures.append("phase_lock_9")
+    if float(row.get("spectral_purity_9", 0.0)) <= 0.60:
+        failures.append("spectral_purity_9")
+    if float(row.get("energy_budget_error", 1.0)) >= 0.005:
+        failures.append("energy_budget")
+    if float(row.get("correction_work_fraction", 1.0)) >= 0.05:
+        failures.append("correction_work_fraction")
+    if str(row.get("no_direct_6_drive", "False")) != "True" or str(row.get("no_direct_9_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+
+    if "phase_lock_9" in failures:
+        failure_mode = "phase_drift"
+    elif "energy_budget" in failures:
+        failure_mode = "energy_budget_drift"
+    elif "correction_work_fraction" in failures:
+        failure_mode = "overpowered_correction"
+    elif "bridge_ratio" in failures:
+        failure_mode = "weak_bridge_ratio"
+    elif passed:
+        failure_mode = "stable_threshold_lock"
+    else:
+        failure_mode = "control_or_runtime"
+
+    score = (
+        float(row.get("bridge_ratio", 0.0))
+        * float(row.get("phase_lock_9", 0.0))
+        * float(row.get("spectral_purity_9", 0.0))
+        / (
+            1.0
+            + 400.0 * max(0.0, float(row.get("energy_budget_error", 0.0)))
+            + 80.0 * max(0.0, float(row.get("correction_work_fraction", 0.0)))
+            + 8.0 * max(0.0, float(row.get("correction_peak", 0.0)))
+        )
+    )
+    if not passed or str(row.get("reference_role")) != "discovery_candidate":
+        score = 0.0
+
+    row["passed"] = str(passed)
+    row["4x_pass"] = str(passed)
+    row["strong_passed"] = str(strong)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+    row["bridge_lock_threshold_score"] = score
+    row["score"] = score
+
+
+def bridge_lock_threshold_measure(config: BridgeMinNudgeConfig, seed: int, quick: bool,
+                                  dt: float, runtime: float, sample_every: int,
+                                  runtime_factor: float, run_type: str,
+                                  sweep: str, sweep_value: str,
+                                  direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                  ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    row, ledger, drift = bridge_min_nudge_measure(
+        config,
+        seed,
+        quick,
+        dt,
+        runtime,
+        sample_every,
+        runtime_factor,
+        run_type,
+        sweep,
+        sweep_value,
+        direct_cache,
+    )
+    row["experiment"] = "bridge_lock_threshold"
+    row["candidate_id"] = f"{config.name}:{runtime_factor:g}x:{sweep}:{sweep_value}"
+    row["correction_smoothing"] = config.smoothing
+    row["minimum_Kp_for_4x_lock"] = 0.0
+    row["minimum_work_for_4x_lock"] = 0.0
+    bridge_lock_threshold_update_score(row)
+    for item in ledger:
+        item["experiment"] = "bridge_lock_threshold"
+        item["candidate_id"] = row["candidate_id"]
+        item["correction_smoothing"] = config.smoothing
+    for item in drift:
+        item["experiment"] = "bridge_lock_threshold"
+        item["candidate_id"] = row["candidate_id"]
+    return row, ledger, drift
+
+
+def bridge_lock_threshold_annotate_minima(rows: List[Dict[str, float | str]]) -> None:
+    passing = [
+        r for r in rows
+        if str(r.get("reference_role")) == "discovery_candidate"
+        and str(r.get("4x_pass")) == "True"
+        and float(r.get("runtime_factor", 1.0)) >= 4.0
+    ]
+    for row in rows:
+        same_type = [r for r in passing if str(r.get("correction_type")) == str(row.get("correction_type"))]
+        row["minimum_Kp_for_4x_lock"] = min((float(r.get("kp", 0.0)) for r in same_type), default=0.0)
+        row["minimum_work_for_4x_lock"] = min((float(r.get("correction_work_fraction", 0.0)) for r in same_type), default=0.0)
+        row["global_minimum_Kp_for_4x_lock"] = min((float(r.get("kp", 0.0)) for r in passing), default=0.0)
+        row["global_minimum_work_for_4x_lock"] = min((float(r.get("correction_work_fraction", 0.0)) for r in passing), default=0.0)
+
+
+def bridge_lock_threshold_validation(config: BridgeMinNudgeConfig, seed: int, quick: bool,
+                                     dt: float, base_runtime: float, sample_every: int
+                                     ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [
+        ("runtime_4x", dt, base_runtime * 4.0, 4.0),
+        ("half_dt_4x", dt * 0.5, base_runtime * 4.0, 4.0),
+        ("quarter_dt_4x", dt * 0.25, base_runtime * 4.0, 4.0),
+    ]
+    rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    drift_rows: List[Dict[str, float | str]] = []
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    for idx, (test, test_dt, runtime, factor) in enumerate(tests):
+        row, ledger, drift = bridge_lock_threshold_measure(
+            config,
+            seed + idx * 127,
+            quick,
+            test_dt,
+            runtime,
+            sample_every,
+            factor,
+            "validation",
+            test,
+            test,
+            direct_cache,
+        )
+        row["validation_test"] = test
+        rows.append(row)
+        ledger_rows.extend(ledger)
+        drift_rows.extend(drift)
+    bridge_lock_threshold_annotate_minima(rows)
+    return rows, ledger_rows, drift_rows
+
+
+def apply_bridge_lock_threshold_validation_status(candidate: Dict[str, float | str],
+                                                  validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    runtime4 = next((r for r in rows if str(r.get("validation_test")) == "runtime_4x"), {})
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt_4x"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt_4x"), {})
+    runtime4_pass = runtime4.get("4x_pass") == "True"
+    half_pass = half.get("4x_pass") == "True"
+    quarter_pass = quarter.get("4x_pass") == "True"
+    candidate["runtime_4x_passed"] = str(runtime4_pass)
+    candidate["half_dt_passed"] = str(half_pass)
+    candidate["quarter_dt_passed"] = str(quarter_pass)
+    candidate["runtime_4x_phase_lock_9"] = runtime4.get("phase_lock_9", 0.0)
+    candidate["half_dt_phase_lock_9"] = half.get("phase_lock_9", 0.0)
+    candidate["quarter_dt_phase_lock_9"] = quarter.get("phase_lock_9", 0.0)
+    candidate["promotion_ready"] = str(runtime4_pass and half_pass and quarter_pass)
+    bridge_lock_threshold_update_score(candidate)
+    if candidate["promotion_ready"] != "True":
+        candidate["passed"] = "False"
+        candidate["failed_gate_names"] = ";".join(filter(None, [str(candidate.get("failed_gate_names", "")), "dt_validation"]))
+        candidate["bridge_lock_threshold_score"] = 0.0
+        candidate["score"] = 0.0
+
+
+def write_bridge_lock_threshold_report(out_dir: Path, ranked: List[Dict[str, float | str]],
+                                       validation_rows: List[Dict[str, float | str]],
+                                       controls: List[Dict[str, float | str]]) -> None:
+    discovery = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate"]
+    passing = [r for r in discovery if str(r.get("promotion_ready")) == "True"]
+    raw_4x_pass = [r for r in discovery if str(r.get("4x_pass")) == "True"]
+    min_work_row = min(passing or raw_4x_pass, key=lambda r: float(r.get("correction_work_fraction", 1.0)), default={})
+    by_type: Dict[str, Dict[str, float | str]] = {}
+    for ctype in ["receiver_tuning_nudge", "magnetic_bias_nudge", "stage_B_detuning_nudge"]:
+        rows_for_type = [r for r in discovery if str(r.get("correction_type")) == ctype and float(r.get("runtime_factor", 1.0)) >= 4.0]
+        if rows_for_type:
+            by_type[ctype] = max(rows_for_type, key=lambda r: (float(r.get("bridge_lock_threshold_score", 0.0)), float(r.get("phase_lock_9", 0.0))))
+    best = max(by_type.values(), key=lambda r: (float(r.get("bridge_lock_threshold_score", 0.0)), float(r.get("phase_lock_9", 0.0))), default={})
+    no_nudge = max([r for r in controls if str(r.get("control_mode")) == "no_nudge"], key=lambda r: float(r.get("phase_lock_9", 0.0)), default={})
+    wrong = max([r for r in controls if str(r.get("control_mode")) == "wrong_sign"], key=lambda r: float(r.get("phase_lock_9", 0.0)), default={})
+    random_control = max([r for r in controls if str(r.get("control_mode")) == "random"], key=lambda r: float(r.get("phase_lock_9", 0.0)), default={})
+    non369 = max([r for r in controls if str(r.get("family")) == "non369"], key=lambda r: (float(r.get("bridge_lock_threshold_score", 0.0)), float(r.get("phase_lock_9", 0.0))), default={})
+    gentle = bool(min_work_row) and float(min_work_row.get("correction_work_fraction", 1.0)) < 0.02 and float(min_work_row.get("correction_peak", 1.0)) < float(min_work_row.get("correction_clamp", 0.0)) + 1e-12
+    active_too_important = not passing and max((float(r.get("phase_lock_9", 0.0)) for r in discovery if float(r.get("runtime_factor", 1.0)) >= 4.0), default=0.0) < 0.90
+    lines = [
+        "# Bridge Lock Threshold Report",
+        "",
+        "This threshold search uses only receiver tuning, magnetic bias, and Stage B detuning nudges. Discovery rows use no direct 6 drive, no direct 9 drive, and no 9-frequency injection.",
+        "",
+        "## Direct Answers",
+        f"1. Minimum correction work needed for 4x lock: {float(min_work_row.get('correction_work_fraction', 0.0)):.6g}; minimum_Kp={float(min_work_row.get('kp', 0.0)):.6g}; candidate={min_work_row.get('case', 'none')}.",
+        f"2. Best actuator: {best.get('correction_type', 'none')}; receiver_phase={float(by_type.get('receiver_tuning_nudge', {}).get('phase_lock_9', 0.0)):.6g}, magnetic_phase={float(by_type.get('magnetic_bias_nudge', {}).get('phase_lock_9', 0.0)):.6g}, stageB_phase={float(by_type.get('stage_B_detuning_nudge', {}).get('phase_lock_9', 0.0)):.6g}.",
+        f"3. Gentle stabilizer or overpowering? {'gentle stabilizer' if gentle else 'not proven gentle'}; no_nudge_phase={float(no_nudge.get('phase_lock_9', 0.0)):.6g}, wrong_sign_phase={float(wrong.get('phase_lock_9', 0.0)):.6g}, random_phase={float(random_control.get('phase_lock_9', 0.0)):.6g}.",
+        f"4. Non-369 controls beat 3 -> 6 -> 9? {'yes' if float(non369.get('bridge_lock_threshold_score', 0.0)) > float(best.get('bridge_lock_threshold_score', 0.0)) else 'no under current gates'}; best_non369={non369.get('case', 'none')}, phase={float(non369.get('phase_lock_9', 0.0)):.6g}, score={float(non369.get('bridge_lock_threshold_score', 0.0)):.6g}.",
+        f"5. Move to geometry369/evolve? {'not yet; active correction is still too important' if active_too_important else 'candidate may justify evolve/geometry review after dt validation'}; promoted={len(passing)}.",
+        "",
+        "## Top Rows",
+    ]
+    for row in ranked[:24]:
+        lines.append(
+            f"- {row.get('candidate_id')}: actuator={row.get('correction_type')}, score={float(row.get('bridge_lock_threshold_score', 0.0)):.6g}, "
+            f"promotion={row.get('promotion_ready', 'False')}, 4x={row.get('4x_pass', 'False')}, ratio={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"phase={float(row.get('phase_lock_9', 0.0)):.6g}, purity={float(row.get('spectral_purity_9', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, work={float(row.get('correction_work_fraction', 0.0)):.6g}, "
+            f"kp={float(row.get('kp', 0.0)):.6g}, drift={float(row.get('phase_drift_rate', 0.0)):.6g}, failure={row.get('failure_mode', '')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Dt Validation"])
+        for row in validation_rows[:30]:
+            lines.append(
+                f"- {row.get('candidate_id')}: test={row.get('validation_test', '')}, 4x={row.get('4x_pass', 'False')}, "
+                f"phase={float(row.get('phase_lock_9', 0.0)):.6g}, work={float(row.get('correction_work_fraction', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}"
+            )
+    (out_dir / "README_BRIDGE_LOCK_THRESHOLD_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_lock_threshold(out_dir: Path, seed: int, quick: bool = False,
+                                     include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    base_runtime = base_tmax * 1.25
+    runtime_factors = [1.0, 2.0, 4.0]
+    specs = bridge_lock_threshold_specs(quick, include_sweeps)
+    control_specs = bridge_lock_threshold_control_specs(include_sweeps)
+
+    summary_rows: List[Dict[str, float | str]] = []
+    sweep_rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    drift_rows: List[Dict[str, float | str]] = []
+    controls: List[Dict[str, float | str]] = []
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+
+    for idx, (sweep, value, config) in enumerate(specs + control_specs):
+        for factor in runtime_factors:
+            runtime = base_runtime * factor
+            row, ledger, drift = bridge_lock_threshold_measure(
+                config,
+                seed + idx * 223 + int(factor * 23),
+                quick,
+                dt,
+                runtime,
+                sample_every,
+                factor,
+                "sweep" if include_sweeps else "core",
+                sweep,
+                value,
+                direct_cache,
+            )
+            summary_rows.append(row)
+            if include_sweeps or str(config.reference_role) == "discovery_candidate":
+                sweep_rows.append(row)
+            if str(config.reference_role) == "control" or config.family == "non369":
+                controls.append(row)
+            if factor >= 4.0 or str(config.reference_role) == "control":
+                ledger_rows.extend(ledger)
+                drift_rows.extend(drift)
+
+    bridge_lock_threshold_annotate_minima(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_lock_threshold_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            float(r.get("runtime_factor", 1.0)),
+            float(r.get("phase_lock_9", 0.0)),
+            -float(r.get("correction_work_fraction", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    validation_rows: List[Dict[str, float | str]] = []
+    top_candidates = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate" and float(r.get("runtime_factor", 1.0)) >= 4.0][:5 if include_sweeps else 2]
+    for idx, candidate in enumerate(top_candidates):
+        spec = next((item for item in specs if str(candidate.get("case")) == item[2].name), None)
+        if spec is None:
+            continue
+        _, _, config = spec
+        rows, ledger, drift = bridge_lock_threshold_validation(config, seed + 61000 + idx * 1000, quick, dt, base_runtime, sample_every)
+        validation_rows.extend(rows)
+        ledger_rows.extend(ledger)
+        drift_rows.extend(drift)
+        apply_bridge_lock_threshold_validation_status(candidate, validation_rows)
+        if str(candidate.get("promotion_ready")) == "True":
+            break
+
+    bridge_lock_threshold_annotate_minima(summary_rows + validation_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_lock_threshold_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            float(r.get("runtime_factor", 1.0)),
+            float(r.get("phase_lock_9", 0.0)),
+            -float(r.get("correction_work_fraction", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    write_csv(out_dir / "bridge_lock_threshold_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "bridge_lock_threshold_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_lock_threshold_sweeps.csv", sweep_rows)
+    write_csv(out_dir / "bridge_lock_threshold_timeseries.csv", ledger_rows + drift_rows)
+    write_bridge_lock_threshold_report(out_dir, ranked, validation_rows, controls)
+
+    return [
+        {
+            "experiment": "bridge_lock_threshold",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_lock_threshold_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "correction_type": row.get("correction_type", ""),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "phase_lock_9": row.get("phase_lock_9", 0.0),
+            "spectral_purity_9": row.get("spectral_purity_9", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "correction_work_fraction": row.get("correction_work_fraction", 0.0),
+            "minimum_Kp_for_4x_lock": row.get("minimum_Kp_for_4x_lock", 0.0),
+            "minimum_work_for_4x_lock": row.get("minimum_work_for_4x_lock", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -9258,8 +9724,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -9304,6 +9770,8 @@ def main() -> None:
         rows.extend(experiment_magnetic_autolock(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_min_nudge",):
         rows.extend(experiment_bridge_min_nudge(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_lock_threshold",):
+        rows.extend(experiment_bridge_lock_threshold(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

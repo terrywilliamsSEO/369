@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-06-19
+Last updated: 2026-06-20
 
 ## Scientific Status
 
@@ -57,7 +57,7 @@ Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run `bridge_min_nudge --sweeps` to test whether a tiny explicitly accounted proportional tuning correction can hold 4x lock.
-2. Run deeper `magnetic_autolock --sweeps` focused on 4x phase drift.
+1. Run `bridge_lock_threshold --sweeps` to find the minimum explicitly accounted correction needed for 4x lock, if one exists.
+2. Run `bridge_min_nudge --sweeps` or deeper `magnetic_autolock --sweeps` focused on 4x phase drift if threshold search still fails.
 3. Move to active self-lock / PLL and explicitly account for active work.
 4. Add a geometry mode only after a 4x-stable seed exists.

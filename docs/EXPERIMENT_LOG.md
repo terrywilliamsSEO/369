@@ -119,3 +119,13 @@ Added an explicit proportional-only correction-work test:
 - Keeps direct 6/9 drive and target-frequency injection out of discovery rows.
 - Counts signed parameter-work in the energy budget and reports absolute correction-work fraction, RMS, and peak correction.
 - Includes no-nudge, wrong-sign, random, and non-369 bridge controls.
+
+## Bridge Lock Threshold
+
+Added a minimum-correction threshold search:
+
+- Starts from the best raw `bridge_min_nudge` actuator rows and `sweep_receiver_capture_8p82_to_8p9_s0p9`.
+- Sweeps actuator type, Kp, clamp, smoothing, update interval, receiver tuning, phase bias, and Stage B nonlinear strength.
+- Uses only receiver tuning, magnetic bias, and Stage B detuning corrections.
+- Keeps direct 6/9 drive and 9-frequency injection out of discovery rows.
+- Reports minimum Kp/work for 4x lock, explicit correction work, controls, and half/quarter-dt preservation.
