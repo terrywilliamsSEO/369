@@ -29,12 +29,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Stage A budget audit isolates that failure: static `+0.03` tuning removes slips, but the final tuned configuration still breaks budget even with no servo and no dynamic parameter work.
 - Stage A budget forensics suggests that budget failure is dt-sensitive driven-model accounting, not no-drive nonconservation: half-dt and quarter-dt clean the full-model rows.
 - Harmonic-family mapping shows the strongest normalized quick-smoke row is 5 -> 10 -> 15, not 3 -> 6 -> 9; no family passed the harmonic bridge candidate gate yet.
+- Harmonic dt rescue shows the 4 -> 8 -> 12 near miss can satisfy all strict non-budget phase/bridge/envelope gates across dt after target detuning, but baseline-dt budget error still blocks promotion.
 
 ## Current Blocker
 
 No passive model has passed the strict 4x runtime lock gate.
 
-The main 4x failure is now split between generated-stage lock quality, driven-model budget accounting, and family specificity. The narrow forensics search found budget-clean zero-slip rows, but they still miss lock/jump/envelope gates. The harmonic-family quick smoke did not support 369 uniqueness.
+The main 4x failure is now split between generated-stage lock quality, driven-model budget accounting, and family specificity. The narrow forensics search found budget-clean zero-slip rows, but they still miss lock/jump/envelope gates. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 dt-rescue smoke now points to budget-ledger sensitivity, not phase instability, as the blocker for that family.
 
 ## Latest Magnetic Autolock Summary
 
@@ -350,6 +351,32 @@ Quick smoke result from `runs/harmonic_bridge_family_quick_smoke`:
 - No family passed `harmonic_bridge_candidate`; no family passed `strict_harmonic_bridge_candidate`; no `369_unique_candidate` or `general_harmonic_bridge_law` label passed.
 - Current read: this does not justify 369-specific promotion. The next step should be family-law mapping before geometry/evolve or a 369-specific PLL.
 
+## Latest Harmonic Bridge Dt Rescue Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick
+python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick --sweeps
+```
+
+What it tests:
+
+- Whether the 4 -> 8 -> 12 near miss from `harmonic_bridge_family` fails because of true phase instability or timestep-sensitive tuning/accounting.
+- Baseline dt, half dt, and quarter dt for every candidate.
+- Stage A offset, generated damping factor, A->B coupling, limiter strength, target detuning, Stage B detuning, and diagnostic-only phase-analysis windows.
+- Comparison rows for 3 -> 6 -> 9 and 5 -> 10 -> 15 under the same all-dt aggregate scoring.
+- Worst-case all-dt lock, bridge ratio, purity, budget, envelope CV, max jump, near slips, and dt metric spreads.
+
+Quick smoke result from `runs/harmonic_bridge_dt_rescue_quick_smoke`:
+
+- Best 4 -> 8 -> 12 physical rescue row used target detuning `-0.08`.
+- Its strict non-budget metrics survived all dt levels: lock stayed about 0.985, bridge ratio about 1.875, purity about 0.992, generated-envelope CV below 0.139, max jump below 0.999 rad, and near slips stayed 0.
+- It still failed promotion because budget was dt-sensitive: baseline budget error 0.04485, half-dt 0.005006, quarter-dt 0.000628.
+- No 4 -> 8 -> 12 row passed `harmonic_bridge_candidate` or strict because no row met the all-dt budget gate.
+- After bridge-ratio gating, 4 -> 8 -> 12 beat 5 -> 10 -> 15. 3 -> 6 -> 9 remained behind 4 -> 8 -> 12, but not behind 5 -> 10 -> 15 once 5-family budget/bridge-ratio failures were counted.
+- Current read: the 4 -> 8 -> 12 failure is not a true phase instability in the best row. It is a budget-ledger/dt sensitivity problem followed by a target-detuning refinement problem.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
@@ -358,6 +385,6 @@ Next options:
 
 1. Keep the refined-dt accounting path and continue monitoring absolute/relative budget convergence.
 2. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
-3. Map family-law scaling around 4 -> 8 -> 12 and 5 -> 10 -> 15 before a 369-specific PLL.
+3. Refine the 4 -> 8 -> 12 budget ledger and target-detuning basin before broader family-law mapping.
 4. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 5. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

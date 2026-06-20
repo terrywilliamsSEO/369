@@ -261,3 +261,18 @@ Added a harmonic family mode:
 - 4 -> 8 -> 12 came closest to a harmonic candidate: refined Stage A equivalent had lock 0.984, bridge ratio 1.929, purity 0.992, budget 0.00185, generated-envelope CV 0.126, and max jump 1.05 rad, but did not preserve the result across all dt checks.
 - No family passed `harmonic_bridge_candidate`, no family passed strict, and no `general_harmonic_bridge_law` label passed.
 - Current next fix: family-law mapping before geometry/evolve or 369-specific PLL.
+
+## Harmonic Bridge Dt Rescue
+
+Added a dt-rescue mode for the 4 -> 8 -> 12 near miss:
+
+- Starts from the best 4 -> 8 -> 12 refined Stage A equivalent from `harmonic_bridge_family`.
+- Runs every candidate at baseline dt, half dt, and quarter dt.
+- Ranks aggregate rows using worst-case all-dt lock, bridge ratio, purity, budget, generated/target envelope CV, max jump, and near-slip metrics.
+- Varies Stage A offset, generated damping factor, A->B coupling, limiter strength, target detuning, Stage B detuning, and diagnostic-only phase-analysis windows.
+- Includes 3 -> 6 -> 9 and 5 -> 10 -> 15 comparison rows under the same all-dt scoring.
+- Quick smoke found a strong 4 -> 8 -> 12 target-detuned row (`target_detuning=-0.08`) that satisfied all strict non-budget metrics at all dt levels: lock about 0.985, bridge ratio about 1.875, purity about 0.992, generated-envelope CV below 0.139, max jump below 0.999 rad, and near slips 0.
+- That row did not promote because the budget gate failed at baseline dt and barely missed at half-dt: baseline budget 0.04485, half-dt 0.005006, quarter-dt 0.000628.
+- No 4 -> 8 -> 12 row passed `harmonic_bridge_candidate` or strict because all-dt budget cleanliness was not achieved.
+- After bridge-ratio gating, 4 -> 8 -> 12 beat 5 -> 10 -> 15. 3 -> 6 -> 9 remained behind 4 -> 8 -> 12, but not behind 5 -> 10 -> 15 after budget/bridge-ratio normalization.
+- Current next fix: 4 -> 8 -> 12 budget-ledger refinement, then a tighter target-detuning sweep.

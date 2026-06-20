@@ -33,11 +33,13 @@ What has not survived yet:
 - Stage A budget audit shows static `+0.03` tuning can remove target slips, but the final tuned configuration itself breaks the budget gate even with no dynamic retuning.
 - Stage A budget forensics suggests the Stage A budget issue is driven-model ledger/numerical sensitivity: no-drive errors are tiny in absolute terms, and half/quarter-dt reduce full-model budget below gate.
 - Harmonic-family mapping now shows 5 -> 10 -> 15 stronger than 3 -> 6 -> 9 under normalized passive scoring, while 4 -> 8 -> 12 is closest to a family candidate.
+- Harmonic dt rescue shows the best 4 -> 8 -> 12 target-detuned row is not a phase instability: strict non-budget metrics survive baseline/half/quarter dt, but baseline-dt budget error still blocks promotion.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Map the f->2f->3f family law before trying geometry/evolve or a 369-specific stronger target servo.
+- Refine the 4 -> 8 -> 12 budget ledger and target-detuning basin before trying geometry/evolve or a 369-specific stronger target servo.
+- Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
 - 3 -> 6 -> 9 is not uniquely special yet; keep non-369 controls central before geometry/evolve.
@@ -104,6 +106,8 @@ python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick
 python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_family --quick
 python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick
+python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick --sweeps
 ```
 
 Key bridge modes:
@@ -126,6 +130,7 @@ python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick --sweeps
 python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -270,3 +275,15 @@ Quick smoke result from `runs/harmonic_bridge_family_quick_smoke`:
 - 4 -> 8 -> 12 came closest to a harmonic candidate: refined Stage A equivalent had lock 0.984, bridge ratio 1.929, purity 0.992, budget 0.00185, generated-envelope CV 0.126, and max jump 1.05, but dt preservation was only 0.667.
 - No family passed `harmonic_bridge_candidate`, no family passed strict, and there is not yet evidence for a general harmonic bridge law.
 - Current recommendation: family-law mapping before any 369-specific PLL or geometry/evolve step.
+
+## Latest Harmonic Bridge Dt Rescue Read
+
+Quick smoke result from `runs/harmonic_bridge_dt_rescue_quick_smoke`:
+
+- The rescue mode reran each candidate at baseline dt, half dt, and quarter dt, then ranked using worst-case metrics across all three.
+- Best 4 -> 8 -> 12 rescue row was target detuning `-0.08`: lock 0.985/0.985/0.985 across dt, bridge ratio about 1.875, purity about 0.992, generated-envelope CV below 0.139, max jump below 0.999 rad, and near slips 0.
+- That row did not promote because budget remained dt-sensitive: baseline budget error 0.04485, half-dt 0.005006, quarter-dt 0.000628.
+- No 4 -> 8 -> 12 row passed `harmonic_bridge_candidate` or strict because the all-dt budget gate was not met.
+- After bridge-ratio gating, 4 -> 8 -> 12 beat 5 -> 10 -> 15; 5 -> 10 -> 15 still failed bridge-ratio and budget normalization in this dt-aware rescue.
+- 3 -> 6 -> 9 remained behind 4 -> 8 -> 12, but beat 5 -> 10 -> 15 once 5-family bridge-ratio/budget failures were counted.
+- Current recommendation: 4 -> 8 -> 12 budget-ledger refinement, then a tighter target-detuning sweep.

@@ -161,6 +161,12 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Compares 2->4->6 through 8->16->24 using passive baseline, refined Stage A basin equivalent, adaptive generated damping, envelope-derivative damping, energy-bucket limiting, and an active PLL comparator proxy.
    - Scores active PLL rows separately, keeps direct 2f/3f drive and target-frequency injection out of passive discovery rows, and validates top rows at baseline dt, half-dt, and quarter-dt.
 
+29. **Harmonic bridge dt rescue**
+   - Focuses on the near-miss 4->8->12 refined Stage A equivalent from harmonic-family mode.
+   - Runs baseline dt, half dt, and quarter dt for every candidate, then ranks on worst-case all-dt metrics.
+   - Sweeps Stage A offset, generated damping factor, A->B coupling, passive limiter strength, target detuning, Stage B detuning, and diagnostic-only phase-analysis windows.
+   - Compares 4->8->12 against 3->6->9 and 5->10->15 while keeping direct 2f/3f drive and target-frequency injection forbidden.
+
 ## Install
 
 ```bash
@@ -273,6 +279,8 @@ python tesla_369_lab.py --mode bridge_limiter_predictive_servo --sweeps
 python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_family --quick
 python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick
+python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -386,6 +394,9 @@ bridge_limiter_predictive_servo_timeseries.csv
 harmonic_bridge_family_summary.csv
 harmonic_bridge_family_ranked.csv
 harmonic_bridge_family_timeseries.csv
+harmonic_bridge_dt_rescue_summary.csv
+harmonic_bridge_dt_rescue_ranked.csv
+harmonic_bridge_dt_rescue_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -417,6 +428,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In bridge Stage A budget audit mode, is the slip-free Stage A tuning basin static/passive/budget-clean, or does the final tuned configuration itself break the budget?
 - In bridge Stage A budget forensics mode, is the Stage A budget failure physical nonconservation or a driven-regime ledger/numerical mismatch, and is a nearby budget-clean zero-slip row available?
 - In harmonic bridge family mode, does 3->6->9 beat the broader f->2f->3f family after normalized scoring, or is this a generic harmonic bridge behavior?
+- In harmonic bridge dt rescue mode, is the 4->8->12 near miss a phase instability or a dt-sensitive budget/tuning issue?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results

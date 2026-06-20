@@ -18519,6 +18519,667 @@ def experiment_harmonic_bridge_family(out_dir: Path, seed: int, quick: bool = Fa
 
 
 # ----------------------------
+# Experiment 29: harmonic bridge dt rescue
+# ----------------------------
+
+@dataclass
+class HarmonicBridgeDtRescueSpec:
+    source: float
+    track: str
+    stage_a_offset: float
+    damping_factor: float
+    coupling_scale: float
+    limiter_strength: float
+    receiver_offset: float
+    stage_b_detuning: float
+    phase_analysis_window_start: float = 0.35
+    phase_analysis_window_end: float = 1.0
+    phase_analysis_step_hint: float = 1.0
+    diagnostic_window_only: bool = False
+
+
+def harmonic_bridge_dt_rescue_spec_key(spec: HarmonicBridgeDtRescueSpec) -> Tuple[float, str, float, float, float, float, float, float, float, float, float]:
+    return (
+        spec.source,
+        spec.track,
+        round(spec.stage_a_offset, 8),
+        round(spec.damping_factor, 8),
+        round(spec.coupling_scale, 8),
+        round(spec.limiter_strength, 8),
+        round(spec.receiver_offset, 8),
+        round(spec.stage_b_detuning, 8),
+        round(spec.phase_analysis_window_start, 8),
+        round(spec.phase_analysis_window_end, 8),
+        round(spec.phase_analysis_step_hint, 8),
+    )
+
+
+def harmonic_bridge_dt_rescue_candidate_name(spec: HarmonicBridgeDtRescueSpec) -> str:
+    return (
+        f"harmonic_bridge_dt_rescue_{harmonic_bridge_family_target_token(spec.source)}_{spec.track}"
+        f"_a{safe_token(spec.stage_a_offset)}_q{safe_token(spec.damping_factor)}"
+        f"_c{safe_token(spec.coupling_scale)}_l{safe_token(spec.limiter_strength)}"
+        f"_r{safe_token(spec.receiver_offset)}_b{safe_token(spec.stage_b_detuning)}"
+        f"_w{safe_token(spec.phase_analysis_window_start)}_{safe_token(spec.phase_analysis_window_end)}"
+        f"_s{safe_token(spec.phase_analysis_step_hint)}"
+    )
+
+
+def harmonic_bridge_dt_rescue_make_config(spec: HarmonicBridgeDtRescueSpec) -> BridgeLimiterPredictiveServoConfig:
+    target_family, seed_family, family, base_config = harmonic_bridge_family_base_config(spec.source)
+    target = spec.source * 3.0
+    generated = spec.source * 2.0
+    receiver_tuning = max(0.5, target + spec.receiver_offset)
+    magnetic = base_config.magnetic_config
+    bridge = replace(
+        magnetic.bridge,
+        name=f"harmonic_bridge_dt_rescue_seed_{harmonic_bridge_family_token(spec.source)}",
+        mode_freqs=(spec.source, generated, receiver_tuning),
+        target_6=generated,
+        target_9=target,
+        reference_role="discovery_candidate",
+        family=family,
+        note=(
+            "dt rescue passive f->2f->3f seed; receiver detuning is physical tuning, "
+            "not target-frequency injection"
+        ),
+    )
+    magnetic = replace(magnetic, bridge=bridge, reference_role="discovery_candidate", family=family)
+    base = replace(
+        base_config,
+        name=f"harmonic_bridge_dt_rescue_base_{harmonic_bridge_family_token(spec.source)}",
+        magnetic_config=magnetic,
+        correction_type="stage_B_detuning_nudge",
+        reference_role="discovery_candidate",
+        family=family,
+    )
+    generated_damping = 0.92 * spec.damping_factor if spec.damping_factor > 0.0 else 0.0
+    name = harmonic_bridge_dt_rescue_candidate_name(spec)
+    stage = bridge_stageA_forensics_make_audit_config(
+        target_family,
+        seed_family,
+        family,
+        base,
+        "harmonic_bridge_dt_rescue",
+        spec.track,
+        (
+            f"a{safe_token(spec.stage_a_offset)}_q{safe_token(spec.damping_factor)}"
+            f"_c{safe_token(spec.coupling_scale)}_l{safe_token(spec.limiter_strength)}"
+            f"_r{safe_token(spec.receiver_offset)}_b{safe_token(spec.stage_b_detuning)}"
+        ),
+        spec.stage_a_offset,
+        generated_damping=generated_damping,
+        coupling_scale=spec.coupling_scale,
+        limiter_strength=spec.limiter_strength,
+        stage_b_static_detuning=spec.stage_b_detuning,
+        no_servo=True,
+        reference_role_override="discovery_candidate",
+    )
+    stage = replace(
+        stage,
+        name=name,
+        note=(
+            "Harmonic dt-rescue passive row; no direct 2f/3f drive and no target-frequency injection. "
+            "Phase-analysis window variants are diagnostic only."
+        ),
+    )
+    return BridgeLimiterPredictiveServoConfig(
+        name=name,
+        stage_config=stage,
+        servo_config=replace(stage.servo_config, name=name),
+        track=spec.track,
+        limiter_type="existing_limiter",
+        predictive_indicator="none",
+        predictive_gain=0.0,
+        predictive_threshold=0.20,
+        limiter_dynamic_strength=0.0,
+        runtime_factor=4.0,
+        target_family=target_family,
+        reference_role="discovery_candidate",
+        family=family,
+        note=stage.note,
+    )
+
+
+def harmonic_bridge_dt_rescue_add_spec(specs: List[HarmonicBridgeDtRescueSpec],
+                                       seen: set[Tuple[float, str, float, float, float, float, float, float, float, float, float]],
+                                       spec: HarmonicBridgeDtRescueSpec) -> None:
+    key = harmonic_bridge_dt_rescue_spec_key(spec)
+    if key not in seen:
+        seen.add(key)
+        specs.append(spec)
+
+
+def harmonic_bridge_dt_rescue_specs(include_sweeps: bool) -> List[HarmonicBridgeDtRescueSpec]:
+    specs: List[HarmonicBridgeDtRescueSpec] = []
+    seen: set[Tuple[float, str, float, float, float, float, float, float, float, float, float]] = set()
+
+    def add(spec: HarmonicBridgeDtRescueSpec) -> None:
+        harmonic_bridge_dt_rescue_add_spec(specs, seen, spec)
+
+    lead = HarmonicBridgeDtRescueSpec(4.0, "4812_dt_rescue", 0.040, 1.05, 0.90, 0.04, -0.10, 0.0)
+    add(lead)
+
+    if include_sweeps:
+        stage_a_offsets = [0.030, 0.034, 0.038, 0.040, 0.042, 0.046, 0.050]
+        damping_factors = [0.96, 1.00, 1.03, 1.05, 1.07, 1.10, 1.14]
+        coupling_scales = [0.82, 0.86, 0.88, 0.90, 0.92, 0.95, 0.98]
+        limiter_strengths = [0.02, 0.03, 0.04, 0.05, 0.06, 0.08]
+        receiver_offsets = [-0.14, -0.12, -0.10, -0.08, -0.06]
+        stage_b_detunings = [-0.025, -0.015, 0.0, 0.015, 0.025]
+        diagnostic_windows = [(0.35, 1.0, 1.0), (0.42, 0.98, 0.75), (0.50, 0.95, 0.50), (0.58, 1.0, 0.50)]
+        pair_specs = [
+            ("offset_coupling_pair", stage_a_offsets, coupling_scales, "stage_a_offset", "coupling_scale"),
+            ("offset_stageB_pair", stage_a_offsets, stage_b_detunings, "stage_a_offset", "stage_b_detuning"),
+            ("receiver_stageB_pair", receiver_offsets, stage_b_detunings, "receiver_offset", "stage_b_detuning"),
+            ("damping_limiter_pair", damping_factors, limiter_strengths, "damping_factor", "limiter_strength"),
+        ]
+    else:
+        stage_a_offsets = [0.036, 0.040, 0.044]
+        damping_factors = [1.00, 1.05, 1.10]
+        coupling_scales = [0.86, 0.90, 0.94]
+        limiter_strengths = [0.02, 0.04, 0.06]
+        receiver_offsets = [-0.12, -0.10, -0.08]
+        stage_b_detunings = [-0.015, 0.0, 0.015]
+        diagnostic_windows = [(0.42, 0.98, 0.75), (0.50, 0.95, 0.50)]
+        pair_specs = []
+
+    for value in stage_a_offsets:
+        add(replace(lead, track="4812_stage_A_offset", stage_a_offset=value))
+    for value in damping_factors:
+        add(replace(lead, track="4812_generated_damping", damping_factor=value))
+    for value in coupling_scales:
+        add(replace(lead, track="4812_coupling", coupling_scale=value))
+    for value in limiter_strengths:
+        add(replace(lead, track="4812_limiter", limiter_strength=value))
+    for value in receiver_offsets:
+        add(replace(lead, track="4812_target_detuning", receiver_offset=value))
+    for value in stage_b_detunings:
+        add(replace(lead, track="4812_stage_B_detuning", stage_b_detuning=value))
+    for start, end, step in diagnostic_windows:
+        add(replace(
+            lead,
+            track="4812_phase_window_diagnostic",
+            phase_analysis_window_start=start,
+            phase_analysis_window_end=end,
+            phase_analysis_step_hint=step,
+            diagnostic_window_only=True,
+        ))
+
+    for track, values_a, values_b, attr_a, attr_b in pair_specs:
+        for value_a in values_a:
+            for value_b in values_b:
+                kwargs = {attr_a: value_a, attr_b: value_b, "track": f"4812_{track}"}
+                add(replace(lead, **kwargs))
+
+    # Comparison families use the same normalized physical recipe plus their passive baselines.
+    for source in (3.0, 5.0):
+        scale = source / 3.0
+        family_track = f"{harmonic_bridge_family_target_token(source)}_comparison"
+        add(HarmonicBridgeDtRescueSpec(source, f"{family_track}_passive_baseline", 0.0, 0.0, 1.0, 0.0, -0.10, 0.0))
+        add(HarmonicBridgeDtRescueSpec(source, f"{family_track}_refined_equivalent", 0.030 * scale, 1.05, 0.90, 0.04, -0.10, 0.0))
+        if include_sweeps:
+            add(HarmonicBridgeDtRescueSpec(source, f"{family_track}_target_detune_low", 0.030 * scale, 1.05, 0.90, 0.04, -0.12, 0.0))
+            add(HarmonicBridgeDtRescueSpec(source, f"{family_track}_target_detune_high", 0.030 * scale, 1.05, 0.90, 0.04, -0.08, 0.0))
+            add(HarmonicBridgeDtRescueSpec(source, f"{family_track}_lighter_limiter", 0.030 * scale, 1.00, 0.92, 0.02, -0.10, 0.0))
+
+    return specs
+
+
+def harmonic_bridge_dt_rescue_broad_row_pass(row: Dict[str, float | str]) -> bool:
+    return (
+        str(row.get("promotion_eligible", "True")) == "True"
+        and float(row.get("phase_lock_target", 0.0)) > 0.90
+        and float(row.get("bridge_ratio", 0.0)) > 1.5
+        and float(row.get("spectral_purity_target", 0.0)) > 0.80
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.30
+        and float(row.get("max_phase_jump", 99.0)) < 2.0
+        and str(row.get("no_direct_2f_drive", "False")) == "True"
+        and str(row.get("no_direct_3f_drive", "False")) == "True"
+        and str(row.get("no_target_frequency_injection", "False")) == "True"
+    )
+
+
+def harmonic_bridge_dt_rescue_strict_row_pass(row: Dict[str, float | str]) -> bool:
+    return (
+        harmonic_bridge_dt_rescue_broad_row_pass(row)
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.25
+        and float(row.get("max_phase_jump", 99.0)) < 1.0
+        and float(row.get("near_slip_count", 99.0)) <= 0.0
+    )
+
+
+def harmonic_bridge_dt_rescue_measure_dt_row(config: BridgeLimiterPredictiveServoConfig,
+                                             spec: HarmonicBridgeDtRescueSpec,
+                                             seed: int,
+                                             quick: bool,
+                                             dt: float,
+                                             runtime: float,
+                                             sample_every: int,
+                                             dt_level: str) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]]]:
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    row, series = harmonic_bridge_family_measure(config, seed, quick, dt, runtime, sample_every, direct_cache, dt_level)
+    family_label = harmonic_bridge_family_label(spec.source)
+    row["experiment"] = "harmonic_bridge_dt_rescue"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:4.0x:{dt_level}"
+    row["summary_role"] = "dt_measure"
+    row["dt_level"] = dt_level
+    row["dt_value"] = dt
+    row["family_label"] = family_label
+    row["source_frequency"] = spec.source
+    row["generated_frequency"] = spec.source * 2.0
+    row["target_frequency"] = spec.source * 3.0
+    row["stage_A_offset"] = spec.stage_a_offset
+    row["generated_damping_factor"] = spec.damping_factor
+    row["generated_damping"] = 0.92 * spec.damping_factor if spec.damping_factor > 0.0 else 0.0
+    row["A_to_B_coupling_scale"] = spec.coupling_scale
+    row["limiter_strength"] = spec.limiter_strength
+    row["target_detuning"] = spec.receiver_offset
+    row["stage_B_detuning"] = spec.stage_b_detuning
+    row["phase_analysis_window_start"] = spec.phase_analysis_window_start
+    row["phase_analysis_window_end"] = spec.phase_analysis_window_end
+    row["phase_analysis_step_hint"] = spec.phase_analysis_step_hint
+    row["diagnostic_window_only"] = str(spec.diagnostic_window_only)
+    row["promotion_eligible"] = str(not spec.diagnostic_window_only)
+    row["harmonic_bridge_candidate"] = str(harmonic_bridge_dt_rescue_broad_row_pass(row))
+    row["strict_harmonic_bridge_candidate"] = str(harmonic_bridge_dt_rescue_strict_row_pass(row))
+    row["score"] = float(row.get("normalized_family_score", 0.0)) if not spec.diagnostic_window_only else 0.0
+    for item in series:
+        item["experiment"] = "harmonic_bridge_dt_rescue"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["dt_level"] = dt_level
+        item["dt_value"] = dt
+        item["family_label"] = family_label
+        item["stage_A_offset"] = spec.stage_a_offset
+        item["generated_damping_factor"] = spec.damping_factor
+        item["A_to_B_coupling_scale"] = spec.coupling_scale
+        item["limiter_strength"] = spec.limiter_strength
+        item["target_detuning"] = spec.receiver_offset
+        item["stage_B_detuning"] = spec.stage_b_detuning
+        item["diagnostic_window_only"] = str(spec.diagnostic_window_only)
+    return row, series
+
+
+def harmonic_bridge_dt_rescue_spread(rows: List[Dict[str, float | str]], key: str) -> float:
+    values = [float(row.get(key, 0.0)) for row in rows]
+    return float(max(values) - min(values)) if values else 0.0
+
+
+def harmonic_bridge_dt_rescue_update_aggregate_score(row: Dict[str, float | str]) -> None:
+    lock = float(row.get("phase_lock_target", 0.0))
+    bridge_ratio = float(row.get("bridge_ratio", 0.0))
+    purity = float(row.get("spectral_purity_target", 0.0))
+    budget = float(row.get("energy_budget_error", 1.0))
+    gen_cv = float(row.get("generated_envelope_cv", 99.0))
+    target_cv = float(row.get("target_envelope_cv", 99.0))
+    jump = float(row.get("max_phase_jump", 99.0))
+    near_slips = float(row.get("near_slip_count", 99.0))
+    dt_score = float(row.get("dt_preservation_score", 0.0))
+    spread_penalty = (
+        5.0 * float(row.get("dt_metric_spread_lock", 0.0))
+        + 0.8 * float(row.get("dt_metric_spread_ratio", 0.0))
+        + 3.0 * float(row.get("dt_metric_spread_purity", 0.0))
+        + 4.0 * float(row.get("dt_metric_spread_generated_envelope_cv", 0.0))
+        + 0.8 * float(row.get("dt_metric_spread_max_phase_jump", 0.0))
+        + 450.0 * float(row.get("dt_metric_spread_budget", 0.0))
+    )
+    score = (
+        max(0.0, lock)
+        * max(0.0, purity)
+        * min(5.0, max(0.0, bridge_ratio))
+        * (1.0 + 0.22 * dt_score)
+        / (
+            1.0
+            + 7.0 * max(0.0, gen_cv)
+            + 1.2 * max(0.0, target_cv)
+            + 2.0 * max(0.0, jump)
+            + 5.0 * max(0.0, near_slips)
+            + 700.0 * max(0.0, budget)
+            + spread_penalty
+        )
+    )
+    broad = harmonic_bridge_dt_rescue_broad_row_pass(row) and dt_score >= 1.0
+    strict = harmonic_bridge_dt_rescue_strict_row_pass(row) and float(row.get("strict_dt_preservation_score", 0.0)) >= 1.0
+    failures = []
+    if lock <= 0.90:
+        failures.append("phase_lock_target")
+    if bridge_ratio <= 1.5:
+        failures.append("bridge_ratio")
+    if purity <= 0.80:
+        failures.append("spectral_purity_target")
+    if budget >= 0.005:
+        failures.append("energy_budget")
+    if gen_cv >= 0.25:
+        failures.append("generated_envelope_CV")
+    if jump >= 1.0:
+        failures.append("max_phase_jump")
+    if near_slips > 0.0:
+        failures.append("near_slip_count")
+    if dt_score < 1.0:
+        failures.append("dt_preservation")
+    if str(row.get("promotion_eligible", "True")) != "True":
+        failures.append("diagnostic_window_only")
+    if str(row.get("no_direct_2f_drive", "False")) != "True" or str(row.get("no_direct_3f_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+    if str(row.get("no_target_frequency_injection", "False")) != "True":
+        failures.append("target_frequency_injection")
+
+    if "diagnostic_window_only" in failures:
+        failure_mode = "diagnostic_window_only"
+    elif "energy_budget" in failures:
+        failure_mode = "budget_artifact"
+    elif "dt_preservation" in failures:
+        failure_mode = "dt_sensitive_tuning"
+    elif "generated_envelope_CV" in failures:
+        failure_mode = "generated_stage_instability"
+    elif "max_phase_jump" in failures or "near_slip_count" in failures:
+        failure_mode = "phase_jump_or_near_slip"
+    elif "bridge_ratio" in failures:
+        failure_mode = "weak_bridge_ratio"
+    elif failures:
+        failure_mode = failures[0]
+    else:
+        failure_mode = "dt_rescued_candidate"
+
+    row["normalized_family_score"] = score
+    row["harmonic_bridge_dt_rescue_score"] = score if str(row.get("promotion_eligible", "True")) == "True" and budget < 0.005 else 0.0
+    row["score"] = row["harmonic_bridge_dt_rescue_score"]
+    row["harmonic_bridge_candidate"] = str(broad)
+    row["strict_harmonic_bridge_candidate"] = str(strict)
+    row["passed"] = str(broad)
+    row["promotion_ready"] = str(strict)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+
+
+def harmonic_bridge_dt_rescue_aggregate(spec: HarmonicBridgeDtRescueSpec,
+                                        config: BridgeLimiterPredictiveServoConfig,
+                                        dt_rows: List[Dict[str, float | str]]) -> Dict[str, float | str]:
+    if not dt_rows:
+        return {}
+    family_label = harmonic_bridge_family_label(spec.source)
+    aggregate: Dict[str, float | str] = {
+        "experiment": "harmonic_bridge_dt_rescue",
+        "case": config.name,
+        "candidate_id": f"{config.name}:4.0x:dt_aggregate",
+        "summary_role": "dt_aggregate",
+        "family_label": family_label,
+        "target_family": config.target_family,
+        "reference_role": config.reference_role,
+        "track": spec.track,
+        "limiter_type": config.limiter_type,
+        "source_frequency": spec.source,
+        "generated_frequency": spec.source * 2.0,
+        "target_frequency": spec.source * 3.0,
+        "stage_A_offset": spec.stage_a_offset,
+        "generated_damping_factor": spec.damping_factor,
+        "generated_damping": 0.92 * spec.damping_factor if spec.damping_factor > 0.0 else 0.0,
+        "A_to_B_coupling_scale": spec.coupling_scale,
+        "limiter_strength": spec.limiter_strength,
+        "target_detuning": spec.receiver_offset,
+        "stage_B_detuning": spec.stage_b_detuning,
+        "phase_analysis_window_start": spec.phase_analysis_window_start,
+        "phase_analysis_window_end": spec.phase_analysis_window_end,
+        "phase_analysis_step_hint": spec.phase_analysis_step_hint,
+        "diagnostic_window_only": str(spec.diagnostic_window_only),
+        "promotion_eligible": str(not spec.diagnostic_window_only),
+        "dt_levels": ";".join(str(row.get("dt_level", "")) for row in dt_rows),
+        "phase_lock_target": min(float(row.get("phase_lock_target", 0.0)) for row in dt_rows),
+        "bridge_ratio": min(float(row.get("bridge_ratio", 0.0)) for row in dt_rows),
+        "spectral_purity_target": min(float(row.get("spectral_purity_target", 0.0)) for row in dt_rows),
+        "energy_budget_error": max(float(row.get("energy_budget_error", 1.0)) for row in dt_rows),
+        "absolute_budget_error": max(float(row.get("absolute_budget_error", 0.0)) for row in dt_rows),
+        "generated_envelope_cv": max(float(row.get("generated_envelope_cv", 99.0)) for row in dt_rows),
+        "target_envelope_cv": max(float(row.get("target_envelope_cv", 99.0)) for row in dt_rows),
+        "max_phase_jump": max(float(row.get("max_phase_jump", 99.0)) for row in dt_rows),
+        "near_slip_count": max(float(row.get("near_slip_count", 99.0)) for row in dt_rows),
+        "phase_slip_count": max(float(row.get("phase_slip_count", 99.0)) for row in dt_rows),
+        "limiter_work_fraction": max(float(row.get("limiter_work_fraction", 0.0)) for row in dt_rows),
+        "servo_work_fraction": max(float(row.get("servo_work_fraction", 0.0)) for row in dt_rows),
+        "no_direct_2f_drive": str(all(str(row.get("no_direct_2f_drive", "False")) == "True" for row in dt_rows)),
+        "no_direct_3f_drive": str(all(str(row.get("no_direct_3f_drive", "False")) == "True" for row in dt_rows)),
+        "no_target_frequency_injection": str(all(str(row.get("no_target_frequency_injection", "False")) == "True" for row in dt_rows)),
+        "note": config.note,
+    }
+    metric_map = {
+        "lock": "phase_lock_target",
+        "ratio": "bridge_ratio",
+        "purity": "spectral_purity_target",
+        "generated_envelope_cv": "generated_envelope_cv",
+        "target_envelope_cv": "target_envelope_cv",
+        "max_phase_jump": "max_phase_jump",
+        "budget": "energy_budget_error",
+    }
+    for label, key in metric_map.items():
+        aggregate[f"dt_metric_spread_{label}"] = harmonic_bridge_dt_rescue_spread(dt_rows, key)
+    broad_count = sum(1 for row in dt_rows if harmonic_bridge_dt_rescue_broad_row_pass(row))
+    strict_count = sum(1 for row in dt_rows if harmonic_bridge_dt_rescue_strict_row_pass(row))
+    aggregate["dt_preservation_score"] = broad_count / max(1, len(dt_rows))
+    aggregate["strict_dt_preservation_score"] = strict_count / max(1, len(dt_rows))
+    for row in dt_rows:
+        level = str(row.get("dt_level", "dt"))
+        for key in (
+            "phase_lock_target",
+            "bridge_ratio",
+            "spectral_purity_target",
+            "energy_budget_error",
+            "absolute_budget_error",
+            "generated_envelope_cv",
+            "target_envelope_cv",
+            "max_phase_jump",
+            "near_slip_count",
+        ):
+            aggregate[f"{level}_{key}"] = row.get(key, 0.0)
+        aggregate[f"{level}_harmonic_bridge_candidate"] = row.get("harmonic_bridge_candidate", "False")
+        aggregate[f"{level}_strict_harmonic_bridge_candidate"] = row.get("strict_harmonic_bridge_candidate", "False")
+    harmonic_bridge_dt_rescue_update_aggregate_score(aggregate)
+    return aggregate
+
+
+def write_harmonic_bridge_dt_rescue_report(out_dir: Path,
+                                           ranked: List[Dict[str, float | str]],
+                                           dt_rows: List[Dict[str, float | str]],
+                                           include_sweeps: bool) -> None:
+    rows_4812 = [r for r in ranked if str(r.get("family_label")) == "4->8->12" and str(r.get("promotion_eligible")) == "True"]
+    rows_369 = [r for r in ranked if str(r.get("family_label")) == "3->6->9" and str(r.get("promotion_eligible")) == "True"]
+    rows_51015 = [r for r in ranked if str(r.get("family_label")) == "5->10->15" and str(r.get("promotion_eligible")) == "True"]
+    best_4812 = max(rows_4812, key=lambda r: float(r.get("normalized_family_score", 0.0)), default={})
+    best_369 = max(rows_369, key=lambda r: float(r.get("normalized_family_score", 0.0)), default={})
+    best_51015 = max(rows_51015, key=lambda r: float(r.get("normalized_family_score", 0.0)), default={})
+    broad_4812 = [r for r in rows_4812 if str(r.get("harmonic_bridge_candidate")) == "True"]
+    strict_4812 = [r for r in rows_4812 if str(r.get("strict_harmonic_bridge_candidate")) == "True"]
+    nonbudget_strict_4812 = [
+        r for r in rows_4812
+        if str(r.get("promotion_eligible", "True")) == "True"
+        and float(r.get("phase_lock_target", 0.0)) > 0.90
+        and float(r.get("bridge_ratio", 0.0)) > 1.5
+        and float(r.get("spectral_purity_target", 0.0)) > 0.80
+        and float(r.get("generated_envelope_cv", 99.0)) < 0.25
+        and float(r.get("max_phase_jump", 99.0)) < 1.0
+        and float(r.get("near_slip_count", 99.0)) <= 0.0
+        and str(r.get("no_direct_2f_drive", "False")) == "True"
+        and str(r.get("no_direct_3f_drive", "False")) == "True"
+        and str(r.get("no_target_frequency_injection", "False")) == "True"
+    ]
+    gated_4812 = max(
+        [r for r in rows_4812 if float(r.get("bridge_ratio", 0.0)) > 1.5],
+        key=lambda r: float(r.get("normalized_family_score", 0.0)),
+        default={},
+    )
+    gated_51015 = max(
+        [r for r in rows_51015 if float(r.get("bridge_ratio", 0.0)) > 1.5],
+        key=lambda r: float(r.get("normalized_family_score", 0.0)),
+        default={},
+    )
+    gated_369 = max(
+        [r for r in rows_369 if float(r.get("bridge_ratio", 0.0)) > 1.5 and float(r.get("energy_budget_error", 1.0)) < 0.005],
+        key=lambda r: float(r.get("normalized_family_score", 0.0)),
+        default={},
+    )
+    any_4812_dt_partial = any(
+        str(row.get("family_label")) == "4->8->12" and str(row.get("promotion_eligible")) == "True"
+        and 0.0 < float(row.get("dt_preservation_score", 0.0)) < 1.0
+        for row in rows_4812
+    )
+    if strict_4812:
+        dt_answer = "tuning issue; a strict all-dt 4->8->12 row was found"
+        next_step = "4->8->12 refinement before broader family-law mapping"
+    elif broad_4812:
+        dt_answer = "mostly a strict phase-jump issue; a broad all-dt row exists but strict jump/slip gates still fail"
+        next_step = "4->8->12 refinement around the broad dt-preserved basin"
+    elif nonbudget_strict_4812:
+        best_nonbudget = max(nonbudget_strict_4812, key=lambda r: float(r.get("normalized_family_score", 0.0)))
+        dt_answer = (
+            "not a true phase instability in the best row; strict non-budget metrics survive all dt levels, "
+            f"but budget remains dt-sensitive (worst budget={float(best_nonbudget.get('energy_budget_error', 0.0)):.6g})"
+        )
+        next_step = "4->8->12 budget-ledger refinement, then a tighter target-detuning sweep"
+    elif any_4812_dt_partial:
+        dt_answer = "dt-sensitive tuning issue remains unresolved; at least one row passes some dt levels but not all"
+        next_step = "focused 4->8->12 refinement before full family-law mapping"
+    else:
+        dt_answer = "true instability under this grid; no all-dt or partial-dt rescue cleared the core gates"
+        next_step = "full family-law mapping rather than geometry/evolve"
+    if (
+        best_369
+        and float(best_369.get("normalized_family_score", 0.0)) < float(best_4812.get("normalized_family_score", 0.0))
+        and float(best_369.get("normalized_family_score", 0.0)) < float(best_51015.get("normalized_family_score", 0.0))
+    ):
+        behind_answer = "yes, 3->6->9 remains behind both comparison families by normalized score"
+    elif best_369 and float(best_369.get("normalized_family_score", 0.0)) < float(best_4812.get("normalized_family_score", 0.0)):
+        behind_answer = "partly; 3->6->9 remains behind 4->8->12, but it beats 5->10->15 once the 5-family budget/bridge-ratio failures are counted"
+    else:
+        behind_answer = "no, 3->6->9 is not behind both by normalized score in this run"
+    beats_51015 = bool(gated_4812) and (
+        not gated_51015 or float(gated_4812.get("normalized_family_score", 0.0)) > float(gated_51015.get("normalized_family_score", 0.0))
+    )
+
+    lines = [
+        "# Harmonic Bridge Dt Rescue Report",
+        "",
+        "This mode reruns the near-miss 4->8->12 harmonic-family row at baseline, half, and quarter dt while making a tight physical tuning search around Stage A offset, generated damping, coupling, limiter strength, target detuning, and Stage B detuning.",
+        "",
+        "## Direct Answers",
+        f"1. Was the 4->8->12 dt failure tuning or true instability? {dt_answer}.",
+        f"2. Did any 4->8->12 row pass harmonic_bridge_candidate? {'yes' if broad_4812 else 'no'}; count={len(broad_4812)}.",
+        f"3. Did any 4->8->12 row pass strict_harmonic_bridge_candidate? {'yes' if strict_4812 else 'no'}; count={len(strict_4812)}.",
+        f"4. Does 4->8->12 beat 5->10->15 after bridge-ratio gating? {'yes' if beats_51015 else 'no'}; 4812_gated_score={float(gated_4812.get('normalized_family_score', 0.0)):.6g}, 51015_gated_score={float(gated_51015.get('normalized_family_score', 0.0)):.6g}.",
+        f"5. Does 3->6->9 remain behind both? {behind_answer}; best_369_score={float(best_369.get('normalized_family_score', 0.0)):.6g}, best_4812_score={float(best_4812.get('normalized_family_score', 0.0)):.6g}, best_51015_score={float(best_51015.get('normalized_family_score', 0.0)):.6g}.",
+        f"6. Next step: {next_step}.",
+        "",
+        "## Run Shape",
+        f"- Grid mode: {'expanded pairwise dt rescue sweep' if include_sweeps else 'quick one-axis dt rescue smoke'}",
+        "- Every physical candidate is evaluated at baseline dt, half dt, and quarter dt.",
+        "- Ranked rows use worst-case lock, bridge ratio, purity, budget, envelope CV, jump, and near-slip metrics across dt.",
+        "- Phase-analysis window variants are marked diagnostic-only and cannot promote.",
+        "",
+        "## Best Rows",
+    ]
+    for row in ranked[:36]:
+        lines.append(
+            f"- {row.get('candidate_id')}: family={row.get('family_label')}, track={row.get('track')}, "
+            f"score={float(row.get('normalized_family_score', 0.0)):.6g}, lock={float(row.get('phase_lock_target', 0.0)):.6g}, "
+            f"bridge={float(row.get('bridge_ratio', 0.0)):.6g}, purity={float(row.get('spectral_purity_target', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, abs_budget={float(row.get('absolute_budget_error', 0.0)):.6g}, "
+            f"gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, jump={float(row.get('max_phase_jump', 0.0)):.6g}, "
+            f"near_slips={float(row.get('near_slip_count', 0.0)):.6g}, dt_score={float(row.get('dt_preservation_score', 0.0)):.6g}, "
+            f"strict_dt={float(row.get('strict_dt_preservation_score', 0.0)):.6g}, "
+            f"spread_lock={float(row.get('dt_metric_spread_lock', 0.0)):.6g}, spread_jump={float(row.get('dt_metric_spread_max_phase_jump', 0.0)):.6g}, "
+            f"harmonic={row.get('harmonic_bridge_candidate')}, strict={row.get('strict_harmonic_bridge_candidate')}, failure={row.get('failure_mode')}"
+        )
+    lines.extend(["", "## Dt Rows"])
+    for row in dt_rows[:54]:
+        lines.append(
+            f"- {row.get('case')} / {row.get('dt_level')}: family={row.get('family_label')}, track={row.get('track')}, "
+            f"lock={float(row.get('phase_lock_target', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+            f"gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, jump={float(row.get('max_phase_jump', 0.0)):.6g}, "
+            f"near_slips={float(row.get('near_slip_count', 0.0)):.6g}, harmonic={row.get('harmonic_bridge_candidate')}, strict={row.get('strict_harmonic_bridge_candidate')}"
+        )
+    (out_dir / "README_HARMONIC_BRIDGE_DT_RESCUE_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_harmonic_bridge_dt_rescue(out_dir: Path, seed: int, quick: bool = False,
+                                         include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    runtime = base_tmax * 1.25 * 4.0
+    specs = harmonic_bridge_dt_rescue_specs(include_sweeps)
+    aggregate_rows: List[Dict[str, float | str]] = []
+    dt_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    dt_levels = [("baseline_dt", dt), ("half_dt", dt * 0.5), ("quarter_dt", dt * 0.25)]
+
+    for idx, spec in enumerate(specs):
+        config = harmonic_bridge_dt_rescue_make_config(spec)
+        rows_for_spec: List[Dict[str, float | str]] = []
+        for dt_idx, (dt_level, dt_value) in enumerate(dt_levels):
+            row, series = harmonic_bridge_dt_rescue_measure_dt_row(
+                config,
+                spec,
+                seed + 51000 + idx * 1200 + dt_idx * 271,
+                quick,
+                dt_value,
+                runtime,
+                sample_every,
+                dt_level,
+            )
+            rows_for_spec.append(row)
+            dt_rows.append(row)
+            timeseries_rows.extend(series)
+        aggregate = harmonic_bridge_dt_rescue_aggregate(spec, config, rows_for_spec)
+        if aggregate:
+            aggregate_rows.append(aggregate)
+
+    ranked = sorted(
+        aggregate_rows,
+        key=lambda r: (
+            float(r.get("harmonic_bridge_dt_rescue_score", 0.0)),
+            float(r.get("normalized_family_score", 0.0)),
+            1.0 if str(r.get("family_label")) == "4->8->12" else 0.0,
+            float(r.get("dt_preservation_score", 0.0)),
+            float(r.get("phase_lock_target", 0.0)),
+            -float(r.get("max_phase_jump", 99.0)),
+        ),
+        reverse=True,
+    )
+    write_csv(out_dir / "harmonic_bridge_dt_rescue_summary.csv", aggregate_rows + dt_rows)
+    write_csv(out_dir / "harmonic_bridge_dt_rescue_ranked.csv", ranked)
+    write_csv(out_dir / "harmonic_bridge_dt_rescue_timeseries.csv", timeseries_rows)
+    write_harmonic_bridge_dt_rescue_report(out_dir, ranked, dt_rows, include_sweeps)
+    return [
+        {
+            "experiment": "harmonic_bridge_dt_rescue",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("harmonic_bridge_dt_rescue_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "family_label": row.get("family_label", ""),
+            "track": row.get("track", ""),
+            "phase_lock_target": row.get("phase_lock_target", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "absolute_budget_error": row.get("absolute_budget_error", 0.0),
+            "generated_envelope_cv": row.get("generated_envelope_cv", 0.0),
+            "target_envelope_cv": row.get("target_envelope_cv", 0.0),
+            "max_phase_jump": row.get("max_phase_jump", 0.0),
+            "near_slip_count": row.get("near_slip_count", 0.0),
+            "dt_preservation_score": row.get("dt_preservation_score", 0.0),
+            "strict_dt_preservation_score": row.get("strict_dt_preservation_score", 0.0),
+            "harmonic_bridge_candidate": row.get("harmonic_bridge_candidate", "False"),
+            "strict_harmonic_bridge_candidate": row.get("strict_harmonic_bridge_candidate", "False"),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:24]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -18559,8 +19220,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin/limiter-predictive-servo/harmonic-bridge-family, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "bridge_limiter_predictive_servo", "harmonic_bridge_family", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin/limiter-predictive-servo/harmonic-bridge-family/dt-rescue, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "bridge_limiter_predictive_servo", "harmonic_bridge_family", "harmonic_bridge_dt_rescue", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -18629,6 +19290,8 @@ def main() -> None:
         rows.extend(experiment_bridge_limiter_predictive_servo(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("harmonic_bridge_family",):
         rows.extend(experiment_harmonic_bridge_family(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("harmonic_bridge_dt_rescue",):
+        rows.extend(experiment_harmonic_bridge_dt_rescue(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 
