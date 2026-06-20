@@ -167,6 +167,13 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Sweeps Stage A offset, generated damping factor, A->B coupling, passive limiter strength, target detuning, Stage B detuning, and diagnostic-only phase-analysis windows.
    - Compares 4->8->12 against 3->6->9 and 5->10->15 while keeping direct 2f/3f drive and target-frequency injection forbidden.
 
+30. **Harmonic bridge budget ledger**
+   - Isolates the dt-sensitive budget residual in the 4->8->12 target-detuned row from dt-rescue.
+   - Runs baseline dt, half dt, quarter dt, and optional eighth dt in sweep mode.
+   - Compares the primary 4->8->12 row with 3->6->9, 5->10->15, no-drive/no-servo, drive-only, damping-only, nonlinear-only, limiter-only, and full-model 4->8->12 rows.
+   - Reports stored-energy delta, drive work, positive input work, damping loss, limiter/adaptive work, magnetic/spark loss, nonlinear-potential delta, residual scaling, convergence order, and alternative accounting variants.
+   - Classifies residuals as numerical ledger sensitivity, component mismatch, or possible non-passive artifact while keeping direct 2f/3f drive and target-frequency injection forbidden.
+
 ## Install
 
 ```bash
@@ -281,6 +288,8 @@ python tesla_369_lab.py --mode harmonic_bridge_family --quick
 python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick
 python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick
+python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -397,6 +406,9 @@ harmonic_bridge_family_timeseries.csv
 harmonic_bridge_dt_rescue_summary.csv
 harmonic_bridge_dt_rescue_ranked.csv
 harmonic_bridge_dt_rescue_timeseries.csv
+harmonic_bridge_budget_ledger_summary.csv
+harmonic_bridge_budget_ledger_components.csv
+harmonic_bridge_budget_ledger_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -429,6 +441,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In bridge Stage A budget forensics mode, is the Stage A budget failure physical nonconservation or a driven-regime ledger/numerical mismatch, and is a nearby budget-clean zero-slip row available?
 - In harmonic bridge family mode, does 3->6->9 beat the broader f->2f->3f family after normalized scoring, or is this a generic harmonic bridge behavior?
 - In harmonic bridge dt rescue mode, is the 4->8->12 near miss a phase instability or a dt-sensitive budget/tuning issue?
+- In harmonic bridge budget ledger mode, does the 4->8->12 budget residual converge away with dt, or does a specific ledger term/non-passive artifact explain the failure?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results

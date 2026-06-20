@@ -34,11 +34,13 @@ What has not survived yet:
 - Stage A budget forensics suggests the Stage A budget issue is driven-model ledger/numerical sensitivity: no-drive errors are tiny in absolute terms, and half/quarter-dt reduce full-model budget below gate.
 - Harmonic-family mapping now shows 5 -> 10 -> 15 stronger than 3 -> 6 -> 9 under normalized passive scoring, while 4 -> 8 -> 12 is closest to a family candidate.
 - Harmonic dt rescue shows the best 4 -> 8 -> 12 target-detuned row is not a phase instability: strict non-budget metrics survive baseline/half/quarter dt, but baseline-dt budget error still blocks promotion.
+- Harmonic budget-ledger forensics shows that 4 -> 8 -> 12 budget residual converges away strongly through eighth dt and no single ledger component matches the residual magnitude; it is currently classified as numerical ledger sensitivity, not promotion.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Refine the 4 -> 8 -> 12 budget ledger and target-detuning basin before trying geometry/evolve or a 369-specific stronger target servo.
+- Validate the 4 -> 8 -> 12 ledger behavior with independent corrected/substep quadrature before trying geometry/evolve or a 369-specific stronger target servo.
+- Then run a tighter 4 -> 8 -> 12 target-detuning basin sweep if the corrected ledger remains clean.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -108,6 +110,8 @@ python tesla_369_lab.py --mode harmonic_bridge_family --quick
 python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick
 python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick
+python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick --sweeps
 ```
 
 Key bridge modes:
@@ -131,6 +135,7 @@ python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick --sweeps
 python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -287,3 +292,14 @@ Quick smoke result from `runs/harmonic_bridge_dt_rescue_quick_smoke`:
 - After bridge-ratio gating, 4 -> 8 -> 12 beat 5 -> 10 -> 15; 5 -> 10 -> 15 still failed bridge-ratio and budget normalization in this dt-aware rescue.
 - 3 -> 6 -> 9 remained behind 4 -> 8 -> 12, but beat 5 -> 10 -> 15 once 5-family bridge-ratio/budget failures were counted.
 - Current recommendation: 4 -> 8 -> 12 budget-ledger refinement, then a tighter target-detuning sweep.
+
+## Latest Harmonic Bridge Budget Ledger Read
+
+Quick smoke result from `runs/harmonic_bridge_budget_ledger_quick_smoke`:
+
+- The primary 4 -> 8 -> 12 row used target detuning `-0.08`, Stage A offset `+0.040`, generated damping factor `1.05`, A->B coupling `0.90`, and limiter `0.04`.
+- Non-budget metrics stayed strong across baseline/half/quarter dt: worst lock 0.991, bridge ratio 1.531, purity 0.925, generated-envelope CV 0.138, max jump 0.998 rad, and near slips 0.
+- Existing ledger residual converged strongly with timestep: relative budget error 0.04490 at baseline dt, 0.00498 at half-dt, 0.000605 at quarter-dt, and 0.000110 at eighth-dt; estimated convergence order was about 3.11.
+- Midpoint/trapezoid sampled accounting did not rescue baseline dt: baseline remained 0.04401, while quarter-dt was clean at 0.000850 and eighth-dt was 0.0000116.
+- No single component matched the residual magnitude. Diagnostic magnetic-loss subtraction made the ledger worse, so this is not a simple missing magnetic-loss term.
+- The row is marked `candidate_pending_independent_validation=False`, not promoted. Current recommendation: independent corrected/substep quadrature, then a tighter 4 -> 8 -> 12 target-detuning sweep if the independent ledger closes.

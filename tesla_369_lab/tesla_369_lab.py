@@ -19180,6 +19180,758 @@ def experiment_harmonic_bridge_dt_rescue(out_dir: Path, seed: int, quick: bool =
 
 
 # ----------------------------
+# Experiment 30: harmonic bridge budget ledger
+# ----------------------------
+
+@dataclass
+class HarmonicBridgeBudgetLedgerSpec:
+    label: str
+    source: float
+    stage_a_offset: float
+    damping_factor: float
+    coupling_scale: float
+    limiter_strength: float
+    receiver_offset: float
+    stage_b_detuning: float
+    drive_enabled: bool = True
+    damping_enabled: bool = True
+    nonlinear_enabled: bool = True
+    spark_enabled: bool = True
+    magnetic_enabled: bool = True
+    limiter_enabled: bool = True
+    reference_role: str = "diagnostic_ledger"
+
+
+def harmonic_bridge_budget_ledger_primary_spec(label: str = "primary_4812_target_detune_m0p08") -> HarmonicBridgeBudgetLedgerSpec:
+    return HarmonicBridgeBudgetLedgerSpec(
+        label=label,
+        source=4.0,
+        stage_a_offset=0.040,
+        damping_factor=1.05,
+        coupling_scale=0.90,
+        limiter_strength=0.04,
+        receiver_offset=-0.08,
+        stage_b_detuning=0.0,
+        reference_role="discovery_candidate",
+    )
+
+
+def harmonic_bridge_budget_ledger_specs(include_sweeps: bool) -> List[HarmonicBridgeBudgetLedgerSpec]:
+    primary = harmonic_bridge_budget_ledger_primary_spec()
+    specs = [
+        primary,
+        HarmonicBridgeBudgetLedgerSpec(
+            label="comparison_369_passive_baseline",
+            source=3.0,
+            stage_a_offset=0.0,
+            damping_factor=0.0,
+            coupling_scale=1.0,
+            limiter_strength=0.0,
+            receiver_offset=-0.10,
+            stage_b_detuning=0.0,
+            limiter_enabled=False,
+        ),
+        HarmonicBridgeBudgetLedgerSpec(
+            label="comparison_51015_refined_equivalent",
+            source=5.0,
+            stage_a_offset=0.050,
+            damping_factor=1.05,
+            coupling_scale=0.90,
+            limiter_strength=0.04,
+            receiver_offset=-0.10,
+            stage_b_detuning=0.0,
+        ),
+        replace(primary, label="no_drive_no_servo_4812", drive_enabled=False, reference_role="diagnostic_ledger"),
+        replace(primary, label="drive_only_4812", damping_enabled=False, nonlinear_enabled=False, spark_enabled=False, magnetic_enabled=False, limiter_enabled=False, reference_role="diagnostic_ledger"),
+        replace(primary, label="damping_only_4812", nonlinear_enabled=False, spark_enabled=False, magnetic_enabled=False, limiter_enabled=False, reference_role="diagnostic_ledger"),
+        replace(primary, label="nonlinear_only_4812", damping_enabled=False, spark_enabled=False, magnetic_enabled=False, limiter_enabled=False, reference_role="diagnostic_ledger"),
+        replace(primary, label="limiter_only_4812", damping_enabled=False, nonlinear_enabled=False, spark_enabled=False, magnetic_enabled=False, limiter_enabled=True, reference_role="diagnostic_ledger"),
+        replace(primary, label="full_model_4812_repeat", reference_role="diagnostic_ledger"),
+    ]
+    if include_sweeps:
+        specs.extend([
+            replace(primary, label="target_detune_m0p07", receiver_offset=-0.07),
+            replace(primary, label="target_detune_m0p09", receiver_offset=-0.09),
+            replace(primary, label="target_detune_m0p08_damping_1p10", damping_factor=1.10),
+            replace(primary, label="target_detune_m0p08_limiter_0p02", limiter_strength=0.02),
+        ])
+    return specs
+
+
+def harmonic_bridge_budget_ledger_make_config(spec: HarmonicBridgeBudgetLedgerSpec) -> BridgeLimiterPredictiveServoConfig:
+    rescue_spec = HarmonicBridgeDtRescueSpec(
+        source=spec.source,
+        track=spec.label,
+        stage_a_offset=spec.stage_a_offset,
+        damping_factor=spec.damping_factor,
+        coupling_scale=spec.coupling_scale,
+        limiter_strength=spec.limiter_strength if spec.limiter_enabled else 0.0,
+        receiver_offset=spec.receiver_offset,
+        stage_b_detuning=spec.stage_b_detuning,
+    )
+    config = harmonic_bridge_dt_rescue_make_config(rescue_spec)
+    stage = config.stage_config
+    base = stage.base_config
+    magnetic = base.magnetic_config
+    bridge = magnetic.bridge
+    if not spec.drive_enabled:
+        bridge = replace(bridge, drive_amp=0.0)
+    if not spec.damping_enabled:
+        bridge = replace(bridge, stage_a_damping=0.0, stage_b_damping=0.0, receiver_damping=0.0)
+    if not spec.nonlinear_enabled:
+        bridge = replace(
+            bridge,
+            stage_a_nonlinear_strength=0.0,
+            stage_b_nonlinear_strength=0.0,
+            varactor_coefficient=0.0,
+        )
+    if not spec.spark_enabled:
+        bridge = replace(bridge, spark_strength=0.0)
+    magnetic = replace(magnetic, bridge=bridge, reference_role=spec.reference_role, family=config.family)
+    if not spec.magnetic_enabled:
+        magnetic = bridge_stageA_forensics_zero_magnetic(magnetic)
+    base = replace(base, magnetic_config=magnetic, reference_role=spec.reference_role, family=config.family)
+    stage = replace(
+        stage,
+        name=f"harmonic_bridge_budget_ledger_{spec.label}",
+        base_config=base,
+        servo_config=replace(stage.servo_config, base_config=base, control_mode="no_servo", kp=0.0, ki=0.0, correction_clamp=0.0),
+        generated_damping=stage.generated_damping if spec.damping_enabled else 0.0,
+        limiter_strength=spec.limiter_strength if spec.limiter_enabled else 0.0,
+        reference_role=spec.reference_role,
+        note="Harmonic budget ledger subsystem row; no direct 2f/3f drive and no target-frequency injection",
+    )
+    return replace(
+        config,
+        name=stage.name,
+        stage_config=stage,
+        servo_config=stage.servo_config,
+        reference_role=spec.reference_role,
+        note=stage.note,
+    )
+
+
+def harmonic_bridge_budget_ledger_power_samples(config: BridgeLimiterPredictiveServoConfig,
+                                                sim: Dict[str, object],
+                                                ledger: List[Dict[str, float | str]],
+                                                base_hz: float = 0.045
+                                                ) -> Dict[str, float | np.ndarray]:
+    times = sim["times"]  # type: ignore[assignment]
+    qs = sim["qs"]  # type: ignore[assignment]
+    vs = sim["vs"]  # type: ignore[assignment]
+    omega = sim["omega"]  # type: ignore[assignment]
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    drive_start = float(sim.get("drive_start", 0.0))
+    drive_until = float(sim.get("drive_until", 0.0))
+    zeta = np.asarray([
+        0.018 * effective.stage_a_damping,
+        0.012 * effective.stage_b_damping,
+        0.008 * effective.receiver_damping,
+    ])
+    drive_power: List[float] = []
+    damping_power: List[float] = []
+    limiter_power: List[float] = []
+    magnetic_power: List[float] = []
+    spark_power: List[float] = []
+    magnetic_loss_damping = bridge_stageA_budget_magnetic_loss_damping(config.stage_config.base_config.magnetic_config)
+    for t, q, v in zip(times, qs, vs):
+        forces = bridge_stageA_budget_drive_forces(effective, float(t), base_hz, drive_start, drive_until, 3)
+        drive_power.append(float(np.dot(forces, v)))
+        damping_power.append(float(np.sum(2.0 * zeta * omega * (v ** 2))))
+        limiter_power.append(bridge_limiter_predictive_loss(config, q, v, omega))
+        if magnetic_loss_damping > 0.0:
+            magnetic_power.append(float(
+                2.0 * 0.012 * magnetic_loss_damping * omega[1] * (v[1] ** 2)
+                + 2.0 * 0.008 * magnetic_loss_damping * omega[2] * (v[2] ** 2)
+            ))
+        else:
+            magnetic_power.append(0.0)
+        spark = 0.0
+        if effective.spark_strength:
+            for i, j in ((0, 1), (1, 2)):
+                gate = float(spark_gate(q[i] - q[j], threshold=effective.spark_threshold))
+                c = 0.030 * effective.spark_strength * gate
+                spark += float(c * ((v[i] - v[j]) ** 2))
+        spark_power.append(spark)
+    if len(times):
+        initial = float(times[0])
+        t_aug = np.concatenate([[0.0], np.asarray(times, dtype=float)])
+    else:
+        initial = 0.0
+        t_aug = np.asarray([0.0])
+
+    def aug(values: List[float]) -> np.ndarray:
+        return np.concatenate([[0.0], np.asarray(values, dtype=float)])
+
+    drive_arr = aug(drive_power)
+    damping_arr = aug(damping_power)
+    limiter_arr = aug(limiter_power)
+    magnetic_arr = aug(magnetic_power)
+    spark_arr = aug(spark_power)
+    return {
+        "times": t_aug,
+        "drive_power": drive_arr,
+        "damping_power": damping_arr,
+        "limiter_power": limiter_arr,
+        "magnetic_power": magnetic_arr,
+        "spark_power": spark_arr,
+        "drive_trapezoid": float(np.trapezoid(drive_arr, t_aug)) if len(t_aug) > 1 else 0.0,
+        "positive_drive_trapezoid": float(np.trapezoid(np.maximum(drive_arr, 0.0), t_aug)) if len(t_aug) > 1 else 0.0,
+        "damping_trapezoid": float(np.trapezoid(damping_arr, t_aug)) if len(t_aug) > 1 else 0.0,
+        "limiter_trapezoid": float(np.trapezoid(limiter_arr, t_aug)) if len(t_aug) > 1 else 0.0,
+        "magnetic_trapezoid": float(np.trapezoid(magnetic_arr, t_aug)) if len(t_aug) > 1 else 0.0,
+        "spark_trapezoid": float(np.trapezoid(spark_arr, t_aug)) if len(t_aug) > 1 else 0.0,
+        "first_sample_time": initial,
+    }
+
+
+def harmonic_bridge_budget_ledger_variant_row(base: Dict[str, float | str],
+                                              variant: str,
+                                              initial: float,
+                                              final: float,
+                                              drive: float,
+                                              damping: float,
+                                              limiter: float,
+                                              magnetic: float,
+                                              spark: float,
+                                              servo: float,
+                                              nonlinear_delta: float,
+                                              linear_delta: float,
+                                              coupling_delta: float,
+                                              varactor_delta: float,
+                                              mix_delta: float,
+                                              note: str) -> Dict[str, float | str]:
+    accounted = initial + drive + servo - damping - limiter - spark
+    residual = final - accounted
+    denominator = abs(final) + abs(accounted) + 1e-18
+    row = dict(base)
+    row.update({
+        "accounting_variant": variant,
+        "stored_energy_initial": initial,
+        "stored_energy_final": final,
+        "stored_energy_delta": final - initial,
+        "drive_work": drive,
+        "damping_loss": damping,
+        "limiter_loss": limiter,
+        "adaptive_damping_work": limiter,
+        "magnetic_loss": magnetic,
+        "spark_loss": spark,
+        "servo_work_signed": servo,
+        "nonlinear_potential_delta": nonlinear_delta,
+        "linear_energy_delta": linear_delta,
+        "coupling_energy_delta": coupling_delta,
+        "varactor_energy_delta": varactor_delta,
+        "mix_energy_delta": mix_delta,
+        "total_accounted_energy": accounted,
+        "total_ledger_residual": residual,
+        "absolute_budget_error": abs(residual),
+        "relative_budget_error": abs(residual) / denominator,
+        "residual_per_unit_time": residual / max(float(base.get("runtime", 0.0)), 1e-12),
+        "residual_per_drive_work": metric_ratio(abs(residual), abs(drive)),
+        "variant_note": note,
+    })
+    return row
+
+
+def harmonic_bridge_budget_ledger_accounting_variants(config: BridgeLimiterPredictiveServoConfig,
+                                                      sim: Dict[str, object],
+                                                      ledger: List[Dict[str, float | str]],
+                                                      base: Dict[str, float | str]
+                                                      ) -> List[Dict[str, float | str]]:
+    final_ledger = next((r for r in reversed(ledger) if "energy_budget_error_abs" in r), {})
+    initial = float(sim.get("initial_stored_energy", 0.0))
+    final = float(sim.get("final_stored_energy", 0.0))
+    servo = float(sim.get("servo_work_signed", 0.0))
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    omega = sim["omega"]  # type: ignore[assignment]
+    qs = sim["qs"]  # type: ignore[assignment]
+    vs = sim["vs"]  # type: ignore[assignment]
+    initial_p = bridge_amp_potentials(qs[0] * 0.0, vs[0] * 0.0, omega, effective) if len(qs) else {"linear": 0.0, "coupling": 0.0, "varactor": 0.0, "mix_a": 0.0, "mix_b": 0.0, "nonlinear_total": 0.0}
+    # The simulator stores the randomized initial total but not the initial state. Use total for ledger,
+    # and component deltas from first sampled state as a diagnostic rather than a promotion gate.
+    final_p = bridge_amp_potentials(qs[-1], vs[-1], omega, effective) if len(qs) else initial_p
+    first_p = bridge_amp_potentials(qs[0], vs[0], omega, effective) if len(qs) else initial_p
+    nonlinear_delta = float(final_p.get("nonlinear_total", 0.0) - first_p.get("nonlinear_total", 0.0))
+    linear_delta = float(final_p.get("linear", 0.0) - first_p.get("linear", 0.0))
+    coupling_delta = float(final_p.get("coupling", 0.0) - first_p.get("coupling", 0.0))
+    varactor_delta = float(final_p.get("varactor", 0.0) - first_p.get("varactor", 0.0))
+    mix_delta = float(final_p.get("mix_a", 0.0) + final_p.get("mix_b", 0.0) - first_p.get("mix_a", 0.0) - first_p.get("mix_b", 0.0))
+    powers = harmonic_bridge_budget_ledger_power_samples(config, sim, ledger)
+    rows = [
+        harmonic_bridge_budget_ledger_variant_row(
+            base,
+            "left_endpoint_existing",
+            initial,
+            final,
+            float(final_ledger.get("drive_input_work", sim.get("net_input_work", 0.0))),
+            float(final_ledger.get("damping_loss", sim.get("damping_loss", 0.0))),
+            float(final_ledger.get("limiter_loss", sim.get("limiter_loss", 0.0))),
+            float(final_ledger.get("magnetic_loss", sim.get("magnetic_loss", 0.0))),
+            float(final_ledger.get("spark_loss", sim.get("spark_loss", 0.0))),
+            servo,
+            nonlinear_delta,
+            linear_delta,
+            coupling_delta,
+            varactor_delta,
+            mix_delta,
+            "existing cumulative left-endpoint ledger used by the simulator",
+        ),
+        harmonic_bridge_budget_ledger_variant_row(
+            base,
+            "midpoint_trapezoid_sampled",
+            initial,
+            final,
+            float(powers["drive_trapezoid"]),
+            float(powers["damping_trapezoid"]),
+            float(powers["limiter_trapezoid"]),
+            float(powers["magnetic_trapezoid"]),
+            float(powers["spark_trapezoid"]),
+            servo,
+            nonlinear_delta,
+            linear_delta,
+            coupling_delta,
+            varactor_delta,
+            mix_delta,
+            "trapezoid integration of sampled drive/loss powers",
+        ),
+        harmonic_bridge_budget_ledger_variant_row(
+            base,
+            "rk_substep_consistent_existing",
+            initial,
+            final,
+            float(sim.get("net_input_work", 0.0)),
+            float(sim.get("damping_loss", 0.0)),
+            float(sim.get("limiter_loss", 0.0)),
+            float(sim.get("magnetic_loss", 0.0)),
+            float(sim.get("spark_loss", 0.0)),
+            servo,
+            nonlinear_delta,
+            linear_delta,
+            coupling_delta,
+            varactor_delta,
+            mix_delta,
+            "same cumulative values returned by the RK loop; true substage quadrature is not separately exposed",
+        ),
+        harmonic_bridge_budget_ledger_variant_row(
+            base,
+            "finite_difference_energy_delta",
+            initial,
+            final,
+            float(final_ledger.get("drive_input_work", sim.get("net_input_work", 0.0))),
+            float(final_ledger.get("damping_loss", sim.get("damping_loss", 0.0))),
+            float(final_ledger.get("limiter_loss", sim.get("limiter_loss", 0.0))),
+            float(final_ledger.get("magnetic_loss", sim.get("magnetic_loss", 0.0))),
+            float(final_ledger.get("spark_loss", sim.get("spark_loss", 0.0))),
+            servo,
+            nonlinear_delta,
+            linear_delta,
+            coupling_delta,
+            varactor_delta,
+            mix_delta,
+            "finite-difference stored-energy delta compared with integrated work/loss terms",
+        ),
+        harmonic_bridge_budget_ledger_variant_row(
+            base,
+            "component_wise_energy_delta",
+            initial,
+            final,
+            float(final_ledger.get("drive_input_work", sim.get("net_input_work", 0.0))),
+            float(final_ledger.get("damping_loss", sim.get("damping_loss", 0.0))),
+            float(final_ledger.get("limiter_loss", sim.get("limiter_loss", 0.0))),
+            float(final_ledger.get("magnetic_loss", sim.get("magnetic_loss", 0.0))),
+            float(final_ledger.get("spark_loss", sim.get("spark_loss", 0.0))),
+            servo,
+            nonlinear_delta,
+            linear_delta,
+            coupling_delta,
+            varactor_delta,
+            mix_delta,
+            "component energy deltas expose whether nonlinear/coupling storage dominates the residual",
+        ),
+    ]
+    magnetic_as_missing = harmonic_bridge_budget_ledger_variant_row(
+        base,
+        "diagnostic_subtract_magnetic_loss",
+        initial,
+        final,
+        float(final_ledger.get("drive_input_work", sim.get("net_input_work", 0.0))),
+        float(final_ledger.get("damping_loss", sim.get("damping_loss", 0.0))),
+        float(final_ledger.get("limiter_loss", sim.get("limiter_loss", 0.0))) + float(final_ledger.get("magnetic_loss", sim.get("magnetic_loss", 0.0))),
+        float(final_ledger.get("magnetic_loss", sim.get("magnetic_loss", 0.0))),
+        float(final_ledger.get("spark_loss", sim.get("spark_loss", 0.0))),
+        servo,
+        nonlinear_delta,
+        linear_delta,
+        coupling_delta,
+        varactor_delta,
+        mix_delta,
+        "diagnostic only: treats separately tracked magnetic damping as if missing from the ledger",
+    )
+    rows.append(magnetic_as_missing)
+    return rows
+
+
+def harmonic_bridge_budget_ledger_measure(config: BridgeLimiterPredictiveServoConfig,
+                                          spec: HarmonicBridgeBudgetLedgerSpec,
+                                          seed: int,
+                                          quick: bool,
+                                          dt: float,
+                                          runtime: float,
+                                          sample_every: int,
+                                          dt_level: str,
+                                          direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                          ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    sim, ledger = simulate_bridge_limiter_predictive_servo(config, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    target_key = f"{effective.mode_freqs[0]:g}:{effective.target_6:g}:{effective.target_9:g}:{effective.mode_freqs[1]:g}:{effective.mode_freqs[2]:g}"
+    cache_key = (target_key, dt, runtime)
+    if cache_key not in direct_cache:
+        direct_cfg = bridge_min_nudge_direct_reference(effective)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 13100, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 13100, "direct_reference", "direct_source_plus_generated", "reference", 0.35, 1.0)
+        direct_cache[cache_key] = (direct_sim, direct_row)
+    direct_sim, direct_row = direct_cache[cache_key]
+    nominal = bridge_metrics_window(effective, sim, seed, "harmonic_bridge_budget_ledger", spec.label, dt_level, 0.35, 1.0)
+    timeseries_rows, slip_summary = bridge_phase_slip_audit_timeseries(effective, sim, direct_sim, ledger, 0.50, 1.0)
+    series_metrics = bridge_generated_stage_series_metrics(timeseries_rows)
+    refined_metrics = bridge_stageA_refined_timeseries_metrics(timeseries_rows)
+    final_ledger = next((r for r in reversed(ledger) if "energy_budget_error_abs" in r), {})
+    total_input = float(sim.get("positive_input_work", 0.0)) + float(sim.get("limiter_loss", 0.0)) + float(sim.get("servo_work", 0.0))
+    base_row: Dict[str, float | str] = dict(nominal)
+    base_row.update(slip_summary)
+    base_row.update(series_metrics)
+    base_row.update(refined_metrics)
+    base_row.update({
+        "experiment": "harmonic_bridge_budget_ledger",
+        "case": config.name,
+        "candidate_id": f"{config.name}:{dt_level}",
+        "ledger_label": spec.label,
+        "dt_level": dt_level,
+        "dt_value": dt,
+        "family_label": harmonic_bridge_family_label(spec.source),
+        "source_frequency": spec.source,
+        "generated_frequency": spec.source * 2.0,
+        "target_frequency": spec.source * 3.0,
+        "target_detuning": spec.receiver_offset,
+        "stage_A_offset": spec.stage_a_offset,
+        "generated_damping_factor": spec.damping_factor,
+        "A_to_B_coupling_scale": spec.coupling_scale,
+        "limiter_strength": spec.limiter_strength if spec.limiter_enabled else 0.0,
+        "stage_B_detuning": spec.stage_b_detuning,
+        "drive_enabled": str(spec.drive_enabled),
+        "damping_enabled": str(spec.damping_enabled),
+        "nonlinear_enabled": str(spec.nonlinear_enabled),
+        "spark_enabled": str(spec.spark_enabled),
+        "magnetic_enabled": str(spec.magnetic_enabled),
+        "limiter_enabled": str(spec.limiter_enabled),
+        "reference_role": spec.reference_role,
+        "phase_lock_target": base_row.get("emergent_phase_lock_target", base_row.get("phase_lock_9", 0.0)),
+        "spectral_purity_target": base_row.get("spectral_purity_target", base_row.get("spectral_purity_9", 0.0)),
+        "bridge_ratio": metric_ratio(float(base_row.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0))),
+        "energy_budget_error": float(sim.get("energy_budget_error_rel", 1.0)),
+        "absolute_budget_error": abs(float(final_ledger.get("energy_budget_error_abs", 0.0))),
+        "stored_energy_delta": float(sim.get("stored_energy_delta", 0.0)),
+        "drive_work": float(sim.get("net_input_work", 0.0)),
+        "positive_input_work": float(sim.get("positive_input_work", 0.0)),
+        "damping_loss": float(sim.get("damping_loss", 0.0)),
+        "limiter_loss": float(sim.get("limiter_loss", 0.0)),
+        "adaptive_damping_work": float(sim.get("limiter_loss", 0.0)),
+        "magnetic_loss": float(sim.get("magnetic_loss", 0.0)),
+        "spark_loss": float(sim.get("spark_loss", 0.0)),
+        "limiter_work_fraction": metric_ratio(float(sim.get("limiter_loss", 0.0)), total_input),
+        "servo_work_fraction": metric_ratio(float(sim.get("servo_work", 0.0)), total_input),
+        "max_phase_jump": max(float(base_row.get("max_phase_jump", 0.0)), float(refined_metrics.get("max_near_slip_jump", 0.0))),
+        "near_slip_count": float(base_row.get("near_slip_count", 0.0)),
+        "no_direct_2f_drive": str(not any(abs(freq - effective.target_6) < 1e-9 and mode == 1 for freq, mode in zip(effective.drive_freqs, effective.drive_modes))),
+        "no_direct_3f_drive": str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes))),
+        "no_target_frequency_injection": str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes))),
+        "runtime": float(sim["times"][-1]) if len(sim["times"]) else 0.0,  # type: ignore[index]
+        "note": config.note,
+    })
+    component_rows = harmonic_bridge_budget_ledger_accounting_variants(config, sim, ledger, base_row)
+    for item in ledger:
+        item["experiment"] = "harmonic_bridge_budget_ledger"
+        item["case"] = config.name
+        item["candidate_id"] = base_row["candidate_id"]
+        item["ledger_label"] = spec.label
+        item["dt_level"] = dt_level
+        item["family_label"] = harmonic_bridge_family_label(spec.source)
+    return base_row, component_rows, ledger, timeseries_rows
+
+
+def harmonic_bridge_budget_ledger_convergence(errors_by_dt: Dict[str, float]) -> Tuple[float, float, str]:
+    baseline = max(errors_by_dt.get("baseline_dt", 0.0), 1e-18)
+    half = max(errors_by_dt.get("half_dt", 0.0), 1e-18)
+    quarter = max(errors_by_dt.get("quarter_dt", 0.0), 1e-18)
+    order_bh = math.log(baseline / half, 2.0) if baseline > 0.0 and half > 0.0 else 0.0
+    order_hq = math.log(half / quarter, 2.0) if half > 0.0 and quarter > 0.0 else 0.0
+    order = float(np.median([order_bh, order_hq]))
+    if order >= 1.5 and quarter < 0.005:
+        classification = "numerical_ledger_sensitivity"
+    elif order < 0.35 and quarter >= 0.005:
+        classification = "possible_non_passive_artifact"
+    else:
+        classification = "mixed_or_component_mismatch"
+    return order, order_hq, classification
+
+
+def harmonic_bridge_budget_ledger_component_cause(rows: List[Dict[str, float | str]]) -> Tuple[str, float]:
+    left_rows = [r for r in rows if str(r.get("accounting_variant")) == "left_endpoint_existing"]
+    if not left_rows:
+        return "unknown", 0.0
+    worst = max(left_rows, key=lambda r: float(r.get("absolute_budget_error", 0.0)))
+    residual = abs(float(worst.get("total_ledger_residual", 0.0)))
+    components = {
+        "drive_work_accounting": abs(float(worst.get("drive_work", 0.0))),
+        "damping_loss_accounting": abs(float(worst.get("damping_loss", 0.0))),
+        "spark_loss_accounting": abs(float(worst.get("spark_loss", 0.0))),
+        "limiter_loss_accounting": abs(float(worst.get("limiter_loss", 0.0))),
+        "magnetic_loss_diagnostic": abs(float(worst.get("magnetic_loss", 0.0))),
+        "nonlinear_potential_storage": abs(float(worst.get("nonlinear_potential_delta", 0.0))),
+    }
+    if residual <= 1e-18:
+        return "none", 0.0
+    nearest = min(components.items(), key=lambda item: abs(item[1] - residual))
+    ratio = metric_ratio(residual, nearest[1])
+    if ratio < 0.25 or ratio > 4.0:
+        return "no_single_component_matches_residual", ratio
+    return nearest[0], ratio
+
+
+def harmonic_bridge_budget_ledger_aggregate(rows: List[Dict[str, float | str]],
+                                            component_rows: List[Dict[str, float | str]]) -> List[Dict[str, float | str]]:
+    by_label: Dict[str, List[Dict[str, float | str]]] = {}
+    for row in rows:
+        by_label.setdefault(str(row.get("ledger_label", "")), []).append(row)
+    component_by_label: Dict[str, List[Dict[str, float | str]]] = {}
+    for row in component_rows:
+        component_by_label.setdefault(str(row.get("ledger_label", "")), []).append(row)
+    aggregates: List[Dict[str, float | str]] = []
+    for label, label_rows in by_label.items():
+        primary_variant_rows = [
+            r for r in component_by_label.get(label, [])
+            if str(r.get("accounting_variant")) == "left_endpoint_existing"
+        ]
+        trap_rows = [
+            r for r in component_by_label.get(label, [])
+            if str(r.get("accounting_variant")) == "midpoint_trapezoid_sampled"
+        ]
+        errors = {str(r.get("dt_level")): float(r.get("relative_budget_error", 1.0)) for r in primary_variant_rows}
+        trap_errors = {str(r.get("dt_level")): float(r.get("relative_budget_error", 1.0)) for r in trap_rows}
+        order, order_hq, classification = harmonic_bridge_budget_ledger_convergence(errors)
+        trap_order, _trap_order_hq, trap_classification = harmonic_bridge_budget_ledger_convergence(trap_errors) if trap_errors else (0.0, 0.0, "not_available")
+        cause, cause_ratio = harmonic_bridge_budget_ledger_component_cause(component_by_label.get(label, []))
+        representative = label_rows[0]
+        aggregate = dict(representative)
+        aggregate.update({
+            "candidate_id": f"{representative.get('case')}:aggregate",
+            "summary_role": "aggregate",
+            "dt_level": "aggregate",
+            "energy_budget_error": max(float(r.get("energy_budget_error", 1.0)) for r in label_rows),
+            "absolute_budget_error": max(float(r.get("absolute_budget_error", 0.0)) for r in label_rows),
+            "phase_lock_target": min(float(r.get("phase_lock_target", 0.0)) for r in label_rows),
+            "bridge_ratio": min(float(r.get("bridge_ratio", 0.0)) for r in label_rows),
+            "spectral_purity_target": min(float(r.get("spectral_purity_target", 0.0)) for r in label_rows),
+            "generated_envelope_cv": max(float(r.get("generated_envelope_cv", 99.0)) for r in label_rows),
+            "max_phase_jump": max(float(r.get("max_phase_jump", 99.0)) for r in label_rows),
+            "near_slip_count": max(float(r.get("near_slip_count", 99.0)) for r in label_rows),
+            "residual_scaling_baseline_to_half": metric_ratio(errors.get("baseline_dt", 0.0), errors.get("half_dt", 0.0)),
+            "residual_scaling_half_to_quarter": metric_ratio(errors.get("half_dt", 0.0), errors.get("quarter_dt", 0.0)),
+            "estimated_convergence_order": order,
+            "estimated_convergence_order_half_to_quarter": order_hq,
+            "ledger_classification": classification,
+            "trapezoid_estimated_convergence_order": trap_order,
+            "trapezoid_classification": trap_classification,
+            "trapezoid_baseline_budget_error": trap_errors.get("baseline_dt", 0.0),
+            "trapezoid_half_budget_error": trap_errors.get("half_dt", 0.0),
+            "trapezoid_quarter_budget_error": trap_errors.get("quarter_dt", 0.0),
+            "trapezoid_eighth_budget_error": trap_errors.get("eighth_dt", 0.0),
+            "left_baseline_budget_error": errors.get("baseline_dt", 0.0),
+            "left_half_budget_error": errors.get("half_dt", 0.0),
+            "left_quarter_budget_error": errors.get("quarter_dt", 0.0),
+            "left_eighth_budget_error": errors.get("eighth_dt", 0.0),
+            "dominant_component_hypothesis": cause,
+            "dominant_component_residual_ratio": cause_ratio,
+            "corrected_accounting_budget_clean_all_dt": str(all(v < 0.005 for v in trap_errors.values())) if trap_errors else "False",
+            "candidate_pending_independent_validation": "False",
+        })
+        strong_nonbudget = (
+            float(aggregate.get("phase_lock_target", 0.0)) > 0.90
+            and float(aggregate.get("bridge_ratio", 0.0)) > 1.5
+            and float(aggregate.get("spectral_purity_target", 0.0)) > 0.80
+            and float(aggregate.get("generated_envelope_cv", 99.0)) < 0.25
+            and float(aggregate.get("max_phase_jump", 99.0)) < 1.0
+            and float(aggregate.get("near_slip_count", 99.0)) <= 0.0
+        )
+        if strong_nonbudget and aggregate["corrected_accounting_budget_clean_all_dt"] == "True":
+            aggregate["candidate_pending_independent_validation"] = "True"
+        score = (
+            max(0.0, float(aggregate.get("phase_lock_target", 0.0)))
+            * max(0.0, float(aggregate.get("spectral_purity_target", 0.0)))
+            * min(4.0, max(0.0, float(aggregate.get("bridge_ratio", 0.0))))
+            / (
+                1.0
+                + 6.0 * max(0.0, float(aggregate.get("generated_envelope_cv", 99.0)))
+                + 2.0 * max(0.0, float(aggregate.get("max_phase_jump", 99.0)))
+                + 4.0 * max(0.0, float(aggregate.get("near_slip_count", 99.0)))
+                + 120.0 * max(0.0, float(aggregate.get("energy_budget_error", 1.0)))
+            )
+        )
+        aggregate["score"] = score
+        aggregates.append(aggregate)
+    return aggregates
+
+
+def write_harmonic_bridge_budget_ledger_report(out_dir: Path,
+                                               ranked: List[Dict[str, float | str]],
+                                               dt_rows: List[Dict[str, float | str]],
+                                               component_rows: List[Dict[str, float | str]],
+                                               include_sweeps: bool) -> None:
+    primary = next((r for r in ranked if str(r.get("ledger_label")) == "primary_4812_target_detune_m0p08"), {})
+    primary_components = [r for r in component_rows if str(r.get("ledger_label")) == "primary_4812_target_detune_m0p08"]
+    left_primary = [r for r in primary_components if str(r.get("accounting_variant")) == "left_endpoint_existing"]
+    trap_primary = [r for r in primary_components if str(r.get("accounting_variant")) == "midpoint_trapezoid_sampled"]
+    baseline_left = next((r for r in left_primary if str(r.get("dt_level")) == "baseline_dt"), {})
+    baseline_trap = next((r for r in trap_primary if str(r.get("dt_level")) == "baseline_dt"), {})
+    eighth_left = next((r for r in left_primary if str(r.get("dt_level")) == "eighth_dt"), {})
+    eighth_trap = next((r for r in trap_primary if str(r.get("dt_level")) == "eighth_dt"), {})
+    component_cause = primary.get("dominant_component_hypothesis", "unknown")
+    convergence = str(primary.get("ledger_classification", "unknown"))
+    corrected_clean = str(primary.get("corrected_accounting_budget_clean_all_dt", "False")) == "True"
+    nonbudget_stable = (
+        float(primary.get("phase_lock_target", 0.0)) > 0.90
+        and float(primary.get("bridge_ratio", 0.0)) > 1.5
+        and float(primary.get("spectral_purity_target", 0.0)) > 0.80
+        and float(primary.get("generated_envelope_cv", 99.0)) < 0.25
+        and float(primary.get("max_phase_jump", 99.0)) < 1.0
+        and float(primary.get("near_slip_count", 99.0)) <= 0.0
+    )
+    if corrected_clean and nonbudget_stable:
+        next_step = "independent validation of corrected accounting, then tighter 4->8->12 target-detuning sweep"
+    elif convergence == "numerical_ledger_sensitivity":
+        next_step = (
+            "independent corrected/substep quadrature before promotion"
+            if eighth_left else "eighth-dt confirmation and corrected quadrature before promotion"
+        )
+    elif component_cause != "unknown":
+        next_step = f"repair or validate {component_cause}, then rerun dt rescue"
+    else:
+        next_step = "reject as possible non-passive artifact unless an independent ledger closes"
+    lines = [
+        "# Harmonic Bridge Budget Ledger Report",
+        "",
+        "This mode isolates the dt-sensitive budget residual in the 4->8->12 target-detuned near-promotion row.",
+        "",
+        "## Direct Answers",
+        f"1. Which ledger component causes the 4->8->12 budget failure? Current best hypothesis: {component_cause}; residual/component ratio={float(primary.get('dominant_component_residual_ratio', 0.0)):.6g}.",
+        f"2. Does budget residual converge away with dt? {convergence}; order={float(primary.get('estimated_convergence_order', 0.0)):.6g}, half_to_quarter_order={float(primary.get('estimated_convergence_order_half_to_quarter', 0.0)):.6g}, left_eighth={float(eighth_left.get('relative_budget_error', 0.0)):.6g}.",
+        f"3. Does midpoint/trapezoid accounting reduce baseline-dt budget below 0.005? {'yes' if float(baseline_trap.get('relative_budget_error', 1.0)) < 0.005 else 'no'}; left_baseline={float(baseline_left.get('relative_budget_error', 0.0)):.6g}, trap_baseline={float(baseline_trap.get('relative_budget_error', 0.0)):.6g}, trap_eighth={float(eighth_trap.get('relative_budget_error', 0.0)):.6g}.",
+        f"4. Does the 4->8->12 target-detuned row remain non-budget stable after corrected accounting? {'yes' if nonbudget_stable else 'no'}; lock={float(primary.get('phase_lock_target', 0.0)):.6g}, bridge={float(primary.get('bridge_ratio', 0.0)):.6g}, gen_cv={float(primary.get('generated_envelope_cv', 0.0)):.6g}, jump={float(primary.get('max_phase_jump', 0.0)):.6g}, near_slips={float(primary.get('near_slip_count', 0.0)):.6g}.",
+        f"5. Next step: {next_step}.",
+        f"candidate_pending_independent_validation={primary.get('candidate_pending_independent_validation', 'False')}.",
+        "",
+        "## Run Shape",
+        f"- Grid mode: {'includes eighth-dt and neighboring target/damping/limiter rows' if include_sweeps else 'quick primary ledger isolation'}",
+        "- Accounting variants: left endpoint, midpoint/trapezoid, RK-loop cumulative, finite-difference energy delta, component-wise energy delta, and diagnostic magnetic-loss subtraction.",
+        "- Direct 2f/3f drive and target-frequency injection remain forbidden in discovery/diagnostic rows.",
+        "",
+        "## Aggregate Rows",
+    ]
+    for row in ranked:
+        lines.append(
+            f"- {row.get('ledger_label')}: family={row.get('family_label')}, score={float(row.get('score', 0.0)):.6g}, "
+            f"class={row.get('ledger_classification')}, lock={float(row.get('phase_lock_target', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+            f"abs={float(row.get('absolute_budget_error', 0.0)):.6g}, gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, "
+            f"jump={float(row.get('max_phase_jump', 0.0)):.6g}, near_slips={float(row.get('near_slip_count', 0.0)):.6g}, "
+            f"order={float(row.get('estimated_convergence_order', 0.0)):.6g}, trap_base={float(row.get('trapezoid_baseline_budget_error', 0.0)):.6g}, "
+            f"cause={row.get('dominant_component_hypothesis')}, pending={row.get('candidate_pending_independent_validation')}"
+        )
+    lines.extend(["", "## Component Rows"])
+    for row in component_rows[:72]:
+        lines.append(
+            f"- {row.get('ledger_label')} / {row.get('dt_level')} / {row.get('accounting_variant')}: "
+            f"residual={float(row.get('total_ledger_residual', 0.0)):.6g}, rel={float(row.get('relative_budget_error', 0.0)):.6g}, "
+            f"drive={float(row.get('drive_work', 0.0)):.6g}, damping={float(row.get('damping_loss', 0.0)):.6g}, "
+            f"limiter={float(row.get('limiter_loss', 0.0)):.6g}, magnetic={float(row.get('magnetic_loss', 0.0)):.6g}, "
+            f"spark={float(row.get('spark_loss', 0.0)):.6g}, nonlinear_delta={float(row.get('nonlinear_potential_delta', 0.0)):.6g}"
+        )
+    (out_dir / "README_HARMONIC_BRIDGE_BUDGET_LEDGER_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_harmonic_bridge_budget_ledger(out_dir: Path, seed: int, quick: bool = False,
+                                             include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    runtime = base_tmax * 1.25 * 4.0
+    dt_levels = [("baseline_dt", dt), ("half_dt", dt * 0.5), ("quarter_dt", dt * 0.25)]
+    if include_sweeps:
+        dt_levels.append(("eighth_dt", dt * 0.125))
+    specs = harmonic_bridge_budget_ledger_specs(include_sweeps)
+    summary_rows: List[Dict[str, float | str]] = []
+    component_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    for idx, spec in enumerate(specs):
+        config = harmonic_bridge_budget_ledger_make_config(spec)
+        for dt_idx, (dt_level, dt_value) in enumerate(dt_levels):
+            row, components, ledger, _phase_series = harmonic_bridge_budget_ledger_measure(
+                config,
+                spec,
+                seed + 61000 + idx * 1400 + dt_idx * 283,
+                quick,
+                dt_value,
+                runtime,
+                sample_every,
+                dt_level,
+                direct_cache,
+            )
+            row["summary_role"] = "dt_measure"
+            summary_rows.append(row)
+            component_rows.extend(components)
+            timeseries_rows.extend(ledger)
+    aggregate_rows = harmonic_bridge_budget_ledger_aggregate(summary_rows, component_rows)
+    ranked = sorted(
+        aggregate_rows,
+        key=lambda r: (
+            1.0 if str(r.get("ledger_label")) == "primary_4812_target_detune_m0p08" else 0.0,
+            float(r.get("score", 0.0)),
+            -float(r.get("energy_budget_error", 1.0)),
+        ),
+        reverse=True,
+    )
+    write_csv(out_dir / "harmonic_bridge_budget_ledger_summary.csv", aggregate_rows + summary_rows)
+    write_csv(out_dir / "harmonic_bridge_budget_ledger_components.csv", component_rows)
+    write_csv(out_dir / "harmonic_bridge_budget_ledger_timeseries.csv", timeseries_rows)
+    write_harmonic_bridge_budget_ledger_report(out_dir, ranked, summary_rows, component_rows, include_sweeps)
+    return [
+        {
+            "experiment": "harmonic_bridge_budget_ledger",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("score", 0.0),
+            "passed": row.get("candidate_pending_independent_validation", "False"),
+            "promotion_ready": "False",
+            "ledger_label": row.get("ledger_label", ""),
+            "family_label": row.get("family_label", ""),
+            "ledger_classification": row.get("ledger_classification", ""),
+            "dominant_component_hypothesis": row.get("dominant_component_hypothesis", ""),
+            "estimated_convergence_order": row.get("estimated_convergence_order", 0.0),
+            "phase_lock_target": row.get("phase_lock_target", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "absolute_budget_error": row.get("absolute_budget_error", 0.0),
+            "generated_envelope_cv": row.get("generated_envelope_cv", 0.0),
+            "max_phase_jump": row.get("max_phase_jump", 0.0),
+            "near_slip_count": row.get("near_slip_count", 0.0),
+            "candidate_pending_independent_validation": row.get("candidate_pending_independent_validation", "False"),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -19220,8 +19972,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin/limiter-predictive-servo/harmonic-bridge-family/dt-rescue, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "bridge_limiter_predictive_servo", "harmonic_bridge_family", "harmonic_bridge_dt_rescue", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin/limiter-predictive-servo/harmonic-bridge-family/dt-rescue/budget-ledger, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "bridge_limiter_predictive_servo", "harmonic_bridge_family", "harmonic_bridge_dt_rescue", "harmonic_bridge_budget_ledger", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -19292,6 +20044,8 @@ def main() -> None:
         rows.extend(experiment_harmonic_bridge_family(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("harmonic_bridge_dt_rescue",):
         rows.extend(experiment_harmonic_bridge_dt_rescue(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("harmonic_bridge_budget_ledger",):
+        rows.extend(experiment_harmonic_bridge_budget_ledger(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

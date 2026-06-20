@@ -30,12 +30,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Stage A budget forensics suggests that budget failure is dt-sensitive driven-model accounting, not no-drive nonconservation: half-dt and quarter-dt clean the full-model rows.
 - Harmonic-family mapping shows the strongest normalized quick-smoke row is 5 -> 10 -> 15, not 3 -> 6 -> 9; no family passed the harmonic bridge candidate gate yet.
 - Harmonic dt rescue shows the 4 -> 8 -> 12 near miss can satisfy all strict non-budget phase/bridge/envelope gates across dt after target detuning, but baseline-dt budget error still blocks promotion.
+- Harmonic budget-ledger forensics shows the 4 -> 8 -> 12 budget residual collapses with timestep: baseline 0.04490, half-dt 0.00498, quarter-dt 0.000605, eighth-dt 0.000110, with estimated convergence order about 3.11. No single ledger component matches the residual.
 
 ## Current Blocker
 
 No passive model has passed the strict 4x runtime lock gate.
 
-The main 4x failure is now split between generated-stage lock quality, driven-model budget accounting, and family specificity. The narrow forensics search found budget-clean zero-slip rows, but they still miss lock/jump/envelope gates. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 dt-rescue smoke now points to budget-ledger sensitivity, not phase instability, as the blocker for that family.
+The main 4x failure is now split between generated-stage lock quality, driven-model budget accounting, and family specificity. The narrow forensics search found budget-clean zero-slip rows, but they still miss lock/jump/envelope gates. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 dt-rescue and budget-ledger smokes now point to numerical ledger sensitivity, not phase instability, as the blocker for that family.
 
 ## Latest Magnetic Autolock Summary
 
@@ -377,14 +378,38 @@ Quick smoke result from `runs/harmonic_bridge_dt_rescue_quick_smoke`:
 - After bridge-ratio gating, 4 -> 8 -> 12 beat 5 -> 10 -> 15. 3 -> 6 -> 9 remained behind 4 -> 8 -> 12, but not behind 5 -> 10 -> 15 once 5-family budget/bridge-ratio failures were counted.
 - Current read: the 4 -> 8 -> 12 failure is not a true phase instability in the best row. It is a budget-ledger/dt sensitivity problem followed by a target-detuning refinement problem.
 
+## Latest Harmonic Bridge Budget Ledger Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick
+python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick --sweeps
+```
+
+What it tests:
+
+- The 4 -> 8 -> 12 target-detuned row from dt-rescue, plus 3 -> 6 -> 9, 5 -> 10 -> 15, no-drive/no-servo, drive-only, damping-only, nonlinear-only, limiter-only, and full-model 4 -> 8 -> 12 diagnostic rows.
+- Baseline dt, half dt, quarter dt, and optional eighth dt in sweep mode.
+- Existing left-endpoint ledger, sampled midpoint/trapezoid accounting, RK-loop cumulative accounting, finite-difference energy delta, component-wise energy delta, and diagnostic magnetic-loss subtraction.
+- Stored-energy delta, drive work, positive input work, damping/spark/magnetic loss, limiter/adaptive work, nonlinear-potential delta, total residual, relative/absolute budget error, residual scaling, and convergence order.
+
+Quick smoke result from `runs/harmonic_bridge_budget_ledger_quick_smoke`:
+
+- Primary 4 -> 8 -> 12 non-budget metrics stayed stable across dt: worst lock 0.991, bridge ratio 1.531, purity 0.925, generated-envelope CV 0.138, max jump 0.998 rad, and near slips 0.
+- Existing ledger error converged down strongly: baseline 0.04490, half-dt 0.00498, quarter-dt 0.000605, eighth-dt 0.000110; estimated convergence order was about 3.11.
+- Midpoint/trapezoid accounting did not make baseline dt budget-clean: baseline stayed 0.04401, though quarter-dt stayed clean at 0.000850 and eighth-dt was 0.0000116.
+- No single component matched the residual; diagnostic magnetic-loss subtraction made the residual much worse, so the failure is not a simple missing magnetic-loss term.
+- The row remains `candidate_pending_independent_validation=False`. Current next step: independent corrected/substep quadrature before any promotion, then a tighter 4 -> 8 -> 12 target-detuning sweep if the ledger closes.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Keep the refined-dt accounting path and continue monitoring absolute/relative budget convergence.
+1. Run independent corrected/substep quadrature for the 4 -> 8 -> 12 target-detuned ledger row.
 2. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
-3. Refine the 4 -> 8 -> 12 budget ledger and target-detuning basin before broader family-law mapping.
+3. If the corrected 4 -> 8 -> 12 ledger closes, run a tighter target-detuning basin sweep before broader family-law mapping.
 4. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 5. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

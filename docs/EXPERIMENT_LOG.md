@@ -276,3 +276,21 @@ Added a dt-rescue mode for the 4 -> 8 -> 12 near miss:
 - No 4 -> 8 -> 12 row passed `harmonic_bridge_candidate` or strict because all-dt budget cleanliness was not achieved.
 - After bridge-ratio gating, 4 -> 8 -> 12 beat 5 -> 10 -> 15. 3 -> 6 -> 9 remained behind 4 -> 8 -> 12, but not behind 5 -> 10 -> 15 after budget/bridge-ratio normalization.
 - Current next fix: 4 -> 8 -> 12 budget-ledger refinement, then a tighter target-detuning sweep.
+
+## Harmonic Bridge Budget Ledger
+
+Added a budget-ledger diagnostic for the 4 -> 8 -> 12 target-detuned near miss:
+
+- Starts from the dt-rescue primary row: family 4 -> 8 -> 12, target detuning `-0.08`, Stage A offset `+0.040`, generated damping factor `1.05`, A->B coupling `0.90`, limiter `0.04`.
+- Compares against 3 -> 6 -> 9, 5 -> 10 -> 15, no-drive/no-servo, drive-only, damping-only, nonlinear-only, limiter-only, and full-model 4 -> 8 -> 12 rows.
+- Runs baseline dt, half dt, quarter dt, and optional eighth dt in sweep mode.
+- Reports stored energy, drive work, positive input work, damping/spark/magnetic loss, limiter/adaptive work, nonlinear-potential delta, residual per time/work, residual scaling, and convergence order.
+- Adds left-endpoint, midpoint/trapezoid, RK-loop cumulative, finite-difference, component-wise, and diagnostic magnetic-loss accounting variants.
+
+Quick smoke result:
+
+- Primary 4 -> 8 -> 12 non-budget metrics stayed strong across dt: lock 0.991, bridge ratio 1.531, purity 0.925, generated-envelope CV 0.138, max phase jump 0.998 rad, near slips 0.
+- Existing ledger residual converged away with dt: budget error 0.04490 at baseline dt, 0.00498 at half-dt, 0.000605 at quarter-dt, and 0.000110 at eighth-dt; convergence order was about 3.11.
+- Midpoint/trapezoid accounting did not make baseline dt clean: it remained 0.04401. Quarter-dt was clean at 0.000850 and eighth-dt dropped to 0.0000116.
+- No single component matched the residual, and subtracting magnetic loss as a missing term made the ledger worse.
+- Current read: classify this as numerical ledger sensitivity, not a promotion and not proven physical non-passive energy creation. Next step is independent corrected/substep quadrature, then a tighter 4 -> 8 -> 12 detuning sweep if validated.
