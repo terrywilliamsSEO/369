@@ -67,6 +67,8 @@ Latest experiment:
 ```bash
 python tesla_369_lab.py --mode magnetic_autolock --quick
 python tesla_369_lab.py --mode magnetic_autolock --quick --sweeps
+python tesla_369_lab.py --mode bridge_min_nudge --quick
+python tesla_369_lab.py --mode bridge_min_nudge --quick --sweeps
 ```
 
 Key bridge modes:
@@ -76,6 +78,7 @@ python tesla_369_lab.py --mode bridge_lock_refine --quick --sweeps
 python tesla_369_lab.py --mode bridge_phase_lock --quick --sweeps
 python tesla_369_lab.py --mode magnetic_bridge --quick --sweeps
 python tesla_369_lab.py --mode magnetic_autolock --quick --sweeps
+python tesla_369_lab.py --mode bridge_min_nudge --quick --sweeps
 ```
 
 ## Evidence Standard

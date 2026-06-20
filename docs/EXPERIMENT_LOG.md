@@ -109,3 +109,13 @@ Quick sweep smoke result:
 - It reached bridge ratio 0.957, phase_lock_9 0.950, spectral purity 0.643, and budget error 0.000227.
 - The best 4x validation rows still failed by phase drift; top 4x phase lock was about 0.747.
 - Autolock is useful for finding capture islands, but it has not yet promoted a 4x-stable candidate.
+
+## Bridge Minimum Nudge
+
+Added an explicit proportional-only correction-work test:
+
+- Starts from `sweep_receiver_capture_8p82_to_8p9_s0p9` and the passive magnetic `stage_B_nonlinear_strength=0.84` lead.
+- Tests only receiver tuning, magnetic bias, and Stage B detuning nudges.
+- Keeps direct 6/9 drive and target-frequency injection out of discovery rows.
+- Counts signed parameter-work in the energy budget and reports absolute correction-work fraction, RMS, and peak correction.
+- Includes no-nudge, wrong-sign, random, and non-369 bridge controls.

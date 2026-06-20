@@ -57,6 +57,7 @@ Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run deeper `magnetic_autolock --sweeps` focused on 4x phase drift.
-2. Move to active self-lock / PLL and explicitly account for active work.
-3. Add a geometry mode only after a 4x-stable seed exists.
+1. Run `bridge_min_nudge --sweeps` to test whether a tiny explicitly accounted proportional tuning correction can hold 4x lock.
+2. Run deeper `magnetic_autolock --sweeps` focused on 4x phase drift.
+3. Move to active self-lock / PLL and explicitly account for active work.
+4. Add a geometry mode only after a 4x-stable seed exists.
