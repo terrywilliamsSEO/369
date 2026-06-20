@@ -9684,6 +9684,832 @@ def experiment_bridge_lock_threshold(out_dir: Path, seed: int, quick: bool = Fal
 
 
 # ----------------------------
+# Experiment 18: bridge control authority
+# ----------------------------
+
+@dataclass
+class BridgeControlAuthorityConfig:
+    name: str
+    correction_type: str
+    base_config: BridgeMinNudgeConfig
+    correction_size: float
+    schedule_type: str
+    correction_start_fraction: float = 0.38
+    ramp_fraction: float = 0.18
+    max_allowed_correction: float = 0.024
+    seed_family: str = "base"
+    reference_role: str = "discovery_candidate"
+    family: str = "369"
+    note: str = ""
+
+
+def bridge_control_authority_template(correction_type: str,
+                                      seed_family: str,
+                                      receiver_tuning: float = 8.90,
+                                      phase_bias: float = 30.0,
+                                      stage_b_strength: float = 0.84,
+                                      stage_b_detuning: float = 0.0,
+                                      magnetic_bias_strength: float = 2.0,
+                                      reference_role: str = "discovery_candidate",
+                                      family: str = "369") -> BridgeMinNudgeConfig:
+    base = bridge_lock_threshold_make_config(
+        correction_type,
+        receiver_tuning=receiver_tuning,
+        phase_bias=phase_bias,
+        stage_b_strength=stage_b_strength,
+        stage_b_detuning=stage_b_detuning,
+        kp=0.0,
+        correction_clamp=0.0,
+        smoothing=1.0,
+        update_interval=1.0,
+        magnetic_bias_strength=magnetic_bias_strength,
+        control_mode="no_nudge",
+        reference_role=reference_role,
+        family=family,
+        name_suffix=seed_family,
+    )
+    return replace(base, note=f"control authority seed {seed_family}")
+
+
+def bridge_control_authority_correction(config: BridgeControlAuthorityConfig, t: float,
+                                        runtime: float, random_correction: float) -> float:
+    start_t = config.correction_start_fraction * runtime
+    if config.schedule_type == "no_correction":
+        return 0.0
+    if config.schedule_type == "random_correction":
+        return 0.0 if t < start_t else random_correction
+    if t < start_t:
+        return 0.0
+    if config.schedule_type in ("slow_ramp", "hold_after_ramp"):
+        ramp_t = max(1e-9, config.ramp_fraction * runtime)
+        progress = min(1.0, max(0.0, (t - start_t) / ramp_t))
+        smooth = 0.5 - 0.5 * math.cos(math.pi * progress)
+        return config.correction_size * smooth
+    return config.correction_size
+
+
+def simulate_bridge_control_authority(config: BridgeControlAuthorityConfig, seed: int, quick: bool,
+                                      dt: float | None = None, t_max: float | None = None,
+                                      base_hz: float = 0.045, sample_every: int | None = None
+                                      ) -> Tuple[Dict[str, object], List[Dict[str, float | str]]]:
+    rng = np.random.default_rng(seed)
+    default_dt, default_tmax, default_sample = bridge_amp_timebase(quick)
+    dt = default_dt if dt is None else dt
+    t_max = default_tmax if t_max is None else t_max
+    sample_every = default_sample if sample_every is None else sample_every
+    drive_until = 0.74 * t_max
+    random_correction = float(rng.uniform(-config.max_allowed_correction, config.max_allowed_correction))
+
+    correction = 0.0
+    effective = bridge_min_nudge_effective_bridge(config.base_config, correction)
+    initial_effective = effective
+    omega = 2.0 * np.pi * base_hz * np.asarray(effective.mode_freqs, dtype=float)
+    zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+    y = np.zeros(6)
+    y[:3] = 1e-4 * rng.normal(size=3)
+    y[3:] = 1e-4 * rng.normal(size=3)
+    initial_total = float(bridge_amp_potentials(y[:3], y[3:], omega, effective)["total"])
+    drive_work = 0.0
+    positive_input_work = 0.0
+    damping_loss = 0.0
+    spark_loss = 0.0
+    correction_work_signed = 0.0
+    correction_work_abs = 0.0
+    correction_energy_in = 0.0
+    correction_energy_out = 0.0
+
+    times: List[float] = []
+    qs: List[np.ndarray] = []
+    vs: List[np.ndarray] = []
+    energies: List[np.ndarray] = []
+    corrections: List[float] = []
+    receiver_trace: List[float] = []
+    stage_b_trace: List[float] = []
+    magnetic_bias_trace: List[float] = []
+    ledger: List[Dict[str, float | str]] = []
+
+    n_steps = int(t_max / dt)
+    for step in range(n_steps):
+        t = step * dt
+        q = y[:3]
+        v = y[3:]
+        next_correction = float(np.clip(
+            bridge_control_authority_correction(config, t, t_max, random_correction),
+            -config.max_allowed_correction,
+            config.max_allowed_correction,
+        ))
+        if abs(next_correction - correction) > 1e-15:
+            before = bridge_amp_potentials(q, v, omega, effective)
+            next_effective = bridge_min_nudge_effective_bridge(config.base_config, next_correction)
+            next_omega = 2.0 * np.pi * base_hz * np.asarray(next_effective.mode_freqs, dtype=float)
+            after_param = bridge_amp_potentials(q, v, next_omega, next_effective)
+            delta_work = float(after_param["total"] - before["total"])
+            correction_work_signed += delta_work
+            correction_work_abs += abs(delta_work)
+            correction_energy_in += max(0.0, delta_work)
+            correction_energy_out += max(0.0, -delta_work)
+            correction = next_correction
+            effective = next_effective
+            omega = next_omega
+            zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+        drive_forces = bridge_amp_drive_forces(effective, t, base_hz, drive_until, 3)
+        drive_power = float(np.dot(drive_forces, v))
+        drive_work += drive_power * dt
+        positive_input_work += max(0.0, drive_power) * dt
+        damping_loss += float(np.sum(2.0 * zeta * omega * (v ** 2))) * dt
+        if effective.spark_strength:
+            for i, j in ((0, 1), (1, 2)):
+                gate = float(spark_gate(q[i] - q[j], threshold=effective.spark_threshold))
+                c = 0.030 * effective.spark_strength * gate
+                spark_loss += float(c * ((v[i] - v[j]) ** 2)) * dt
+
+        y_next = rk4_step(y, t, dt, bridge_amp_derivative, omega, effective, base_hz, drive_until, zeta)
+        qn = y_next[:3]
+        vn = y_next[3:]
+        after = bridge_amp_potentials(qn, vn, omega, effective)
+        y = y_next
+        if not np.all(np.isfinite(y)) or np.max(np.abs(y)) > 1e6:
+            break
+
+        if step % sample_every == 0:
+            modal = clean_modal_energy(qn, vn, omega)
+            total_accounted = initial_total + drive_work + correction_work_signed - damping_loss - spark_loss
+            error_abs = float(after["total"]) - total_accounted
+            error_rel = abs(error_abs) / (abs(float(after["total"])) + abs(total_accounted) + 1e-18)
+            now = float(t + dt)
+            times.append(now)
+            qs.append(qn.copy())
+            vs.append(vn.copy())
+            energies.append(modal)
+            corrections.append(correction)
+            receiver_trace.append(float(effective.mode_freqs[2]))
+            stage_b_trace.append(float(effective.mode_freqs[1]))
+            magnetic_bias_trace.append(float(config.base_config.magnetic_config.magnetic_bias_field + (config.base_config.magnetic_bias_strength * correction if config.correction_type == "magnetic_bias_nudge" else 0.0)))
+            ledger.append({
+                "case": config.name,
+                "time": now,
+                "correction_type": config.correction_type,
+                "schedule_type": config.schedule_type,
+                "correction_size": config.correction_size,
+                "correction_value": correction,
+                "receiver_tuning": float(effective.mode_freqs[2]),
+                "stage_B_tuning": float(effective.mode_freqs[1]),
+                "magnetic_bias_field": magnetic_bias_trace[-1],
+                "energy_at_3_mode": float(modal[0]),
+                "energy_at_6_mode": float(modal[1]),
+                "energy_at_9_mode": float(modal[2]),
+                "total_stored_energy": float(after["total"]),
+                "drive_input_work": drive_work,
+                "positive_input_work": positive_input_work,
+                "damping_loss": damping_loss,
+                "spark_loss": spark_loss,
+                "correction_work_signed": correction_work_signed,
+                "correction_work": correction_work_abs,
+                "correction_energy_in": correction_energy_in,
+                "correction_energy_out": correction_energy_out,
+                "total_accounted_energy": total_accounted,
+                "energy_budget_error_abs": error_abs,
+                "energy_budget_error_rel": error_rel,
+            })
+
+    correction_arr = np.asarray(corrections)
+    sim: Dict[str, object] = {
+        "times": np.asarray(times),
+        "qs": np.asarray(qs),
+        "vs": np.asarray(vs),
+        "energy": np.asarray(energies),
+        "omega": omega,
+        "drive_until": drive_until,
+        "dt_sample": dt * sample_every,
+        "positive_input_work": positive_input_work,
+        "net_input_work": drive_work,
+        "damping_loss": damping_loss,
+        "spark_loss": spark_loss,
+        "correction_work_signed": correction_work_signed,
+        "correction_work": correction_work_abs,
+        "correction_energy_in": correction_energy_in,
+        "correction_energy_out": correction_energy_out,
+        "correction_rms": float(np.sqrt(np.mean(correction_arr ** 2))) if len(correction_arr) else 0.0,
+        "correction_peak": float(np.max(np.abs(correction_arr))) if len(correction_arr) else 0.0,
+        "correction_mean_abs": float(np.mean(np.abs(correction_arr))) if len(correction_arr) else 0.0,
+        "correction_final": float(correction_arr[-1]) if len(correction_arr) else 0.0,
+        "energy_budget_error_rel": float(ledger[-1]["energy_budget_error_rel"]) if ledger else 1.0,
+        "max_energy_budget_error_rel": max((float(r["energy_budget_error_rel"]) for r in ledger), default=1.0),
+        "effective_config": effective,
+        "initial_effective_config": initial_effective,
+        "receiver_tuning_trace": np.asarray(receiver_trace),
+        "stage_b_tuning_trace": np.asarray(stage_b_trace),
+        "magnetic_bias_trace": np.asarray(magnetic_bias_trace),
+    }
+    return sim, ledger
+
+
+def bridge_control_authority_seed_templates(quick: bool, include_sweeps: bool) -> List[Tuple[str, str, BridgeMinNudgeConfig]]:
+    seeds = [
+        ("receiver_best_4x_raw", "receiver_tuning_nudge", bridge_control_authority_template("receiver_tuning_nudge", "receiver_best_4x_raw", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("magnetic_best_low_work", "magnetic_bias_nudge", bridge_control_authority_template("magnetic_bias_nudge", "magnetic_best_low_work", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("stageB_best_budget_clean", "stage_B_detuning_nudge", bridge_control_authority_template("stage_B_detuning_nudge", "stageB_best_budget_clean", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("autolock_seed_s0p9", "receiver_tuning_nudge", bridge_control_authority_template("receiver_tuning_nudge", "autolock_seed_s0p9", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.90)),
+        ("magnetic_stageB0p84_lead", "magnetic_bias_nudge", bridge_control_authority_template("magnetic_bias_nudge", "magnetic_stageB0p84_lead", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+    ]
+    if include_sweeps:
+        for ctype in ["receiver_tuning_nudge", "magnetic_bias_nudge", "stage_B_detuning_nudge"]:
+            for receiver in ([8.86, 8.90, 8.93] if quick else [8.86, 8.875, 8.90, 8.915, 8.93]):
+                seeds.append((f"sweep_receiver_{safe_token(receiver)}", ctype, bridge_control_authority_template(ctype, f"sweep_receiver_{safe_token(receiver)}", receiver_tuning=receiver, phase_bias=30.0, stage_b_strength=0.84)))
+            for phase in ([15.0, 25.0, 35.0] if quick else [15.0, 20.0, 25.0, 30.0, 35.0]):
+                seeds.append((f"sweep_phase_{safe_token(phase)}", ctype, bridge_control_authority_template(ctype, f"sweep_phase_{safe_token(phase)}", receiver_tuning=8.90, phase_bias=phase, stage_b_strength=0.84)))
+    return seeds
+
+
+def bridge_control_authority_specs(quick: bool, include_sweeps: bool) -> List[Tuple[str, str, BridgeControlAuthorityConfig]]:
+    tests = [
+        ("negative_small_step", -0.004, "step", 0.12),
+        ("positive_small_step", 0.004, "step", 0.12),
+        ("medium_step", 0.012, "step", 0.18),
+        ("large_step", 0.024, "step", 0.20),
+        ("slow_ramp", 0.018, "slow_ramp", 0.34),
+        ("hold_after_ramp", 0.012, "hold_after_ramp", 0.18),
+    ]
+    if include_sweeps:
+        tests.extend([
+            ("negative_medium_step", -0.012, "step", 0.18),
+            ("negative_large_step", -0.024, "step", 0.20),
+            ("extra_large_plausible_step", 0.036, "step", 0.20),
+        ])
+    specs: List[Tuple[str, str, BridgeControlAuthorityConfig]] = []
+    for seed_family, ctype, template in bridge_control_authority_seed_templates(quick, include_sweeps):
+        max_allowed = 0.036 if include_sweeps else 0.024
+        for test_name, correction, schedule, ramp_fraction in tests:
+            if template.correction_type != ctype:
+                template = replace(template, correction_type=ctype)
+            name = f"authority_{seed_family}_{ctype}_{test_name}_{safe_token(correction)}"
+            specs.append((
+                test_name,
+                seed_family,
+                BridgeControlAuthorityConfig(
+                    name=name,
+                    correction_type=ctype,
+                    base_config=template,
+                    correction_size=correction,
+                    schedule_type=schedule,
+                    ramp_fraction=ramp_fraction,
+                    max_allowed_correction=max_allowed,
+                    seed_family=seed_family,
+                    reference_role="discovery_candidate",
+                    family="369",
+                    note="open-loop actuator authority test",
+                ),
+            ))
+    return specs
+
+
+def bridge_control_authority_control_specs(include_sweeps: bool) -> List[Tuple[str, str, BridgeControlAuthorityConfig]]:
+    control_types = ["receiver_tuning_nudge", "magnetic_bias_nudge", "stage_B_detuning_nudge"] if include_sweeps else ["receiver_tuning_nudge"]
+    specs: List[Tuple[str, str, BridgeControlAuthorityConfig]] = []
+    for ctype in control_types:
+        template = bridge_control_authority_template(ctype, "control_baseline", reference_role="control")
+        for name, correction, schedule in [
+            ("no_correction", 0.0, "no_correction"),
+            ("wrong_sign_correction", -0.012, "step"),
+            ("random_correction", 0.012, "random_correction"),
+        ]:
+            specs.append((
+                name,
+                ctype,
+                BridgeControlAuthorityConfig(
+                    name=f"authority_control_{ctype}_{name}",
+                    correction_type=ctype,
+                    base_config=template,
+                    correction_size=correction,
+                    schedule_type=schedule,
+                    seed_family="control_baseline",
+                    reference_role="control",
+                    family="369",
+                    note="control authority negative/random/no-correction control",
+                ),
+            ))
+    for source, target in ((4.0, 12.0), (5.0, 15.0)):
+        for ctype in control_types:
+            template = BridgeMinNudgeConfig(
+                name=f"authority_non369_template_{safe_token(source)}_{safe_token(target)}_{ctype}",
+                correction_type=ctype,
+                magnetic_config=bridge_min_nudge_non369_seed(source, target),
+                kp=0.0,
+                correction_clamp=0.0,
+                update_interval=1.0,
+                smoothing=1.0,
+                magnetic_bias_strength=2.0,
+                control_mode="no_nudge",
+                reference_role="control",
+                family="non369",
+                note="non-369 authority template",
+            )
+            specs.append((
+                f"non369_{safe_token(source)}_{safe_token(target)}",
+                ctype,
+                BridgeControlAuthorityConfig(
+                    name=f"authority_non369_{safe_token(source)}_{safe_token(target)}_{ctype}",
+                    correction_type=ctype,
+                    base_config=template,
+                    correction_size=0.012,
+                    schedule_type="step",
+                    seed_family=f"non369_{safe_token(source)}_{safe_token(target)}",
+                    reference_role="control",
+                    family="non369",
+                    note="non-369 bridge authority control",
+                ),
+            ))
+    return specs
+
+
+def bridge_control_authority_measure(config: BridgeControlAuthorityConfig, seed: int, quick: bool,
+                                     dt: float, runtime: float, sample_every: int,
+                                     direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                     ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    sim, ledger = simulate_bridge_control_authority(config, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    initial_effective = sim["initial_effective_config"]  # type: ignore[assignment]
+    target_key = f"{effective.mode_freqs[0]:g}:{effective.target_6:g}:{effective.target_9:g}"
+    cache_key = (target_key, dt, runtime)
+    if cache_key not in direct_cache:
+        direct_cfg = bridge_min_nudge_direct_reference(effective)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 8300, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 8300, "direct_reference", "direct_source_plus_generated", "reference", 0.35, 1.0)
+        direct_cache[cache_key] = (direct_sim, direct_row)
+    direct_sim, direct_row = direct_cache[cache_key]
+
+    row = bridge_metrics_window(effective, sim, seed, "authority", config.schedule_type, f"{config.correction_size:g}", 0.35, 1.0)
+    before_rows, before_summary = bridge_phase_diagnostic_series(initial_effective, sim, direct_sim, 0.10, 0.32)
+    after_rows, after_summary = bridge_phase_diagnostic_series(effective, sim, direct_sim, 0.62, 1.0)
+    drift_rows = before_rows + after_rows
+
+    correction_abs = abs(config.correction_size)
+    before_drift = float(before_summary.get("phase_drift_rate", 0.0))
+    after_drift = float(after_summary.get("phase_drift_rate", 0.0))
+    before_freq = float(before_summary.get("effective_target_frequency", effective.target_9))
+    after_freq = float(after_summary.get("effective_target_frequency", effective.target_9))
+    actuator_gain = (after_drift - before_drift) / config.correction_size if abs(config.correction_size) > 1e-12 else 0.0
+    frequency_pull = (after_freq - before_freq) / config.correction_size if abs(config.correction_size) > 1e-12 else 0.0
+
+    row.update(after_summary)
+    row["experiment"] = "bridge_control_authority"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:4x"
+    row["correction_type"] = config.correction_type
+    row["actuator_type"] = config.correction_type
+    row["schedule_type"] = config.schedule_type
+    row["correction_size"] = config.correction_size
+    row["max_allowed_correction"] = config.max_allowed_correction
+    row["seed_family"] = config.seed_family
+    row["reference_role"] = config.reference_role
+    row["family"] = config.family
+    row["runtime_factor"] = 4.0
+    row["bridge_ratio"] = metric_ratio(float(row.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0)))
+    row["generated_vs_direct_bridge_ratio"] = row["bridge_ratio"]
+    row["energy_at_9_from_direct_3_plus_6_reference"] = direct_row.get("energy_at_9", 0.0)
+    total_input_before = max(float(row.get("total_input_work", 0.0)), 1e-18)
+    total_input_with_correction = total_input_before + float(sim["correction_work"])
+    row["total_input_work_before_correction"] = total_input_before
+    row["total_input_work"] = total_input_with_correction
+    row["correction_work"] = float(sim["correction_work"])
+    row["correction_work_signed"] = float(sim["correction_work_signed"])
+    row["correction_work_fraction"] = metric_ratio(float(sim["correction_work"]), total_input_with_correction)
+    row["correction_rms"] = float(sim["correction_rms"])
+    row["correction_peak"] = float(sim["correction_peak"])
+    row["effective_generated_frequency_before_correction"] = before_freq
+    row["effective_generated_frequency_after_correction"] = after_freq
+    row["phase_drift_rate_before_correction"] = before_drift
+    row["phase_drift_rate_after_correction"] = after_drift
+    row["actuator_gain"] = actuator_gain
+    row["frequency_pull_per_unit_correction"] = frequency_pull
+    row["observed_uncorrected_drift_rate"] = 0.0
+    row["required_correction_to_cancel_drift"] = 0.0
+    row["estimated_work_for_required_correction"] = 0.0
+    row["actuator_authority_margin"] = float("inf")
+    row["drift_reduction_fraction"] = 0.0
+    row["phase_lock_improvement_vs_baseline"] = 0.0
+    row["no_direct_6_drive"] = str(not any(abs(freq - effective.target_6) < 1e-9 and mode == 1 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_direct_9_drive"] = str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["note"] = config.note
+
+    for item in ledger:
+        item["experiment"] = "bridge_control_authority"
+        item["candidate_id"] = row["candidate_id"]
+        item["seed_family"] = config.seed_family
+    for item in drift_rows:
+        item["experiment"] = "bridge_control_authority"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["seed_family"] = config.seed_family
+        item["correction_type"] = config.correction_type
+        item["schedule_type"] = config.schedule_type
+    return row, ledger, drift_rows
+
+
+def bridge_control_authority_annotate(rows: List[Dict[str, float | str]]) -> None:
+    baselines: Dict[Tuple[str, str], Dict[str, float | str]] = {}
+    for row in rows:
+        if str(row.get("schedule_type")) == "no_correction":
+            baselines[(str(row.get("family")), str(row.get("seed_family")))] = row
+    fallback_baselines: Dict[str, Dict[str, float | str]] = {}
+    for row in rows:
+        if str(row.get("schedule_type")) == "no_correction":
+            fallback_baselines[str(row.get("family"))] = row
+
+    for row in rows:
+        baseline = baselines.get((str(row.get("family")), str(row.get("seed_family"))), fallback_baselines.get(str(row.get("family")), {}))
+        observed = float(baseline.get("phase_drift_rate_after_correction", row.get("phase_drift_rate_before_correction", 0.0)))
+        baseline_phase = float(baseline.get("phase_lock_9", 0.0))
+        after_drift = float(row.get("phase_drift_rate_after_correction", 0.0))
+        gain = float(row.get("actuator_gain", 0.0))
+        correction_size = float(row.get("correction_size", 0.0))
+        if abs(gain) > 1e-12:
+            required = -observed / gain
+        else:
+            required = float("inf")
+        if math.isfinite(required) and abs(correction_size) > 1e-12:
+            work_scale = abs(required) / abs(correction_size)
+            estimated_work = float(row.get("correction_work_fraction", 0.0)) * work_scale
+        else:
+            estimated_work = float("inf")
+        max_allowed = max(abs(float(row.get("max_allowed_correction", 0.0))), 1e-18)
+        margin = abs(required) / max_allowed if math.isfinite(required) else float("inf")
+        drift_reduction = metric_ratio(abs(observed) - abs(after_drift), abs(observed)) if abs(observed) > 1e-12 else 0.0
+
+        row["observed_uncorrected_drift_rate"] = observed
+        row["required_correction_to_cancel_drift"] = required
+        row["estimated_work_for_required_correction"] = estimated_work
+        row["actuator_authority_margin"] = margin
+        row["drift_reduction_fraction"] = drift_reduction
+        row["phase_lock_improvement_vs_baseline"] = float(row.get("phase_lock_9", 0.0)) - baseline_phase
+        bridge_control_authority_update_score(row)
+
+
+def bridge_control_authority_update_score(row: Dict[str, float | str]) -> None:
+    drift_reduction = float(row.get("drift_reduction_fraction", 0.0))
+    estimated_work = float(row.get("estimated_work_for_required_correction", float("inf")))
+    budget = float(row.get("energy_budget_error", 1.0))
+    bridge_ratio = float(row.get("bridge_ratio", 0.0))
+    purity = float(row.get("spectral_purity_9", 0.0))
+    passed = (
+        drift_reduction >= 0.50
+        and estimated_work < 0.05
+        and budget < 0.005
+        and bridge_ratio > 0.75
+        and purity > 0.60
+        and str(row.get("reference_role")) == "discovery_candidate"
+        and str(row.get("no_direct_6_drive", "False")) == "True"
+        and str(row.get("no_direct_9_drive", "False")) == "True"
+    )
+    observed = float(row.get("observed_uncorrected_drift_rate", 0.0))
+    after = float(row.get("phase_drift_rate_after_correction", 0.0))
+    cancel_or_reverse = abs(after) < 0.10 * max(abs(observed), 1e-12) or (observed * after < 0.0)
+    strong = (
+        passed
+        and cancel_or_reverse
+        and estimated_work < 0.02
+        and bridge_ratio > 0.85
+        and float(row.get("phase_lock_improvement_vs_baseline", 0.0)) > 0.0
+        and str(row.get("half_dt_gain_preserved", "False")) == "True"
+        and str(row.get("quarter_dt_gain_preserved", "False")) == "True"
+    )
+    failures = []
+    if drift_reduction < 0.50:
+        failures.append("weak_drift_reduction")
+    if estimated_work >= 0.05:
+        failures.append("required_work")
+    if budget >= 0.005:
+        failures.append("energy_budget")
+    if bridge_ratio <= 0.75:
+        failures.append("bridge_ratio")
+    if purity <= 0.60:
+        failures.append("spectral_purity_9")
+    if str(row.get("no_direct_6_drive", "False")) != "True" or str(row.get("no_direct_9_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+    if not failures:
+        failure_mode = "sufficient_authority"
+    elif "weak_drift_reduction" in failures:
+        failure_mode = "insufficient_authority"
+    elif "energy_budget" in failures:
+        failure_mode = "energy_budget_drift"
+    elif "required_work" in failures:
+        failure_mode = "overpowered_correction"
+    else:
+        failure_mode = failures[0]
+    score = (
+        max(0.0, drift_reduction)
+        * bridge_ratio
+        * purity
+        * max(0.0, float(row.get("phase_lock_9", 0.0)))
+        / (
+            1.0
+            + 120.0 * max(0.0, estimated_work if math.isfinite(estimated_work) else 1.0)
+            + 400.0 * max(0.0, budget)
+        )
+    )
+    if not passed:
+        score = 0.0
+    row["passed"] = str(passed)
+    row["strong_passed"] = str(strong)
+    row["promotion_ready"] = str(strong)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+    row["bridge_control_authority_score"] = score
+    row["score"] = score
+
+
+def bridge_control_authority_validation(config: BridgeControlAuthorityConfig, seed: int, quick: bool,
+                                        dt: float, runtime: float, sample_every: int
+                                        ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [("baseline_dt", dt), ("half_dt", dt * 0.5), ("quarter_dt", dt * 0.25)]
+    rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    drift_rows: List[Dict[str, float | str]] = []
+    for idx, (name, test_dt) in enumerate(tests):
+        direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+        row, ledger, drift = bridge_control_authority_measure(config, seed + idx * 131, quick, test_dt, runtime, sample_every, direct_cache)
+        row["validation_test"] = name
+        rows.append(row)
+        ledger_rows.extend(ledger)
+        drift_rows.extend(drift)
+    bridge_control_authority_annotate(rows)
+    return rows, ledger_rows, drift_rows
+
+
+def apply_bridge_control_authority_validation_status(candidate: Dict[str, float | str],
+                                                     validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    base = next((r for r in rows if str(r.get("validation_test")) == "baseline_dt"), {})
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt"), {})
+    base_gain = float(base.get("actuator_gain", candidate.get("actuator_gain", 0.0)))
+    half_gain = float(half.get("actuator_gain", 0.0))
+    quarter_gain = float(quarter.get("actuator_gain", 0.0))
+    half_ok = ratio_stability_score(half_gain, base_gain) > 0.50 and (half_gain * base_gain >= 0.0)
+    quarter_ok = ratio_stability_score(quarter_gain, base_gain) > 0.50 and (quarter_gain * base_gain >= 0.0)
+    candidate["half_dt_gain_preserved"] = str(half_ok)
+    candidate["quarter_dt_gain_preserved"] = str(quarter_ok)
+    candidate["half_dt_actuator_gain"] = half_gain
+    candidate["quarter_dt_actuator_gain"] = quarter_gain
+    bridge_control_authority_update_score(candidate)
+
+
+def plot_bridge_control_authority_outputs(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
+    plot_rows = [r for r in rows if str(r.get("reference_role")) == "discovery_candidate"]
+    if not plot_rows:
+        return
+
+    def values(key: str) -> List[float]:
+        return [float(r.get(key, 0.0)) for r in plot_rows]
+
+    colors = [{"receiver_tuning_nudge": 0.2, "magnetic_bias_nudge": 0.55, "stage_B_detuning_nudge": 0.85}.get(str(r.get("correction_type")), 0.0) for r in plot_rows]
+    fig, ax = plt.subplots(figsize=(8.6, 5.0))
+    ax.scatter(values("correction_size"), values("phase_drift_rate_after_correction"), c=colors)
+    ax.axhline(0.0, color="tab:gray", linewidth=1.0)
+    ax.set_title("correction size vs phase drift rate")
+    ax.set_xlabel("correction size")
+    ax.set_ylabel("phase drift rate after correction")
+    fig.tight_layout()
+    fig.savefig(out_dir / "bridge_control_authority_correction_vs_drift.png", dpi=140)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(8.6, 5.0))
+    ax.scatter(values("correction_size"), values("effective_generated_frequency_after_correction"), c=colors)
+    ax.set_title("correction size vs effective generated frequency")
+    ax.set_xlabel("correction size")
+    ax.set_ylabel("effective generated frequency")
+    fig.tight_layout()
+    fig.savefig(out_dir / "bridge_control_authority_correction_vs_frequency.png", dpi=140)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(8.6, 5.0))
+    ax.scatter(values("correction_work_fraction"), values("drift_reduction_fraction"), c=colors)
+    ax.axhline(0.50, color="tab:red", linestyle="--", linewidth=1.0)
+    ax.set_title("correction work fraction vs drift reduction")
+    ax.set_xlabel("correction work fraction")
+    ax.set_ylabel("drift reduction fraction")
+    fig.tight_layout()
+    fig.savefig(out_dir / "bridge_control_authority_work_vs_reduction.png", dpi=140)
+    plt.close(fig)
+
+    best_by_type: List[Dict[str, float | str]] = []
+    for ctype in ["receiver_tuning_nudge", "magnetic_bias_nudge", "stage_B_detuning_nudge"]:
+        typed = [r for r in plot_rows if str(r.get("correction_type")) == ctype]
+        if typed:
+            best_by_type.append(max(typed, key=lambda r: float(r.get("drift_reduction_fraction", 0.0))))
+    if best_by_type:
+        fig, ax = plt.subplots(figsize=(8.6, 5.0))
+        labels = [str(r.get("correction_type", "")).replace("_nudge", "") for r in best_by_type]
+        ax.bar(np.arange(len(labels)), [float(r.get("actuator_authority_margin", 0.0)) for r in best_by_type])
+        ax.axhline(1.0, color="tab:red", linestyle="--", linewidth=1.0)
+        ax.set_xticks(np.arange(len(labels)))
+        ax.set_xticklabels(labels, rotation=20, ha="right")
+        ax.set_title("actuator authority comparison")
+        ax.set_ylabel("required correction / max allowed")
+        fig.tight_layout()
+        fig.savefig(out_dir / "bridge_control_authority_comparison.png", dpi=140)
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(8.6, 5.0))
+        x = np.arange(len(labels))
+        ax.bar(x - 0.18, [float(r.get("phase_lock_9", 0.0)) - float(r.get("phase_lock_improvement_vs_baseline", 0.0)) for r in best_by_type], width=0.36, label="baseline")
+        ax.bar(x + 0.18, [float(r.get("phase_lock_9", 0.0)) for r in best_by_type], width=0.36, label="corrected")
+        ax.axhline(0.90, color="tab:red", linestyle="--", linewidth=1.0)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=20, ha="right")
+        ax.set_title("4x phase lock before/after correction")
+        ax.set_ylabel("phase_lock_9")
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(out_dir / "bridge_control_authority_phase_lock_before_after.png", dpi=140)
+        plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(8.6, 5.0))
+    ax.scatter(values("correction_size"), values("energy_budget_error"), c=colors)
+    ax.axhline(0.005, color="tab:red", linestyle="--", linewidth=1.0)
+    ax.set_title("energy budget vs correction size")
+    ax.set_xlabel("correction size")
+    ax.set_ylabel("energy budget error")
+    fig.tight_layout()
+    fig.savefig(out_dir / "bridge_control_authority_energy_budget_vs_correction.png", dpi=140)
+    plt.close(fig)
+
+
+def write_bridge_control_authority_report(out_dir: Path, ranked: List[Dict[str, float | str]],
+                                          validation_rows: List[Dict[str, float | str]],
+                                          controls: List[Dict[str, float | str]]) -> None:
+    discovery = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate"]
+    best = discovery[0] if discovery else {}
+    by_type: Dict[str, Dict[str, float | str]] = {}
+    for ctype in ["receiver_tuning_nudge", "magnetic_bias_nudge", "stage_B_detuning_nudge"]:
+        typed = [r for r in discovery if str(r.get("correction_type")) == ctype]
+        if typed:
+            by_type[ctype] = max(typed, key=lambda r: (float(r.get("bridge_control_authority_score", 0.0)), float(r.get("drift_reduction_fraction", 0.0))))
+    no_correction = max([r for r in controls if str(r.get("schedule_type")) == "no_correction"], key=lambda r: float(r.get("phase_lock_9", 0.0)), default={})
+    wrong = max([r for r in controls if str(r.get("schedule_type")) == "step" and "wrong_sign" in str(r.get("case", ""))], key=lambda r: float(r.get("phase_lock_9", 0.0)), default={})
+    random_control = max([r for r in controls if str(r.get("schedule_type")) == "random_correction"], key=lambda r: float(r.get("phase_lock_9", 0.0)), default={})
+    non369 = max([r for r in controls if str(r.get("family")) == "non369"], key=lambda r: float(r.get("drift_reduction_fraction", 0.0)), default={})
+    passed_rows = [r for r in discovery if str(r.get("passed")) == "True"]
+    small_signal_rows = [
+        r for r in discovery
+        if float(r.get("actuator_authority_margin", float("inf"))) < 1.0
+        and float(r.get("estimated_work_for_required_correction", float("inf"))) < 0.05
+        and float(r.get("energy_budget_error", 1.0)) < 0.005
+        and float(r.get("drift_reduction_fraction", 0.0)) > 0.0
+    ]
+    has_small_signal_authority = bool(small_signal_rows)
+    max_reduction = max([float(r.get("drift_reduction_fraction", 0.0)) for r in discovery], default=0.0)
+    if passed_rows:
+        nudge_answer = "sufficient in the tested range"
+        plausible_answer = "yes under the promotion gates; still needs closed-loop follow-up"
+        next_answer = "frequency-drift feedforward or stronger proportional control"
+    elif has_small_signal_authority:
+        nudge_answer = "too weak in the tested open-loop steps; small-signal pull exists, so the variable is still worth a feedforward/closed-loop test"
+        plausible_answer = f"not proven by open-loop gates; best measured drift reduction was {max_reduction:.6g}, below the 0.5 promotion gate"
+        next_answer = "frequency-drift feedforward, then stronger proportional control; move to a real PLL only if those fail"
+    else:
+        nudge_answer = "insufficient authority in the tested range or controlling the wrong variable"
+        plausible_answer = "not proven by open-loop authority in this run"
+        next_answer = "real PLL/self-lock or rethink active control; open-loop authority is not enough yet"
+    lines = [
+        "# Bridge Control Authority Report",
+        "",
+        "This mode measures open-loop actuator authority for the clean staged bridge. It uses no direct 6 drive, no direct 9 drive, and no target-frequency injection.",
+        "",
+        "## Direct Answers",
+        f"1. Best 4x phase-drift control actuator: {best.get('correction_type', 'none')}; drift_reduction={float(best.get('drift_reduction_fraction', 0.0)):.6g}, authority_margin={float(best.get('actuator_authority_margin', 0.0)):.6g}.",
+        f"2. Previous nudges too weak or wrong variable? {nudge_answer}; receiver_margin={float(by_type.get('receiver_tuning_nudge', {}).get('actuator_authority_margin', 0.0)):.6g}, magnetic_margin={float(by_type.get('magnetic_bias_nudge', {}).get('actuator_authority_margin', 0.0)):.6g}, stageB_margin={float(by_type.get('stage_B_detuning_nudge', {}).get('actuator_authority_margin', 0.0)):.6g}.",
+        f"3. Estimated correction to cancel observed drift: {float(best.get('required_correction_to_cancel_drift', 0.0)):.6g}; observed_drift={float(best.get('observed_uncorrected_drift_rate', 0.0)):.6g}, gain={float(best.get('actuator_gain', 0.0)):.6g}.",
+        f"4. Estimated work required: {float(best.get('estimated_work_for_required_correction', 0.0)):.6g}; measured_work_fraction={float(best.get('correction_work_fraction', 0.0)):.6g}.",
+        f"5. Is 4x lock physically plausible with these actuators? {plausible_answer}.",
+        f"6. Next step: {next_answer}.",
+        f"Controls: no_correction_phase={float(no_correction.get('phase_lock_9', 0.0)):.6g}, wrong_sign_phase={float(wrong.get('phase_lock_9', 0.0)):.6g}, random_phase={float(random_control.get('phase_lock_9', 0.0)):.6g}, best_non369_reduction={float(non369.get('drift_reduction_fraction', 0.0)):.6g}.",
+        f"Promotion gate: {len(passed_rows)} discovery rows passed; {len(small_signal_rows)} rows had sub-unit small-signal authority margin without passing the 50% drift-reduction gate.",
+        "",
+        "## Top Rows",
+    ]
+    for row in ranked[:24]:
+        lines.append(
+            f"- {row.get('candidate_id')}: actuator={row.get('correction_type')}, schedule={row.get('schedule_type')}, size={float(row.get('correction_size', 0.0)):.6g}, "
+            f"score={float(row.get('bridge_control_authority_score', 0.0)):.6g}, pass={row.get('passed')}, reduction={float(row.get('drift_reduction_fraction', 0.0)):.6g}, "
+            f"gain={float(row.get('actuator_gain', 0.0)):.6g}, required={float(row.get('required_correction_to_cancel_drift', 0.0)):.6g}, "
+            f"margin={float(row.get('actuator_authority_margin', 0.0)):.6g}, work_est={float(row.get('estimated_work_for_required_correction', 0.0)):.6g}, "
+            f"phase={float(row.get('phase_lock_9', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, failure={row.get('failure_mode', '')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Gain Validation", "These rows check whether the measured actuator gain survives dt refinement; pass/fail still comes from the discovery-row promotion gates above."])
+        for row in validation_rows[:20]:
+            lines.append(
+                f"- {row.get('candidate_id')}: test={row.get('validation_test', '')}, gain={float(row.get('actuator_gain', 0.0)):.6g}, "
+                f"work={float(row.get('correction_work_fraction', 0.0)):.6g}, phase={float(row.get('phase_lock_9', 0.0)):.6g}, "
+                f"budget={float(row.get('energy_budget_error', 0.0)):.6g}"
+            )
+    (out_dir / "README_BRIDGE_CONTROL_AUTHORITY_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_control_authority(out_dir: Path, seed: int, quick: bool = False,
+                                        include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    runtime = base_tmax * 1.25 * 4.0
+    specs = bridge_control_authority_specs(quick, include_sweeps)
+    control_specs = bridge_control_authority_control_specs(include_sweeps)
+
+    summary_rows: List[Dict[str, float | str]] = []
+    sweep_rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    drift_rows: List[Dict[str, float | str]] = []
+    controls: List[Dict[str, float | str]] = []
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+
+    for idx, (sweep, value, config) in enumerate(specs + control_specs):
+        row, ledger, drift = bridge_control_authority_measure(
+            config,
+            seed + idx * 239,
+            quick,
+            dt,
+            runtime,
+            sample_every,
+            direct_cache,
+        )
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        summary_rows.append(row)
+        if include_sweeps or str(config.reference_role) == "discovery_candidate":
+            sweep_rows.append(row)
+        if str(config.reference_role) == "control" or config.family == "non369":
+            controls.append(row)
+        if str(config.reference_role) == "control" or abs(float(row.get("correction_size", 0.0))) >= 0.012:
+            ledger_rows.extend(ledger)
+            drift_rows.extend(drift)
+
+    bridge_control_authority_annotate(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_control_authority_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            float(r.get("drift_reduction_fraction", 0.0)),
+            -float(r.get("estimated_work_for_required_correction", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    validation_rows: List[Dict[str, float | str]] = []
+    top_candidates = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate"][:4 if include_sweeps else 2]
+    for idx, candidate in enumerate(top_candidates):
+        spec = next((item for item in specs if str(candidate.get("case")) == item[2].name), None)
+        if spec is None:
+            continue
+        _, _, config = spec
+        rows, ledger, drift = bridge_control_authority_validation(config, seed + 72000 + idx * 1000, quick, dt, runtime, sample_every)
+        validation_rows.extend(rows)
+        ledger_rows.extend(ledger)
+        drift_rows.extend(drift)
+        apply_bridge_control_authority_validation_status(candidate, validation_rows)
+
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_control_authority_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            float(r.get("drift_reduction_fraction", 0.0)),
+            -float(r.get("estimated_work_for_required_correction", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    write_csv(out_dir / "bridge_control_authority_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "bridge_control_authority_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_control_authority_sweeps.csv", sweep_rows)
+    write_csv(out_dir / "bridge_control_authority_timeseries.csv", ledger_rows + drift_rows)
+    plot_bridge_control_authority_outputs(out_dir, summary_rows)
+    write_bridge_control_authority_report(out_dir, ranked, validation_rows, controls)
+
+    return [
+        {
+            "experiment": "bridge_control_authority",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_control_authority_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "correction_type": row.get("correction_type", ""),
+            "drift_reduction_fraction": row.get("drift_reduction_fraction", 0.0),
+            "actuator_authority_margin": row.get("actuator_authority_margin", 0.0),
+            "required_correction_to_cancel_drift": row.get("required_correction_to_cancel_drift", 0.0),
+            "estimated_work_for_required_correction": row.get("estimated_work_for_required_correction", 0.0),
+            "phase_lock_9": row.get("phase_lock_9", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -9724,8 +10550,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -9772,6 +10598,8 @@ def main() -> None:
         rows.extend(experiment_bridge_min_nudge(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_lock_threshold",):
         rows.extend(experiment_bridge_lock_threshold(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_control_authority",):
+        rows.extend(experiment_bridge_control_authority(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

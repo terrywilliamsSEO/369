@@ -129,3 +129,13 @@ Added a minimum-correction threshold search:
 - Uses only receiver tuning, magnetic bias, and Stage B detuning corrections.
 - Keeps direct 6/9 drive and 9-frequency injection out of discovery rows.
 - Reports minimum Kp/work for 4x lock, explicit correction work, controls, and half/quarter-dt preservation.
+
+## Bridge Control Authority
+
+Added an open-loop actuator-authority test:
+
+- Starts from the best `bridge_min_nudge` receiver, magnetic, and Stage B rows plus the autolock seed and passive magnetic lead.
+- Tests receiver tuning, magnetic bias, and Stage B detuning with negative/positive/medium/large steps, slow ramps, and hold-after-ramp cases.
+- Measures generated-frequency pull, phase-drift pull, actuator gain, required correction to cancel drift, correction-work fraction, and authority margin.
+- Keeps direct 6/9 drive and target-frequency injection out of discovery rows and includes no-correction, wrong-sign, random, and non-369 controls.
+- Quick smoke found measurable pull but no promotion: best Stage B detuning row reduced 4x drift by about 5.7%, below the 50% gate.

@@ -98,6 +98,12 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Uses only receiver tuning, magnetic bias, and Stage B detuning nudges; no direct 6/9 drive and no 9-frequency injection.
    - Reports the minimum Kp/work needed for 4x lock, explicit correction work, controls, and half/quarter-dt preservation checks.
 
+18. **Bridge control authority**
+   - Measures open-loop actuator authority for long-runtime 4x phase drift in the clean staged bridge.
+   - Tests only receiver tuning, magnetic bias, and Stage B detuning actuators with stepped, ramped, wrong-sign, random, and no-correction controls.
+   - Computes drift-rate pull, effective generated frequency pull, required correction to cancel drift, estimated correction work, and authority margin.
+   - Keeps direct 6/9 drive and target-frequency injection out of discovery tests while preserving clean energy accounting.
+
 ## Install
 
 ```bash
@@ -168,6 +174,10 @@ python tesla_369_lab.py --mode bridge_lock_threshold
 python tesla_369_lab.py --mode bridge_lock_threshold --quick
 python tesla_369_lab.py --mode bridge_lock_threshold --sweeps
 python tesla_369_lab.py --mode bridge_lock_threshold --quick --sweeps
+python tesla_369_lab.py --mode bridge_control_authority
+python tesla_369_lab.py --mode bridge_control_authority --quick
+python tesla_369_lab.py --mode bridge_control_authority --sweeps
+python tesla_369_lab.py --mode bridge_control_authority --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -245,6 +255,10 @@ bridge_lock_threshold_summary.csv
 bridge_lock_threshold_ranked.csv
 bridge_lock_threshold_sweeps.csv
 bridge_lock_threshold_timeseries.csv
+bridge_control_authority_summary.csv
+bridge_control_authority_ranked.csv
+bridge_control_authority_sweeps.csv
+bridge_control_authority_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv

@@ -24,12 +24,13 @@ What has not survived yet:
 
 - No passive candidate has passed the strict 4x runtime phase-lock gate.
 - The long-runtime failure remains phase drift, sometimes with energy-budget growth.
+- Open-loop control-authority tests now measure whether allowed real-world actuators can pull that drift without direct 6/9 drive or target-frequency injection.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Keep passive magnetic damping/saturation and open-loop autolock as useful leads.
-- If 4x passive lock remains elusive, move to active self-lock / PLL as the next serious mechanism.
+- Use `bridge_control_authority` to quantify whether receiver tuning, magnetic bias, or Stage B detuning can actually pull the 4x drift.
+- If open-loop authority remains weak, move to frequency-drift feedforward, stronger proportional control, or a real active PLL with correction work accounting.
 
 ## Repo Map
 
@@ -71,6 +72,8 @@ python tesla_369_lab.py --mode bridge_min_nudge --quick
 python tesla_369_lab.py --mode bridge_min_nudge --quick --sweeps
 python tesla_369_lab.py --mode bridge_lock_threshold --quick
 python tesla_369_lab.py --mode bridge_lock_threshold --quick --sweeps
+python tesla_369_lab.py --mode bridge_control_authority --quick
+python tesla_369_lab.py --mode bridge_control_authority --quick --sweeps
 ```
 
 Key bridge modes:
@@ -82,6 +85,7 @@ python tesla_369_lab.py --mode magnetic_bridge --quick --sweeps
 python tesla_369_lab.py --mode magnetic_autolock --quick --sweeps
 python tesla_369_lab.py --mode bridge_min_nudge --quick --sweeps
 python tesla_369_lab.py --mode bridge_lock_threshold --quick --sweeps
+python tesla_369_lab.py --mode bridge_control_authority --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -103,3 +107,12 @@ Quick sweep result:
 - It reached bridge ratio 0.957, phase lock 0.950, spectral purity 0.643, and budget error 0.000227 with tiny counted sweep work.
 - Best 4x validation rows still failed by phase drift, with phase lock around 0.75 or lower despite decent bridge ratio and purity.
 - Current recommendation: do not promote to geometry yet; the next serious path is either deeper passive/autolock 4x tuning or explicit active PLL/selflock with active work accounting.
+
+## Latest Control Authority Read
+
+Quick smoke result:
+
+- Best 4x drift reducer was `stage_B_detuning_nudge`, but it reduced drift by only about 5.7%, below the 50% promotion gate.
+- `receiver_tuning_nudge` showed a low extrapolated authority margin in one small-signal row, but the measured open-loop drift reduction was only about 1.4%.
+- No quick-smoke authority row passed promotion. The result is evidence for measurable actuator pull, not a 4x lock.
+- Current recommendation: try frequency-drift feedforward or stronger proportional control before escalating to a real PLL.
