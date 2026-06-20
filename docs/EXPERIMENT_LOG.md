@@ -92,3 +92,20 @@ Key result:
 - No tested passive magnetic candidate survives 4x phase-lock gates.
 - Best next passive leads are lossy/hysteretic and saturable magnetic variants.
 
+## Magnetic Autolock
+
+Added open-loop and semi-passive phase-capture mechanisms before moving to full PLL:
+
+- autoresonant receiver/bias/Stage B sweeps,
+- passive hybrid magnetic mode tuning,
+- ultraweak counted injection locking,
+- wrong-direction/random/wrong-frequency controls,
+- non-369 staged bridge controls,
+- 1x/2x/4x, half-dt, and quarter-dt validation hooks.
+
+Quick sweep smoke result:
+
+- Best 1x row was `sweep_receiver_capture_8p82_to_8p9_s0p9`.
+- It reached bridge ratio 0.957, phase_lock_9 0.950, spectral purity 0.643, and budget error 0.000227.
+- The best 4x validation rows still failed by phase drift; top 4x phase lock was about 0.747.
+- Autolock is useful for finding capture islands, but it has not yet promoted a 4x-stable candidate.

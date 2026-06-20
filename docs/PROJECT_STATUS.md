@@ -19,6 +19,7 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Effective generated frequency near the receiver tends to sit around 9.05-9.09.
 - Half-dt and quarter-dt validations pass for several candidates.
 - Passive magnetic damping/saturation can improve 2x behavior.
+- Open-loop magnetic autolock sweeps and hybrid tuning improve 1x capture in quick sweeps.
 
 ## Current Blocker
 
@@ -26,22 +27,29 @@ No passive model has passed the strict 4x runtime lock gate.
 
 The main 4x failure is phase drift. Some candidates also accumulate unacceptable energy-budget error over long runtime.
 
-## Latest Magnetic Bridge Summary
+## Latest Magnetic Autolock Summary
 
 Mode added:
 
 ```bash
-python tesla_369_lab.py --mode magnetic_bridge
-python tesla_369_lab.py --mode magnetic_bridge --quick
-python tesla_369_lab.py --mode magnetic_bridge --sweeps
+python tesla_369_lab.py --mode magnetic_autolock
+python tesla_369_lab.py --mode magnetic_autolock --quick
+python tesla_369_lab.py --mode magnetic_autolock --sweeps
 ```
 
-Quick sweep result:
+What it tests:
 
-- Best 2x/4x magnetic lock gain vs no-magnetic baseline: about 1.08 in the quick sweep.
-- No candidate passed 4x phase lock.
-- Saturable-core and lossy/hysteretic variants are the best passive leads.
-- Non-369 magnetic bridge controls underperformed the 3->6->9 bridge.
+- Open-loop receiver, magnetic bias, and Stage B inductance sweeps.
+- Passive hybrid magnetic branch tuning near the effective generated 9.05-9.08 mode.
+- Ultraweak counted injection near the generated mode as a semi-active comparator.
+- Wrong-direction, random, wrong-frequency, random-phase, direct-reference, and non-369 controls.
+
+Quick sweep result from `runs/magnetic_autolock_quick_sweeps_smoke`:
+
+- Best 1x row: `sweep_receiver_capture_8p82_to_8p9_s0p9`.
+- Metrics: bridge ratio 0.957, phase_lock_9 0.950, spectral purity 0.643, budget error 0.000227, active work fraction 0.00020.
+- Best 4x validation rows still failed phase lock: the top 4x phase lock was about 0.747, below the 0.90 gate.
+- Non-369 controls remain important because they can show strong generic harmonic behavior; they are reported separately and cannot win discovery ranking.
 
 ## Recommendation
 
@@ -49,7 +57,6 @@ Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Fine-optimize passive lossy/saturable magnetic damping for 4x runtime only.
+1. Run deeper `magnetic_autolock --sweeps` focused on 4x phase drift.
 2. Move to active self-lock / PLL and explicitly account for active work.
 3. Add a geometry mode only after a 4x-stable seed exists.
-

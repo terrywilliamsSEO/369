@@ -17,7 +17,8 @@ What survived:
 - 1x runtime bridge lock exists.
 - Half-dt and quarter-dt checks pass for several candidates.
 - 2x runtime can pass for some passive magnetic/lossy variants.
-- Non-369 magnetic controls do not beat the 3->6->9 bridge in current scoring.
+- Magnetic autolock quick sweeps produce stronger 1x capture candidates.
+- Non-369 controls can show strong generic harmonic behavior, so they remain separated from discovery ranking.
 
 What has not survived yet:
 
@@ -27,7 +28,7 @@ What has not survived yet:
 
 Best current direction:
 
-- Keep passive magnetic damping/saturation as a useful lead.
+- Keep passive magnetic damping/saturation and open-loop autolock as useful leads.
 - If 4x passive lock remains elusive, move to active self-lock / PLL as the next serious mechanism.
 
 ## Repo Map
@@ -64,8 +65,8 @@ python tesla_369_lab.py --mode all --quick
 Latest experiment:
 
 ```bash
-python tesla_369_lab.py --mode magnetic_bridge --quick
-python tesla_369_lab.py --mode magnetic_bridge --quick --sweeps
+python tesla_369_lab.py --mode magnetic_autolock --quick
+python tesla_369_lab.py --mode magnetic_autolock --quick --sweeps
 ```
 
 Key bridge modes:
@@ -74,6 +75,7 @@ Key bridge modes:
 python tesla_369_lab.py --mode bridge_lock_refine --quick --sweeps
 python tesla_369_lab.py --mode bridge_phase_lock --quick --sweeps
 python tesla_369_lab.py --mode magnetic_bridge --quick --sweeps
+python tesla_369_lab.py --mode magnetic_autolock --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -87,12 +89,11 @@ A result is not promoted unless it survives:
 - Strong phase lock and spectral purity at the target.
 - No direct 6 or direct 9 drive contamination in generated bridge cases.
 
-## Latest Magnetic Bridge Read
+## Latest Magnetic Autolock Read
 
 Quick sweep result:
 
-- Passive magnetic coupling can improve 2x runtime stability.
-- Saturable and lossy/hysteretic variants are the most useful passive leads.
-- Best observed 4x lock gains improve relative to no-magnetic baseline, but still fail the hard phase-lock gate.
-- Current recommendation: do not promote to geometry yet; either refine passive damping specifically for 4x or move to active self-lock / PLL.
-
+- Best 1x quick sweep: `sweep_receiver_capture_8p82_to_8p9_s0p9`.
+- It reached bridge ratio 0.957, phase lock 0.950, spectral purity 0.643, and budget error 0.000227 with tiny counted sweep work.
+- Best 4x validation rows still failed by phase drift, with phase lock around 0.75 or lower despite decent bridge ratio and purity.
+- Current recommendation: do not promote to geometry yet; the next serious path is either deeper passive/autolock 4x tuning or explicit active PLL/selflock with active work accounting.

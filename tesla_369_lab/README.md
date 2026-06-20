@@ -80,6 +80,12 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Tracks derived flux, effective inductance, magnetic energy, leakage, hysteresis, eddy loss, magnetic work, and coupling exchange.
    - Tests whether air-core, saturable, biased, lossy, rotating-bias, random, and non-369 magnetic controls reduce long-runtime phase drift.
 
+15. **Magnetic autolock**
+   - Tests passive and semi-passive phase-capture mechanisms before moving to full active PLL.
+   - Adds open-loop receiver/magnetic-bias/Stage-B sweeps, passive hybrid magnetic branch tuning, and ultraweak counted injection locking.
+   - Keeps direct 6 and direct 9 out of generated bridge cases, forces direct references to discovery score 0, and penalizes active work.
+   - Validates top candidates with 1x/2x/4x runtime plus half-dt and quarter-dt checks.
+
 ## Install
 
 ```bash
@@ -138,6 +144,10 @@ python tesla_369_lab.py --mode magnetic_bridge
 python tesla_369_lab.py --mode magnetic_bridge --quick
 python tesla_369_lab.py --mode magnetic_bridge --sweeps
 python tesla_369_lab.py --mode magnetic_bridge --quick --sweeps
+python tesla_369_lab.py --mode magnetic_autolock
+python tesla_369_lab.py --mode magnetic_autolock --quick
+python tesla_369_lab.py --mode magnetic_autolock --sweeps
+python tesla_369_lab.py --mode magnetic_autolock --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -201,6 +211,13 @@ magnetic_energy_ledger.csv
 magnetic_phase_drift_timeseries.csv
 magnetic_lock_islands.csv
 magnetic_vs_nonmagnetic_comparison.csv
+magnetic_autolock_summary.csv
+magnetic_autolock_ranked.csv
+magnetic_autolock_sweeps.csv
+magnetic_autolock_energy_ledger.csv
+magnetic_autolock_phase_timeseries.csv
+magnetic_autolock_capture_report.csv
+magnetic_autolock_controls.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -223,6 +240,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In bridge phase-lock mode, is the long-runtime failure phase drift, detuning, beating, coupling loss, damping, or an FFT/window artifact?
 - In bridge lock refine mode, is the passive lock island broad enough to promote to geometry369?
 - In magnetic bridge mode, can passive flux coupling stabilize 2x/4x runtime without hidden energy injection?
+- In magnetic autolock mode, can open-loop capture, passive hybrid tuning, or tiny counted injection survive 4x without becoming hidden feedback?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results

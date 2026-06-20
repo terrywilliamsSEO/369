@@ -7305,6 +7305,1148 @@ def experiment_magnetic_bridge(out_dir: Path, seed: int, quick: bool = False,
 
 
 # ----------------------------
+# Experiment 15: magnetic autolock
+# ----------------------------
+
+@dataclass
+class MagneticAutolockConfig:
+    name: str
+    mechanism: str
+    magnetic_config: MagneticBridgeConfig
+    receiver_tuning_start: float = 8.90
+    receiver_tuning_end: float = 8.90
+    magnetic_bias_start: float = 0.0
+    magnetic_bias_end: float = 0.0
+    stage_b_inductance_start: float = 6.0
+    stage_b_inductance_end: float = 6.0
+    sweep_fraction: float = 0.35
+    hold_fraction: float = 0.65
+    hybrid_mode_splitting: float = 0.0
+    injection_frequency: float = 0.0
+    injection_amplitude: float = 0.0
+    injection_phase_deg: float = 0.0
+    capture_bandwidth_hint: float = 0.0
+    reference_role: str = "discovery_candidate"
+    family: str = "369"
+    note: str = ""
+
+
+def magnetic_autolock_base_bridge(receiver_tuning: float = 8.90,
+                                  phase_bias: float = 30.0,
+                                  stage_b_strength: float = 0.84) -> BridgeAmpConfig:
+    return magnetic_bridge_seed_bridge(receiver_tuning, phase_bias, stage_b_strength)
+
+
+def magnetic_autolock_seed_config(name: str, mechanism: str,
+                                  receiver: float = 8.90,
+                                  phase: float = 30.0,
+                                  strength: float = 0.84,
+                                  magnetic_option: str = "biased_saturable_core",
+                                  reference_role: str = "discovery_candidate",
+                                  family: str = "369",
+                                  note: str = "") -> MagneticAutolockConfig:
+    bridge = magnetic_autolock_base_bridge(receiver, phase, strength)
+    magnetic = MagneticBridgeConfig(
+        name,
+        bridge,
+        magnetic_option=magnetic_option,
+        mutual_inductance_a_b=0.16,
+        mutual_inductance_b_receiver=0.22,
+        core_saturation_strength=0.55,
+        magnetic_bias_field=-0.30,
+        magnetic_phase_lag_deg=-4.0,
+        magnetic_damping=0.014,
+        reference_role=reference_role,
+        family=family,
+        note=note,
+    )
+    return MagneticAutolockConfig(
+        name=name,
+        mechanism=mechanism,
+        magnetic_config=magnetic,
+        receiver_tuning_start=receiver,
+        receiver_tuning_end=receiver,
+        magnetic_bias_start=magnetic.magnetic_bias_field,
+        magnetic_bias_end=magnetic.magnetic_bias_field,
+        stage_b_inductance_start=bridge.mode_freqs[1],
+        stage_b_inductance_end=bridge.mode_freqs[1],
+        reference_role=reference_role,
+        family=family,
+        note=note,
+    )
+
+
+def magnetic_autolock_effective_config(config: MagneticAutolockConfig) -> MagneticBridgeConfig:
+    magnetic = config.magnetic_config
+    bridge = magnetic.bridge
+    mechanism = config.mechanism
+    receiver = config.receiver_tuning_end if config.receiver_tuning_end else bridge.mode_freqs[2]
+    stage_b = config.stage_b_inductance_end if config.stage_b_inductance_end else bridge.mode_freqs[1]
+    bias = config.magnetic_bias_end
+    phase = bridge.stage_b_phase_bias_deg
+    mutual_ab = magnetic.mutual_inductance_a_b
+    mutual_br = magnetic.mutual_inductance_b_receiver
+    damping = magnetic.magnetic_damping
+    lag = magnetic.magnetic_phase_lag_deg
+    saturation = magnetic.core_saturation_strength
+    option = magnetic.magnetic_option
+
+    if mechanism == "autoresonant_receiver_sweep":
+        sweep_span = config.receiver_tuning_end - config.receiver_tuning_start
+        receiver += 0.012 * math.tanh(20.0 * sweep_span)
+        phase += 2.5 * math.tanh(12.0 * sweep_span)
+        damping += 0.004
+    elif mechanism == "autoresonant_bias_sweep":
+        bias = config.magnetic_bias_end
+        phase += 5.0 * math.tanh(config.magnetic_bias_end - config.magnetic_bias_start)
+        receiver += 0.010 * math.tanh(-bias)
+        damping += 0.003
+    elif mechanism == "autoresonant_stage_b_sweep":
+        stage_b += 0.25 * (config.stage_b_inductance_end - config.stage_b_inductance_start)
+        receiver -= 0.008 * (config.stage_b_inductance_end - config.stage_b_inductance_start)
+        phase += 3.0 * math.tanh(config.stage_b_inductance_end - config.stage_b_inductance_start)
+        damping += 0.002
+    elif mechanism == "hybrid_mode_tuning":
+        option = "biased_saturable_core"
+        hybrid_center = 9.065
+        receiver = receiver + 0.35 * (hybrid_center - receiver) - 0.025 * config.hybrid_mode_splitting
+        mutual_br += 0.65 * config.hybrid_mode_splitting
+        mutual_ab += 0.25 * config.hybrid_mode_splitting
+        lag -= 3.0 * config.hybrid_mode_splitting
+        saturation += 0.20 * config.hybrid_mode_splitting
+        damping += 0.006 * abs(config.hybrid_mode_splitting)
+    elif mechanism == "ultraweak_injection_lock":
+        detune = config.injection_frequency - 9.065
+        lock_pull = config.injection_amplitude / (0.015 + abs(detune))
+        receiver += 0.018 * math.tanh(lock_pull) - 0.025 * detune
+        phase += 0.40 * config.injection_phase_deg * min(1.0, config.injection_amplitude / 0.012)
+        lag -= 4.0 * math.tanh(lock_pull)
+        damping += 0.002
+    elif mechanism == "wrong_direction_sweep_control":
+        receiver = config.receiver_tuning_end
+        bias = config.magnetic_bias_end
+        phase -= 10.0
+        damping += 0.006
+    elif mechanism == "random_sweep_control":
+        receiver = config.receiver_tuning_end + 0.08
+        bias = config.magnetic_bias_end
+        phase += 17.0
+        mutual_ab -= 0.08
+        mutual_br += 0.11
+    elif mechanism == "wrong_frequency_injection_control":
+        receiver += 0.10
+        phase += 11.0
+        damping += 0.003
+    elif mechanism == "random_phase_injection_control":
+        receiver -= 0.04
+        phase += 29.0
+        damping += 0.002
+
+    effective_bridge = replace(
+        bridge,
+        mode_freqs=(bridge.mode_freqs[0], max(0.5, stage_b), max(0.5, receiver)),
+        stage_b_phase_bias_deg=phase,
+        note=f"{bridge.note}; autolock={mechanism}",
+    )
+    return replace(
+        magnetic,
+        bridge=effective_bridge,
+        magnetic_option=option,
+        mutual_inductance_a_b=mutual_ab,
+        mutual_inductance_b_receiver=mutual_br,
+        magnetic_bias_field=bias,
+        magnetic_phase_lag_deg=lag,
+        core_saturation_strength=saturation,
+        magnetic_damping=damping,
+        reference_role=config.reference_role,
+        family=config.family,
+        note=config.note,
+    )
+
+
+def magnetic_autolock_work_terms(config: MagneticAutolockConfig, runtime: float,
+                                 total_input_work: float) -> Tuple[float, float, float, float]:
+    sweep_mag = abs(config.receiver_tuning_end - config.receiver_tuning_start)
+    sweep_mag += 0.35 * abs(config.magnetic_bias_end - config.magnetic_bias_start)
+    sweep_mag += 0.20 * abs(config.stage_b_inductance_end - config.stage_b_inductance_start)
+    sweep_work = 0.0
+    if config.mechanism.startswith("autoresonant"):
+        sweep_work = 0.0025 * sweep_mag * max(total_input_work, 1e-18)
+    injection_work = 0.0
+    if "injection" in config.mechanism:
+        injection_work = (config.injection_amplitude ** 2) * max(runtime, 1e-18) * 0.22
+    active_work = sweep_work + injection_work
+    active_fraction = metric_ratio(active_work, total_input_work + active_work)
+    injection_fraction = metric_ratio(injection_work, total_input_work + active_work)
+    return sweep_work, injection_work, active_fraction, injection_fraction
+
+
+def magnetic_autolock_schedule_rows(config: MagneticAutolockConfig, row: Dict[str, float | str],
+                                    runtime: float, count: int = 80) -> List[Dict[str, float | str]]:
+    rows: List[Dict[str, float | str]] = []
+    sweep_end = max(1e-9, config.sweep_fraction * runtime)
+    sweep_work_total = float(row.get("autoresonant_sweep_work", 0.0))
+    injection_work_total = float(row.get("injection_work", 0.0))
+    for idx in range(count):
+        frac = idx / max(count - 1, 1)
+        t = frac * runtime
+        sweep_progress = min(1.0, t / sweep_end)
+        smooth = 0.5 - 0.5 * math.cos(math.pi * sweep_progress)
+        receiver = config.receiver_tuning_start + (config.receiver_tuning_end - config.receiver_tuning_start) * smooth
+        bias = config.magnetic_bias_start + (config.magnetic_bias_end - config.magnetic_bias_start) * smooth
+        stage_b = config.stage_b_inductance_start + (config.stage_b_inductance_end - config.stage_b_inductance_start) * smooth
+        injection_progress = frac if "injection" in config.mechanism else 0.0
+        rows.append({
+            "case": config.name,
+            "candidate_id": row.get("candidate_id", config.name),
+            "mechanism": config.mechanism,
+            "time": t,
+            "receiver_tuning_schedule": receiver,
+            "magnetic_bias_schedule": bias,
+            "stage_b_inductance_schedule": stage_b,
+            "autoresonant_sweep_work": sweep_work_total * smooth,
+            "injection_work": injection_work_total * injection_progress,
+            "active_component_input_work": sweep_work_total * smooth + injection_work_total * injection_progress,
+            "phase_lock_9": row.get("phase_lock_9", 0.0),
+            "bridge_ratio": row.get("generated_vs_direct_bridge_ratio", 0.0),
+            "effective_target_frequency": row.get("effective_generated_frequency", 0.0),
+        })
+    return rows
+
+
+def magnetic_autolock_core_configs() -> List[MagneticAutolockConfig]:
+    configs: List[MagneticAutolockConfig] = []
+
+    baseline = magnetic_autolock_seed_config(
+        "passive_magnetic_best_baseline",
+        "passive_magnetic_baseline",
+        receiver=8.915,
+        phase=20.0,
+        strength=0.84,
+        reference_role="control",
+        note="best previous passive magnetic quick lead used as baseline",
+    )
+    configs.append(baseline)
+
+    no_mag_bridge = magnetic_autolock_base_bridge(8.90, 30.0, 0.90)
+    no_mag = MagneticBridgeConfig(
+        "passive_no_magnetic_no_autolock",
+        no_mag_bridge,
+        magnetic_option="control_no_magnetic_layer",
+        reference_role="control",
+        note="plain passive bridge baseline",
+    )
+    configs.append(MagneticAutolockConfig(
+        "passive_no_magnetic_no_autolock",
+        "control_no_autolock",
+        no_mag,
+        receiver_tuning_start=8.90,
+        receiver_tuning_end=8.90,
+        reference_role="control",
+        note="plain passive bridge baseline",
+    ))
+
+    receiver_sweep = magnetic_autolock_seed_config(
+        "autoresonant_receiver_sweep_8p82_to_8p90",
+        "autoresonant_receiver_sweep",
+        receiver=8.90,
+        phase=30.0,
+        strength=0.84,
+        note="open-loop receiver tuning sweep, then hold",
+    )
+    receiver_sweep.receiver_tuning_start = 8.82
+    receiver_sweep.receiver_tuning_end = 8.90
+    receiver_sweep.capture_bandwidth_hint = 0.08
+    configs.append(receiver_sweep)
+
+    receiver_sweep_high = magnetic_autolock_seed_config(
+        "autoresonant_receiver_sweep_8p84_to_8p915",
+        "autoresonant_receiver_sweep",
+        receiver=8.915,
+        phase=28.0,
+        strength=0.84,
+        note="open-loop receiver sweep into the 9.05-ish generated branch",
+    )
+    receiver_sweep_high.receiver_tuning_start = 8.84
+    receiver_sweep_high.receiver_tuning_end = 8.915
+    receiver_sweep_high.capture_bandwidth_hint = 0.075
+    configs.append(receiver_sweep_high)
+
+    bias_sweep = magnetic_autolock_seed_config(
+        "autoresonant_bias_sweep_m0p60_to_m0p25",
+        "autoresonant_bias_sweep",
+        receiver=8.90,
+        phase=30.0,
+        strength=0.84,
+        note="open-loop magnetic bias sweep, then hold",
+    )
+    bias_sweep.magnetic_bias_start = -0.60
+    bias_sweep.magnetic_bias_end = -0.25
+    bias_sweep.capture_bandwidth_hint = 0.35
+    configs.append(bias_sweep)
+
+    stage_sweep = magnetic_autolock_seed_config(
+        "autoresonant_stage_b_inductance_sweep",
+        "autoresonant_stage_b_sweep",
+        receiver=8.90,
+        phase=30.0,
+        strength=0.84,
+        note="open-loop Stage B inductance sweep, then hold",
+    )
+    stage_sweep.stage_b_inductance_start = 5.92
+    stage_sweep.stage_b_inductance_end = 6.02
+    stage_sweep.capture_bandwidth_hint = 0.10
+    configs.append(stage_sweep)
+
+    wrong_direction = magnetic_autolock_seed_config(
+        "wrong_direction_receiver_sweep_control",
+        "wrong_direction_sweep_control",
+        receiver=8.82,
+        phase=30.0,
+        strength=0.84,
+        reference_role="control",
+        note="control sweep moving away from promoted island",
+    )
+    wrong_direction.receiver_tuning_start = 8.92
+    wrong_direction.receiver_tuning_end = 8.82
+    configs.append(wrong_direction)
+
+    random_sweep = magnetic_autolock_seed_config(
+        "random_magnetic_sweep_control",
+        "random_sweep_control",
+        receiver=9.04,
+        phase=12.0,
+        strength=0.84,
+        reference_role="control",
+        note="randomized sweep control",
+    )
+    random_sweep.receiver_tuning_start = 9.08
+    random_sweep.receiver_tuning_end = 9.04
+    random_sweep.magnetic_bias_start = 0.35
+    random_sweep.magnetic_bias_end = -0.05
+    configs.append(random_sweep)
+
+    for split in (0.04, 0.08, 0.12):
+        cfg = magnetic_autolock_seed_config(
+            f"hybrid_mode_tuning_split_{safe_token(split)}",
+            "hybrid_mode_tuning",
+            receiver=8.90,
+            phase=30.0,
+            strength=0.84,
+            note="passive hybrid magnetic branch near generated target frequency",
+        )
+        cfg.hybrid_mode_splitting = split
+        cfg.capture_bandwidth_hint = split
+        configs.append(cfg)
+
+    hybrid_control = magnetic_autolock_seed_config(
+        "hybrid_random_branch_control",
+        "hybrid_mode_tuning",
+        receiver=9.18,
+        phase=8.0,
+        strength=0.84,
+        reference_role="control",
+        note="hybrid branch away from generated 9 island",
+    )
+    hybrid_control.hybrid_mode_splitting = -0.10
+    configs.append(hybrid_control)
+
+    for freq, amp, phase in ((9.05, 0.006, 0.0), (9.07, 0.010, 20.0), (9.09, 0.012, -15.0)):
+        cfg = magnetic_autolock_seed_config(
+            f"ultraweak_injection_{safe_token(freq)}_amp_{safe_token(amp)}",
+            "ultraweak_injection_lock",
+            receiver=8.90,
+            phase=30.0,
+            strength=0.84,
+            note="semi-active tiny counted reference near generated 9 branch",
+        )
+        cfg.injection_frequency = freq
+        cfg.injection_amplitude = amp
+        cfg.injection_phase_deg = phase
+        cfg.capture_bandwidth_hint = 0.015
+        configs.append(cfg)
+
+    wrong_freq = magnetic_autolock_seed_config(
+        "wrong_frequency_injection_control",
+        "wrong_frequency_injection_control",
+        receiver=8.90,
+        phase=30.0,
+        strength=0.84,
+        reference_role="control",
+        note="tiny reference far from generated 9 branch",
+    )
+    wrong_freq.injection_frequency = 8.70
+    wrong_freq.injection_amplitude = 0.010
+    configs.append(wrong_freq)
+
+    random_phase = magnetic_autolock_seed_config(
+        "random_phase_injection_control",
+        "random_phase_injection_control",
+        receiver=8.90,
+        phase=30.0,
+        strength=0.84,
+        reference_role="control",
+        note="right frequency, deliberately poor phase",
+    )
+    random_phase.injection_frequency = 9.07
+    random_phase.injection_amplitude = 0.010
+    random_phase.injection_phase_deg = 137.0
+    configs.append(random_phase)
+
+    direct_ref = magnetic_autolock_seed_config(
+        "direct_3_plus_6_to_9_reference",
+        "direct_3_plus_6_reference",
+        receiver=8.90,
+        phase=30.0,
+        strength=0.84,
+        reference_role="reference",
+        note="direct 3+6 silent pump reference, discovery score forced to zero",
+    )
+    configs.append(direct_ref)
+
+    direct9 = magnetic_autolock_seed_config(
+        "direct_9_ceiling_reference",
+        "direct_9_ceiling_reference",
+        receiver=8.90,
+        phase=30.0,
+        strength=0.84,
+        reference_role="ceiling_reference",
+        note="direct 9 ceiling, discovery score forced to zero",
+    )
+    configs.append(direct9)
+
+    for drive, target in ((4.0, 12.0), (5.0, 15.0)):
+        bridge = BridgeAmpConfig(
+            f"non369_autolock_bridge_{safe_token(drive)}_to_{safe_token(target)}",
+            mode_freqs=(drive, drive * 2.0, target - 0.10),
+            drive_freqs=(drive,),
+            drive_modes=(0,),
+            target_6=drive * 2.0,
+            target_9=target,
+            stage_b_nonlinear_strength=0.84,
+            stage_b_phase_bias_deg=28.0,
+            family="non369",
+            note="non-369 staged magnetic autolock control",
+        )
+        magnetic = MagneticBridgeConfig(
+            f"non369_hybrid_{safe_token(drive)}_to_{safe_token(target)}",
+            bridge,
+            magnetic_option="biased_saturable_core",
+            mutual_inductance_a_b=0.16,
+            mutual_inductance_b_receiver=0.22,
+            core_saturation_strength=0.55,
+            magnetic_bias_field=-0.30,
+            magnetic_phase_lag_deg=-4.0,
+            magnetic_damping=0.014,
+            family="non369",
+            reference_role="control",
+            note="non-369 staged magnetic autolock control",
+        )
+        configs.append(MagneticAutolockConfig(
+            magnetic.name,
+            "hybrid_mode_tuning",
+            magnetic,
+            receiver_tuning_start=target - 0.10,
+            receiver_tuning_end=target - 0.10,
+            magnetic_bias_start=-0.30,
+            magnetic_bias_end=-0.30,
+            stage_b_inductance_start=drive * 2.0,
+            stage_b_inductance_end=drive * 2.0,
+            hybrid_mode_splitting=0.08,
+            reference_role="control",
+            family="non369",
+            note="non-369 staged magnetic autolock control",
+        ))
+
+    return configs
+
+
+def magnetic_autolock_sweep_configs(quick: bool) -> List[MagneticAutolockConfig]:
+    configs: List[MagneticAutolockConfig] = []
+    receiver_pairs = [(8.82, 8.88), (8.82, 8.90), (8.84, 8.915)] if quick else [
+        (8.80, 8.88), (8.82, 8.90), (8.84, 8.915), (8.86, 8.93), (8.88, 8.92)
+    ]
+    bias_pairs = [(-0.70, -0.35), (-0.55, -0.20)] if quick else [
+        (-0.75, -0.40), (-0.65, -0.30), (-0.55, -0.20), (-0.45, -0.10)
+    ]
+    strengths = [0.80, 0.84, 0.90] if quick else [0.78, 0.82, 0.84, 0.88, 0.92]
+    phases = [24.0, 30.0, 36.0] if quick else [20.0, 24.0, 28.0, 32.0, 36.0]
+    splits = [0.04, 0.08, 0.12] if quick else [0.03, 0.05, 0.08, 0.11, 0.14]
+    injection_freqs = [9.04, 9.07, 9.10] if quick else [9.02, 9.04, 9.06, 9.08, 9.10]
+    injection_amps = [0.004, 0.008, 0.012] if quick else [0.003, 0.006, 0.009, 0.012]
+
+    for start, end in receiver_pairs:
+        for strength in strengths:
+            cfg = magnetic_autolock_seed_config(
+                f"sweep_receiver_capture_{safe_token(start)}_to_{safe_token(end)}_s{safe_token(strength)}",
+                "autoresonant_receiver_sweep",
+                receiver=end,
+                phase=30.0,
+                strength=strength,
+            )
+            cfg.receiver_tuning_start = start
+            cfg.receiver_tuning_end = end
+            cfg.capture_bandwidth_hint = abs(end - start)
+            configs.append(cfg)
+
+    for b0, b1 in bias_pairs:
+        for phase in phases:
+            cfg = magnetic_autolock_seed_config(
+                f"sweep_bias_capture_{safe_token(b0)}_to_{safe_token(b1)}_p{safe_token(phase)}",
+                "autoresonant_bias_sweep",
+                receiver=8.90,
+                phase=phase,
+                strength=0.84,
+            )
+            cfg.magnetic_bias_start = b0
+            cfg.magnetic_bias_end = b1
+            cfg.capture_bandwidth_hint = abs(b1 - b0)
+            configs.append(cfg)
+
+    for split in splits:
+        for phase in phases:
+            cfg = magnetic_autolock_seed_config(
+                f"sweep_hybrid_split_{safe_token(split)}_phase_{safe_token(phase)}",
+                "hybrid_mode_tuning",
+                receiver=8.90,
+                phase=phase,
+                strength=0.84,
+            )
+            cfg.hybrid_mode_splitting = split
+            cfg.capture_bandwidth_hint = split
+            configs.append(cfg)
+
+    for freq in injection_freqs:
+        for amp in injection_amps:
+            cfg = magnetic_autolock_seed_config(
+                f"sweep_injection_freq_{safe_token(freq)}_amp_{safe_token(amp)}",
+                "ultraweak_injection_lock",
+                receiver=8.90,
+                phase=30.0,
+                strength=0.84,
+            )
+            cfg.injection_frequency = freq
+            cfg.injection_amplitude = amp
+            cfg.injection_phase_deg = 0.0
+            cfg.capture_bandwidth_hint = 0.015
+            configs.append(cfg)
+
+    return configs
+
+
+def magnetic_autolock_pass(row: Dict[str, float | str]) -> bool:
+    runtime_factor = float(row.get("runtime_factor", 1.0))
+    budget_gate = 0.005 if runtime_factor >= 4.0 else 0.002
+    is_candidate = str(row.get("reference_role")) == "discovery_candidate"
+    return (
+        is_candidate
+        and float(row.get("generated_vs_direct_bridge_ratio", 0.0)) > 0.75
+        and float(row.get("phase_lock_9", 0.0)) > 0.90
+        and float(row.get("spectral_purity_9", 0.0)) > 0.60
+        and float(row.get("energy_budget_error", 1.0)) < budget_gate
+        and float(row.get("active_work_fraction", 1.0)) < 0.05
+        and float(row.get("injection_work_fraction", 1.0)) < 0.05
+        and str(row.get("no_direct_6_drive", "False")) == "True"
+        and str(row.get("no_direct_9_drive", "False")) == "True"
+    )
+
+
+def update_magnetic_autolock_score(row: Dict[str, float | str]) -> None:
+    failures = []
+    runtime_factor = float(row.get("runtime_factor", 1.0))
+    budget_gate = 0.005 if runtime_factor >= 4.0 else 0.002
+    if float(row.get("generated_vs_direct_bridge_ratio", 0.0)) <= 0.75:
+        failures.append("bridge_ratio")
+    if float(row.get("phase_lock_9", 0.0)) <= 0.90:
+        failures.append("phase_lock_9")
+    if float(row.get("spectral_purity_9", 0.0)) <= 0.60:
+        failures.append("spectral_purity_9")
+    if float(row.get("energy_budget_error", 1.0)) >= budget_gate:
+        failures.append("energy_budget")
+    if float(row.get("active_work_fraction", 1.0)) >= 0.05:
+        failures.append("active_work_fraction")
+    if float(row.get("injection_work_fraction", 1.0)) >= 0.05:
+        failures.append("injection_work_fraction")
+    if str(row.get("no_direct_6_drive", "False")) != "True" or str(row.get("no_direct_9_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+
+    lock_score = float(row.get("lock_hold_duration_score", 0.0))
+    bandwidth = float(row.get("capture_bandwidth", 0.0))
+    repeatability = float(row.get("repeatability_score", 1.0))
+    energy_penalty = 1.0 + 800.0 * max(0.0, float(row.get("energy_budget_error", 0.0)))
+    active_penalty = 1.0 + 40.0 * max(0.0, float(row.get("active_work_fraction", 0.0)))
+    score = (
+        float(row.get("generated_vs_direct_bridge_ratio", 0.0))
+        * float(row.get("phase_lock_9", 0.0))
+        * float(row.get("spectral_purity_9", 0.0))
+        * lock_score
+        * (1.0 + bandwidth)
+        * repeatability
+        / (energy_penalty * active_penalty)
+    )
+    passed = magnetic_autolock_pass(row)
+    if not passed or str(row.get("reference_role")) in ("reference", "ceiling_reference", "control"):
+        score = 0.0
+    strong = (
+        passed
+        and float(row.get("generated_vs_direct_bridge_ratio", 0.0)) > 0.85
+        and float(row.get("phase_lock_9", 0.0)) > 0.95
+        and float(row.get("spectral_purity_9", 0.0)) > 0.75
+        and float(row.get("energy_budget_error", 1.0)) < (0.003 if runtime_factor >= 4.0 else 0.001)
+        and float(row.get("injection_work_fraction", 0.0)) < 0.02
+    )
+
+    if "phase_lock_9" in failures:
+        failure_mode = "phase_drift"
+    elif "bridge_ratio" in failures:
+        failure_mode = "weak_bridge_ratio"
+    elif "spectral_purity_9" in failures:
+        failure_mode = "weak_purity"
+    elif "energy_budget" in failures:
+        failure_mode = "energy_budget_drift"
+    elif "active_work_fraction" in failures or "injection_work_fraction" in failures:
+        failure_mode = "too_active"
+    elif passed:
+        failure_mode = "stable_capture"
+    else:
+        failure_mode = "control_or_reference"
+
+    row["passed"] = str(passed)
+    row["strong_passed"] = str(strong)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+    row["magnetic_autolock_score"] = score
+    row["score"] = score
+
+
+def magnetic_autolock_measure(config: MagneticAutolockConfig, seed: int, quick: bool,
+                              dt: float, runtime: float, sample_every: int,
+                              runtime_factor: float, run_type: str, sweep: str,
+                              sweep_value: str, direct_cache: Dict[Tuple[str, float, float, float], Tuple[Dict[str, object], Dict[str, float | str]]],
+                              passive_baselines: Dict[float, Dict[str, float | str]]
+                              ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    effective_config = magnetic_autolock_effective_config(config)
+    target_key = f"{effective_config.bridge.target_6:g}:{effective_config.bridge.target_9:g}"
+    cache_key = (target_key, dt, runtime, float(effective_config.bridge.target_9))
+    if cache_key not in direct_cache:
+        direct_cfg = magnetic_bridge_direct_reference(effective_config)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 4700, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 4700, "direct_reference", "direct_3_plus_6", "reference", 0.35, 1.0)
+        direct_cache[cache_key] = (direct_sim, direct_row)
+    direct_sim, direct_row = direct_cache[cache_key]
+
+    if config.mechanism == "direct_3_plus_6_reference":
+        sim_cfg = magnetic_bridge_direct_reference(effective_config)
+        sim, oscillator_ledger = simulate_bridge_amp(sim_cfg, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        row = bridge_metrics_window(sim_cfg, sim, seed, run_type, sweep, sweep_value, 0.35, 1.0)
+        drift_rows, diag_summary = bridge_phase_diagnostic_series(sim_cfg, sim, direct_sim, 0.35, 1.0)
+        row.update(diag_summary)
+        ledger_rows = oscillator_ledger
+        magnetic_ledger: List[Dict[str, float | str]] = []
+    elif config.mechanism == "direct_9_ceiling_reference":
+        sim_cfg = magnetic_bridge_direct_9_reference(effective_config)
+        sim, oscillator_ledger = simulate_bridge_amp(sim_cfg, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        row = bridge_metrics_window(sim_cfg, sim, seed, run_type, sweep, sweep_value, 0.35, 1.0)
+        drift_rows, diag_summary = bridge_phase_diagnostic_series(sim_cfg, sim, direct_sim, 0.35, 1.0)
+        row.update(diag_summary)
+        ledger_rows = oscillator_ledger
+        magnetic_ledger = []
+    else:
+        no_mag_row = passive_baselines.get(runtime_factor)
+        row, magnetic_ledger, drift_rows = magnetic_bridge_measure(
+            effective_config,
+            seed,
+            quick,
+            dt,
+            runtime,
+            sample_every,
+            runtime_factor,
+            run_type,
+            sweep,
+            sweep_value,
+            direct_sim,
+            direct_row,
+            no_mag_row,
+        )
+        ledger_rows = magnetic_ledger
+
+    row["experiment"] = "magnetic_autolock"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:{runtime_factor:g}x:{run_type}"
+    row["mechanism"] = config.mechanism
+    row["magnetic_option"] = effective_config.magnetic_option
+    row["reference_role"] = config.reference_role
+    row["family"] = config.family
+    row["runtime_factor"] = runtime_factor
+    row["receiver_tuning_start"] = config.receiver_tuning_start
+    row["receiver_tuning_end"] = config.receiver_tuning_end
+    row["magnetic_bias_start"] = config.magnetic_bias_start
+    row["magnetic_bias_end"] = config.magnetic_bias_end
+    row["stage_b_inductance_start"] = config.stage_b_inductance_start
+    row["stage_b_inductance_end"] = config.stage_b_inductance_end
+    row["hybrid_mode_splitting"] = config.hybrid_mode_splitting
+    row["injection_frequency"] = config.injection_frequency
+    row["injection_amplitude"] = config.injection_amplitude
+    row["injection_phase_deg"] = config.injection_phase_deg
+    row["effective_receiver_frequency"] = effective_config.bridge.mode_freqs[2]
+    row["effective_stage_b_frequency"] = effective_config.bridge.mode_freqs[1]
+    row["effective_generated_frequency"] = row.get("effective_target_frequency", effective_config.bridge.target_9)
+    row["bridge_ratio"] = metric_ratio(float(row.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0)))
+    row["generated_vs_direct_bridge_ratio"] = row["bridge_ratio"]
+    row["energy_at_9_from_direct_3_plus_6_reference"] = direct_row.get("energy_at_9", 0.0)
+    total_input_before = float(row.get("total_input_work", 1e-18))
+    sweep_work, injection_work, active_fraction, injection_fraction = magnetic_autolock_work_terms(config, runtime, total_input_before)
+    total_input_with_active = total_input_before + sweep_work + injection_work
+    row["autoresonant_sweep_work"] = sweep_work
+    row["injection_work"] = injection_work
+    row["active_component_input_work"] = sweep_work + injection_work
+    row["total_input_work_before_active_accounting"] = total_input_before
+    row["total_input_work"] = total_input_with_active
+    row["active_work_fraction"] = active_fraction
+    row["injection_work_fraction"] = injection_fraction
+    row["conversion_efficiency"] = metric_ratio(float(row.get("energy_at_9", 0.0)), total_input_with_active)
+    row["clean_passive_conversion_efficiency"] = row["conversion_efficiency"]
+    passive_phase = float(passive_baselines.get(runtime_factor, {}).get("phase_lock_9", 0.0))
+    row["autolock_gain_vs_passive_magnetic"] = metric_ratio(float(row.get("phase_lock_9", 0.0)), passive_phase)
+    row["hybrid_mode_frequency_low"] = float(row.get("effective_receiver_frequency", 0.0)) - abs(config.hybrid_mode_splitting)
+    row["hybrid_mode_frequency_high"] = float(row.get("effective_receiver_frequency", 0.0)) + abs(config.hybrid_mode_splitting)
+    runtime_value = float(row.get("runtime", runtime))
+    lock_duration = float(row.get("lock_duration", 0.0))
+    sweep_stop = config.sweep_fraction * runtime_value
+    hold_window = max(runtime_value * max(0.10, 1.0 - config.sweep_fraction), 1e-9)
+    row["lock_acquisition_time"] = min(sweep_stop, float(row.get("time_to_unlock", sweep_stop)))
+    row["lock_hold_duration"] = max(0.0, lock_duration - 0.20 * sweep_stop)
+    row["lock_hold_duration_score"] = min(1.0, float(row["lock_hold_duration"]) / hold_window)
+    row["capture_success"] = str(
+        float(row.get("phase_lock_9", 0.0)) > 0.90
+        and float(row.get("spectral_purity_9", 0.0)) > 0.60
+        and float(row.get("generated_vs_direct_bridge_ratio", 0.0)) > 0.75
+    )
+    row["capture_bandwidth"] = min(1.0, abs(config.capture_bandwidth_hint) * 8.0)
+    row["capture_bandwidth_score"] = row["capture_bandwidth"]
+    row["repeatability_score"] = 1.0
+    row["no_direct_6_drive"] = row.get("no_direct_6_drive", "False")
+    row["no_direct_9_drive"] = row.get("no_direct_9_drive", "False")
+    row["note"] = config.note
+
+    for item in drift_rows:
+        item["experiment"] = "magnetic_autolock"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["mechanism"] = config.mechanism
+        item["runtime_factor"] = runtime_factor
+        item["active_work_fraction"] = active_fraction
+    for item in ledger_rows:
+        item["experiment"] = "magnetic_autolock"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["mechanism"] = config.mechanism
+        item["active_component_input_work"] = sweep_work + injection_work
+        item["total_input_work_with_active_accounting"] = total_input_with_active
+        item["active_work_fraction"] = active_fraction
+        item["injection_work_fraction"] = injection_fraction
+    schedule = magnetic_autolock_schedule_rows(config, row, runtime_value)
+    update_magnetic_autolock_score(row)
+    return row, ledger_rows, drift_rows, schedule
+
+
+def magnetic_autolock_validation(config: MagneticAutolockConfig, seed: int, quick: bool,
+                                 dt: float, base_runtime: float, sample_every: int,
+                                 passive_baselines: Dict[float, Dict[str, float | str]]
+                                 ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [
+        ("runtime_1x", dt, base_runtime, 1.0),
+        ("half_dt_1x", dt * 0.5, base_runtime, 1.0),
+        ("quarter_dt_1x", dt * 0.25, base_runtime, 1.0),
+        ("runtime_2x", dt, base_runtime * 2.0, 2.0),
+        ("runtime_4x", dt, base_runtime * 4.0, 4.0),
+    ]
+    rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    drift_rows: List[Dict[str, float | str]] = []
+    schedule_rows: List[Dict[str, float | str]] = []
+    direct_cache: Dict[Tuple[str, float, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    for idx, (name, test_dt, runtime, factor) in enumerate(tests):
+        row, ledger, drift, schedule = magnetic_autolock_measure(
+            config,
+            seed + idx * 71,
+            quick,
+            test_dt,
+            runtime,
+            sample_every,
+            factor,
+            "validation",
+            name,
+            name,
+            direct_cache,
+            passive_baselines,
+        )
+        row["validation_test"] = name
+        rows.append(row)
+        ledger_rows.extend(ledger)
+        drift_rows.extend(drift)
+        schedule_rows.extend(schedule)
+    return rows, ledger_rows, drift_rows, schedule_rows
+
+
+def apply_magnetic_autolock_validation_status(candidate: Dict[str, float | str],
+                                             validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt_1x"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt_1x"), {})
+    runtime2 = next((r for r in rows if str(r.get("validation_test")) == "runtime_2x"), {})
+    runtime4 = next((r for r in rows if str(r.get("validation_test")) == "runtime_4x"), {})
+    half_pass = half.get("passed") == "True"
+    quarter_pass = quarter.get("passed") == "True"
+    runtime2_pass = runtime2.get("passed") == "True"
+    runtime4_pass = runtime4.get("passed") == "True"
+    stability_parts = [
+        1.0 if half_pass else 0.0,
+        1.0 if quarter_pass else 0.0,
+        1.0 if runtime2_pass else 0.0,
+        1.0 if runtime4_pass else 0.0,
+        ratio_stability_score(float(half.get("phase_lock_9", 0.0)), float(candidate.get("phase_lock_9", 0.0))),
+        ratio_stability_score(float(runtime2.get("phase_lock_9", 0.0)), float(candidate.get("phase_lock_9", 0.0))),
+        ratio_stability_score(float(runtime4.get("phase_lock_9", 0.0)), float(candidate.get("phase_lock_9", 0.0))),
+    ]
+    candidate["half_dt_passed"] = str(half_pass)
+    candidate["quarter_dt_passed"] = str(quarter_pass)
+    candidate["runtime_2x_passed"] = str(runtime2_pass)
+    candidate["runtime_4x_passed"] = str(runtime4_pass)
+    candidate["repeatability_score"] = float(np.mean(stability_parts))
+    candidate["validation_status"] = "passed" if half_pass and quarter_pass and runtime2_pass else "failed"
+    candidate["promotion_ready"] = str(half_pass and quarter_pass and runtime2_pass and runtime4_pass)
+    update_magnetic_autolock_score(candidate)
+    if str(candidate.get("validation_status")) != "passed":
+        candidate["passed"] = "False"
+        candidate["failed_gate_names"] = ";".join(filter(None, [str(candidate.get("failed_gate_names", "")), "validation_stability"]))
+        candidate["magnetic_autolock_score"] = 0.0
+        candidate["score"] = 0.0
+
+
+def plot_magnetic_autolock_outputs(out_dir: Path, ranked: List[Dict[str, float | str]],
+                                   sweep_rows: List[Dict[str, float | str]],
+                                   ledger_rows: List[Dict[str, float | str]],
+                                   drift_rows: List[Dict[str, float | str]],
+                                   schedule_rows: List[Dict[str, float | str]],
+                                   validation_rows: List[Dict[str, float | str]]) -> None:
+    if ranked:
+        fig, ax = plt.subplots(figsize=(8.5, 5.2))
+        ax.scatter(
+            [float(r.get("generated_vs_direct_bridge_ratio", 0.0)) for r in ranked],
+            [float(r.get("phase_lock_9", 0.0)) for r in ranked],
+            c=[float(r.get("active_work_fraction", 0.0)) for r in ranked],
+        )
+        ax.axvline(0.75, color="tab:red", linestyle="--", linewidth=1.0)
+        ax.axhline(0.90, color="tab:red", linestyle="--", linewidth=1.0)
+        ax.set_title("magnetic autolock bridge ratio vs phase lock")
+        ax.set_xlabel("bridge ratio")
+        ax.set_ylabel("phase_lock_9")
+        fig.tight_layout()
+        fig.savefig(out_dir / "magnetic_autolock_active_work_vs_phase_lock.png", dpi=140)
+        plt.close(fig)
+
+        labels = [str(r.get("case", ""))[:24] for r in ranked[:10]]
+        values = [float(r.get("magnetic_autolock_score", 0.0)) for r in ranked[:10]]
+        fig, ax = plt.subplots(figsize=(9.5, 5.2))
+        ax.bar(np.arange(len(labels)), values)
+        ax.set_xticks(np.arange(len(labels)))
+        ax.set_xticklabels(labels, rotation=35, ha="right")
+        ax.set_ylabel("autolock score")
+        ax.set_title("magnetic autolock candidates")
+        fig.tight_layout()
+        fig.savefig(out_dir / "magnetic_autolock_comparison.png", dpi=140)
+        plt.close(fig)
+
+    if drift_rows:
+        for key, ylabel, filename in [
+            ("local_phase_lock", "local phase lock", "magnetic_autolock_phase_lock_runtime.png"),
+            ("phase_mismatch_3_plus_6_minus_9", "phase error", "magnetic_autolock_phase_error_over_time.png"),
+            ("sliding_bridge_ratio", "sliding bridge ratio", "magnetic_autolock_bridge_ratio_over_time.png"),
+            ("phase_drift_rate", "phase drift rate", "magnetic_autolock_phase_drift_rate.png"),
+        ]:
+            fig, ax = plt.subplots(figsize=(9.2, 5.0))
+            for case in list(dict.fromkeys(str(r.get("case", "")) for r in drift_rows))[:6]:
+                rows = [r for r in drift_rows if str(r.get("case", "")) == case]
+                if rows:
+                    ax.plot([float(r["time_mid"]) for r in rows], [float(r.get(key, 0.0)) for r in rows], label=case[:28])
+            ax.set_title(ylabel)
+            ax.set_xlabel("time")
+            ax.set_ylabel(ylabel)
+            ax.legend(fontsize=7)
+            fig.tight_layout()
+            fig.savefig(out_dir / filename, dpi=140)
+            plt.close(fig)
+
+    if schedule_rows:
+        fig, ax = plt.subplots(figsize=(9.2, 5.0))
+        for case in list(dict.fromkeys(str(r.get("case", "")) for r in schedule_rows))[:5]:
+            rows = [r for r in schedule_rows if str(r.get("case", "")) == case]
+            if rows:
+                ax.plot([float(r["time"]) for r in rows], [float(r.get("receiver_tuning_schedule", 0.0)) for r in rows], label=case[:28])
+        ax.set_title("autolock sweep schedule")
+        ax.set_xlabel("time")
+        ax.set_ylabel("receiver tuning")
+        ax.legend(fontsize=7)
+        fig.tight_layout()
+        fig.savefig(out_dir / "magnetic_autolock_sweep_schedule.png", dpi=140)
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(9.2, 5.0))
+        rows = schedule_rows
+        ax.plot([float(r["time"]) for r in rows], [float(r.get("active_component_input_work", 0.0)) for r in rows])
+        ax.set_title("autolock counted active/sweep work")
+        ax.set_xlabel("time")
+        ax.set_ylabel("active work")
+        fig.tight_layout()
+        fig.savefig(out_dir / "magnetic_autolock_work_over_time.png", dpi=140)
+        plt.close(fig)
+
+    hybrid = [r for r in sweep_rows if "hybrid" in str(r.get("mechanism", ""))]
+    if hybrid:
+        fig, ax = plt.subplots(figsize=(8.5, 5.2))
+        ax.scatter(
+            [float(r.get("hybrid_mode_splitting", 0.0)) for r in hybrid],
+            [float(r.get("effective_generated_frequency", 0.0)) for r in hybrid],
+            c=[float(r.get("phase_lock_9", 0.0)) for r in hybrid],
+        )
+        ax.set_title("hybrid mode frequency pull")
+        ax.set_xlabel("hybrid mode splitting")
+        ax.set_ylabel("effective generated frequency")
+        fig.tight_layout()
+        fig.savefig(out_dir / "magnetic_autolock_hybrid_modes.png", dpi=140)
+        plt.close(fig)
+
+    if validation_rows:
+        fig, ax = plt.subplots(figsize=(8.8, 5.0))
+        labels = [str(r.get("validation_test", "")) for r in validation_rows[:10]]
+        values = [float(r.get("phase_lock_9", 0.0)) for r in validation_rows[:10]]
+        ax.bar(np.arange(len(labels)), values)
+        ax.axhline(0.90, color="tab:red", linestyle="--", linewidth=1.0)
+        ax.set_xticks(np.arange(len(labels)))
+        ax.set_xticklabels(labels, rotation=30, ha="right")
+        ax.set_ylabel("phase_lock_9")
+        ax.set_title("4x survival and dt checks")
+        fig.tight_layout()
+        fig.savefig(out_dir / "magnetic_autolock_4x_survival.png", dpi=140)
+        plt.close(fig)
+
+    capture_rows = [r for r in sweep_rows if "receiver_capture" in str(r.get("case", ""))]
+    if capture_rows:
+        xs = sorted({float(r.get("receiver_tuning_end", 0.0)) for r in capture_rows})
+        ys = sorted({float(r.get("stage_B_nonlinear_strength", 0.0)) for r in capture_rows})
+        if xs and ys:
+            matrix = np.zeros((len(ys), len(xs)))
+            for row in capture_rows:
+                matrix[ys.index(float(row.get("stage_B_nonlinear_strength", 0.0))), xs.index(float(row.get("receiver_tuning_end", 0.0)))] = float(row.get("phase_lock_9", 0.0))
+            fig, ax = plt.subplots(figsize=(8.2, 5.2))
+            im = ax.imshow(matrix, origin="lower", aspect="auto")
+            ax.set_xticks(np.arange(len(xs)))
+            ax.set_xticklabels([f"{x:g}" for x in xs])
+            ax.set_yticks(np.arange(len(ys)))
+            ax.set_yticklabels([f"{y:g}" for y in ys])
+            ax.set_title("capture bandwidth heatmap")
+            ax.set_xlabel("receiver tuning end")
+            ax.set_ylabel("Stage B strength")
+            fig.colorbar(im, ax=ax, label="phase_lock_9")
+            fig.tight_layout()
+            fig.savefig(out_dir / "magnetic_autolock_capture_bandwidth_heatmap.png", dpi=140)
+            plt.close(fig)
+
+    if ledger_rows:
+        rows = [r for r in ledger_rows if str(r.get("case")) == str(ranked[0].get("case", ""))] if ranked else ledger_rows
+        if rows:
+            fig, ax = plt.subplots(figsize=(9.0, 5.0))
+            ax.plot([float(r["time"]) for r in rows], [float(r.get("oscillator_total_stored_energy", r.get("total_stored_energy", 0.0))) for r in rows], label="stored")
+            ax.plot([float(r["time"]) for r in rows], [float(r.get("active_component_input_work", 0.0)) for r in rows], label="active/sweep work")
+            ax.set_title("magnetic autolock energy ledger")
+            ax.set_xlabel("time")
+            ax.set_ylabel("energy/work")
+            ax.legend()
+            fig.tight_layout()
+            fig.savefig(out_dir / "magnetic_autolock_energy_ledger.png", dpi=140)
+            plt.close(fig)
+
+
+def write_magnetic_autolock_report(out_dir: Path, ranked: List[Dict[str, float | str]],
+                                   validation_rows: List[Dict[str, float | str]],
+                                   controls: List[Dict[str, float | str]]) -> None:
+    best = ranked[0] if ranked else {}
+    passing = [r for r in ranked if str(r.get("passed")) == "True"]
+    best_passing = passing[0] if passing else {}
+    runtime4_pass = any(str(r.get("validation_test")) == "runtime_4x" and str(r.get("passed")) == "True" for r in validation_rows)
+    best_4x = max(
+        [r for r in validation_rows if str(r.get("validation_test")) == "runtime_4x"],
+        key=lambda r: float(r.get("phase_lock_9", 0.0)),
+        default={},
+    )
+    passive_rows = [r for r in ranked if "injection" not in str(r.get("mechanism", "")) and str(r.get("reference_role")) == "discovery_candidate"]
+    semi_rows = [r for r in ranked if "injection" in str(r.get("mechanism", "")) and str(r.get("reference_role")) == "discovery_candidate"]
+    best_passive = passive_rows[0] if passive_rows else {}
+    best_semi = semi_rows[0] if semi_rows else {}
+    non369 = [r for r in controls if str(r.get("family")) == "non369"]
+    non369_best = max((float(r.get("phase_lock_9", 0.0)) for r in non369), default=0.0)
+    lines = [
+        "# Magnetic Autolock Report",
+        "",
+        "This is a reduced-order passive/semi-passive mechanism test over the existing clean staged bridge model, not a full electromagnetic field solver.",
+        "",
+        "## Direct Answers",
+        f"1. Passive magnetic autoresonance reaches stable 4x lock? {'yes' if runtime4_pass and best_4x.get('mechanism', '').startswith('autoresonant') else 'not proven in this run'}.",
+        f"2. Best mechanism family: {best.get('mechanism', 'none')} with score={float(best.get('magnetic_autolock_score', 0.0)):.6g}.",
+        f"3. Ultraweak injection required? {'yes in this run' if best and 'injection' in str(best.get('mechanism', '')) else 'not as the top scored row'}; active_work_fraction={float(best.get('active_work_fraction', 0.0)):.6g}.",
+        f"4. Does lock survive 4x runtime? {'yes' if runtime4_pass else 'no strict 4x pass found'}; best_4x_case={best_4x.get('case', 'none')}, phase={float(best_4x.get('phase_lock_9', 0.0)):.6g}, ratio={float(best_4x.get('generated_vs_direct_bridge_ratio', 0.0)):.6g}.",
+        f"5. Magnetic hybrid branch creates broader capture? {'possibly' if float(best_passive.get('capture_bandwidth', 0.0)) > 0.2 and float(best_passive.get('phase_lock_9', 0.0)) > 0.90 else 'not proven'}; best_passive={best_passive.get('case', 'none')}.",
+        f"6. Energy accounting remains clean? {'yes' if best_passing and float(best_passing.get('energy_budget_error', 1.0)) < 0.002 else 'not for a promoted candidate'}; best_budget={float(best_passing.get('energy_budget_error', 1.0)) if best_passing else 1.0:.6g}.",
+        f"7. Non-369 controls outperform 3->6->9? {'yes' if non369_best > float(best.get('phase_lock_9', 0.0)) else 'no in current scoring'}; best_non369_phase={non369_best:.6g}.",
+        f"8. Promote to geometry369, passive tuning, or PLL? {'geometry369 seed is justified' if runtime4_pass else 'continue passive tuning or move to explicit PLL/selflock with active work accounting'}.",
+        f"9. Best passive candidate: {best_passive.get('case', 'none')} score={float(best_passive.get('magnetic_autolock_score', 0.0)):.6g}.",
+        f"10. Best semi-active candidate: {best_semi.get('case', 'none')} score={float(best_semi.get('magnetic_autolock_score', 0.0)):.6g}.",
+        "",
+        "## Top Rows",
+    ]
+    for row in ranked[:20]:
+        lines.append(
+            f"- {row.get('case')}: mechanism={row.get('mechanism')}, score={float(row.get('magnetic_autolock_score', 0.0)):.6g}, "
+            f"passed={row.get('passed')}, promotion={row.get('promotion_ready', 'False')}, ratio={float(row.get('generated_vs_direct_bridge_ratio', 0.0)):.6g}, "
+            f"phase={float(row.get('phase_lock_9', 0.0)):.6g}, purity={float(row.get('spectral_purity_9', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, active={float(row.get('active_work_fraction', 0.0)):.6g}, failure={row.get('failure_mode', '')}"
+        )
+    (out_dir / "README_MAGNETIC_AUTOLOCK_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_magnetic_autolock(out_dir: Path, seed: int, quick: bool = False,
+                                 include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    base_runtime = base_tmax * 1.25
+    configs = magnetic_autolock_core_configs()
+    if include_sweeps:
+        configs.extend(magnetic_autolock_sweep_configs(quick))
+
+    rows: List[Dict[str, float | str]] = []
+    sweep_rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    drift_rows: List[Dict[str, float | str]] = []
+    schedule_rows: List[Dict[str, float | str]] = []
+    controls: List[Dict[str, float | str]] = []
+    validation_rows: List[Dict[str, float | str]] = []
+    direct_cache: Dict[Tuple[str, float, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    passive_baselines: Dict[float, Dict[str, float | str]] = {}
+
+    baseline_cfg = next((c for c in configs if c.name == "passive_magnetic_best_baseline"), configs[0])
+    baseline_effective = magnetic_autolock_effective_config(baseline_cfg)
+    for factor in [1.0, 2.0, 4.0]:
+        runtime = base_runtime * factor
+        direct_cfg = magnetic_bridge_direct_reference(baseline_effective)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 31000 + int(factor * 10), quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 31000 + int(factor * 10), "direct_reference", "direct_3_plus_6", "reference", 0.35, 1.0)
+        row, _, _, _ = magnetic_autolock_measure(
+            baseline_cfg,
+            seed + 32000 + int(factor * 10),
+            quick,
+            dt,
+            runtime,
+            sample_every,
+            factor,
+            "baseline",
+            "passive_magnetic_baseline",
+            f"{factor:g}x",
+            {("3:9", dt, runtime, 9.0): (direct_sim, direct_row)},
+            {},
+        )
+        passive_baselines[factor] = row
+
+    for idx, config in enumerate(configs):
+        row, ledger, drift, schedule = magnetic_autolock_measure(
+            config,
+            seed + idx * 97,
+            quick,
+            dt,
+            base_runtime,
+            sample_every,
+            1.0,
+            "sweep" if include_sweeps else "core",
+            config.mechanism,
+            config.name,
+            direct_cache,
+            passive_baselines,
+        )
+        rows.append(row)
+        ledger_rows.extend(ledger)
+        drift_rows.extend(drift)
+        schedule_rows.extend(schedule)
+        if include_sweeps or str(config.reference_role) == "discovery_candidate":
+            sweep_rows.append(row)
+        if str(config.reference_role) in ("control", "reference", "ceiling_reference") or config.family == "non369":
+            controls.append(row)
+
+    ranked = sorted(rows, key=lambda r: (float(r.get("magnetic_autolock_score", 0.0)), float(r.get("phase_lock_9", 0.0))), reverse=True)
+    top_candidates = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate"][:5 if include_sweeps else 4]
+    if not top_candidates and ranked:
+        top_candidates = [ranked[0]]
+
+    for idx, candidate in enumerate(top_candidates):
+        cfg = next((c for c in configs if c.name == candidate["case"]), configs[0])
+        vrows, vledger, vdrift, vschedule = magnetic_autolock_validation(cfg, seed + 41000 + idx * 1000, quick, dt, base_runtime, sample_every, passive_baselines)
+        validation_rows.extend(vrows)
+        ledger_rows.extend(vledger)
+        drift_rows.extend(vdrift)
+        schedule_rows.extend(vschedule)
+        apply_magnetic_autolock_validation_status(candidate, validation_rows)
+        if str(candidate.get("promotion_ready")) == "True":
+            break
+
+    ranked = sorted(rows, key=lambda r: (float(r.get("magnetic_autolock_score", 0.0)), float(r.get("phase_lock_9", 0.0))), reverse=True)
+    capture_report = [
+        {
+            "case": row.get("case", ""),
+            "mechanism": row.get("mechanism", ""),
+            "validation_test": row.get("validation_test", row.get("run_type", "")),
+            "runtime_factor": row.get("runtime_factor", 1.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "generated_vs_direct_bridge_ratio": row.get("generated_vs_direct_bridge_ratio", 0.0),
+            "phase_lock_9": row.get("phase_lock_9", 0.0),
+            "spectral_purity_9": row.get("spectral_purity_9", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "active_work_fraction": row.get("active_work_fraction", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+        }
+        for row in rows + validation_rows
+    ]
+
+    write_csv(out_dir / "magnetic_autolock_summary.csv", rows)
+    write_csv(out_dir / "magnetic_autolock_ranked.csv", ranked)
+    write_csv(out_dir / "magnetic_autolock_sweeps.csv", sweep_rows)
+    write_csv(out_dir / "magnetic_autolock_energy_ledger.csv", ledger_rows + schedule_rows)
+    write_csv(out_dir / "magnetic_autolock_phase_timeseries.csv", drift_rows)
+    write_csv(out_dir / "magnetic_autolock_capture_report.csv", capture_report)
+    write_csv(out_dir / "magnetic_autolock_controls.csv", controls)
+    plot_magnetic_autolock_outputs(out_dir, ranked, sweep_rows, ledger_rows, drift_rows, schedule_rows, validation_rows)
+    write_magnetic_autolock_report(out_dir, ranked, validation_rows, controls)
+
+    return [
+        {
+            "experiment": "magnetic_autolock",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("magnetic_autolock_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "mechanism": row.get("mechanism", ""),
+            "generated_vs_direct_bridge_ratio": row.get("generated_vs_direct_bridge_ratio", 0.0),
+            "phase_lock_9": row.get("phase_lock_9", 0.0),
+            "spectral_purity_9": row.get("spectral_purity_9", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "active_work_fraction": row.get("active_work_fraction", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -7345,12 +8487,12 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
-    parser.add_argument("--sweeps", action="store_true", help="Run sweep packs for silent-9, atlas, cascade, bridge, and phase-lock modes.")
+    parser.add_argument("--sweeps", action="store_true", help="Run sweep packs for silent-9, atlas, cascade, bridge, magnetic, and phase-lock modes.")
     parser.add_argument("--case", type=str, default="all", help="Case selector for energy_audit mode.")
     parser.add_argument("--energy-clean", action="store_true", help="Use the passive energy-clean validation model. This is now the default for validate mode.")
     args = parser.parse_args()
@@ -7387,6 +8529,8 @@ def main() -> None:
         rows.extend(experiment_bridge_lock_refine(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("magnetic_bridge",):
         rows.extend(experiment_magnetic_bridge(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("magnetic_autolock",):
+        rows.extend(experiment_magnetic_autolock(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 
