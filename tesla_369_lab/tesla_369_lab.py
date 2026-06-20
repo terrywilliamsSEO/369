@@ -13529,6 +13529,971 @@ def experiment_bridge_phase_slip_audit(out_dir: Path, seed: int, quick: bool = F
 
 
 # ----------------------------
+# Experiment 23: bridge generated-stage stabilizer
+# ----------------------------
+
+@dataclass
+class BridgeGeneratedStageStabilizerConfig:
+    name: str
+    servo_config: BridgePhaseServoConfig
+    stabilizer_group: str
+    stabilizer_type: str
+    stabilizer_value: float = 0.0
+    guard_gain: float = 0.0
+    guard_amp_gain: float = 0.0
+    guard_clamp: float = 0.0
+    guard_smoothing: float = 0.18
+    guard_update_interval: float = 1.0
+    artificial_envelope_strength: float = 0.0
+    runtime_factor: float = 4.0
+    reference_role: str = "discovery_candidate"
+    family: str = "369"
+    target_family: str = "369"
+    note: str = ""
+
+
+def bridge_generated_stage_base_templates() -> List[Tuple[str, str, str, BridgeMinNudgeConfig]]:
+    return [
+        (
+            "369",
+            "feedforward_best_magnetic_bias",
+            "369",
+            bridge_phase_servo_template(
+                "feedforward_best_magnetic_bias",
+                receiver_tuning=8.90,
+                phase_bias=30.0,
+                stage_b_strength=0.84,
+            ),
+        ),
+        ("4812", "non369_4_8_12", "non369", bridge_phase_servo_non369_template(4.0, 12.0)),
+        ("51015", "non369_5_10_15", "non369", bridge_phase_servo_non369_template(5.0, 15.0)),
+    ]
+
+
+def bridge_generated_stage_replace_bridge(base_config: BridgeMinNudgeConfig,
+                                          bridge: BridgeAmpConfig,
+                                          magnetic: MagneticBridgeConfig | None = None,
+                                          reference_role: str | None = None,
+                                          family: str | None = None) -> BridgeMinNudgeConfig:
+    role = reference_role if reference_role is not None else base_config.reference_role
+    fam = family if family is not None else base_config.family
+    source_magnetic = magnetic if magnetic is not None else base_config.magnetic_config
+    magnetic_next = replace(source_magnetic, bridge=bridge, reference_role=role, family=fam)
+    return replace(base_config, magnetic_config=magnetic_next, reference_role=role, family=fam)
+
+
+def bridge_generated_stage_modified_base(base_config: BridgeMinNudgeConfig,
+                                         stabilizer_group: str,
+                                         value: float,
+                                         reference_role: str,
+                                         family: str) -> BridgeMinNudgeConfig:
+    magnetic = base_config.magnetic_config
+    bridge = magnetic.bridge
+    source = bridge.mode_freqs[0]
+    target_2f = bridge.target_6
+    if stabilizer_group == "generated_stage_damping":
+        bridge = replace(
+            bridge,
+            stage_b_damping=max(0.08, value),
+            note=f"{bridge.note}; generated-stage damping={value:g}",
+        )
+    elif stabilizer_group == "stage_A_tuning":
+        bridge = replace(
+            bridge,
+            mode_freqs=(source, max(0.5, target_2f + value), bridge.mode_freqs[2]),
+            note=f"{bridge.note}; generated-stage tuning offset={value:g}",
+        )
+    elif stabilizer_group == "coupling_asymmetry":
+        bridge = replace(
+            bridge,
+            stage_a_to_stage_b_coupling=max(0.05, bridge.stage_a_to_stage_b_coupling * value),
+            stage_b_to_receiver_coupling=max(0.05, bridge.stage_b_to_receiver_coupling / max(value, 1e-6)),
+            note=f"{bridge.note}; generated-stage coupling asymmetry={value:g}",
+        )
+    elif stabilizer_group == "passive_saturable_limiter":
+        bridge = replace(
+            bridge,
+            varactor_coefficient=max(0.0, bridge.varactor_coefficient + value),
+            stage_b_damping=max(0.05, bridge.stage_b_damping + 0.18 * value),
+            note=f"{bridge.note}; passive generated-stage saturation limiter={value:g}",
+        )
+    elif stabilizer_group == "magnetic_loss":
+        magnetic = replace(
+            magnetic,
+            magnetic_option="lossy_hysteretic_core",
+            hysteresis_loss=max(0.0, value),
+            eddy_current_loss=max(0.0, 0.45 * value),
+            magnetic_damping=max(magnetic.magnetic_damping, 0.012 + 0.45 * value),
+            mutual_inductance_a_b=max(magnetic.mutual_inductance_a_b, 0.16),
+            mutual_inductance_b_receiver=max(magnetic.mutual_inductance_b_receiver, 0.18),
+            note=f"{magnetic.note}; lossy/hysteretic generated-stage damping={value:g}",
+        )
+        bridge = replace(bridge, note=f"{bridge.note}; lossy/hysteretic generated-stage magnetic damping={value:g}")
+    elif stabilizer_group == "artificial_envelope_reference":
+        bridge = replace(
+            bridge,
+            note=f"{bridge.note}; artificial generated-envelope ceiling reference={value:g}",
+        )
+    elif stabilizer_group == "predictive_slip_guard":
+        bridge = replace(
+            bridge,
+            note=f"{bridge.note}; predictive generated-envelope slip guard={value:g}",
+        )
+    else:
+        bridge = replace(bridge, note=f"{bridge.note}; no generated-stage stabilizer")
+    return bridge_generated_stage_replace_bridge(base_config, bridge, magnetic, reference_role, family)
+
+
+def bridge_generated_stage_make_config(target_family: str,
+                                       seed_family: str,
+                                       family: str,
+                                       base_config: BridgeMinNudgeConfig,
+                                       stabilizer_group: str,
+                                       stabilizer_type: str,
+                                       value: float,
+                                       suffix: str = "",
+                                       guard_gain: float = 0.0,
+                                       guard_amp_gain: float = 0.0,
+                                       guard_clamp: float = 0.0,
+                                       artificial_strength: float = 0.0) -> BridgeGeneratedStageStabilizerConfig:
+    reference_role = "ceiling_reference" if stabilizer_group == "artificial_envelope_reference" else ("discovery_candidate" if family == "369" else "control")
+    modified = bridge_generated_stage_modified_base(base_config, stabilizer_group, value, reference_role, family)
+    servo = bridge_phase_servo_make_config(
+        target_family,
+        seed_family,
+        modified,
+        "stage_B_detuning_servo",
+        0.0015,
+        0.000020,
+        0.018,
+        0.18,
+        2.0,
+        runtime_factor=4.0,
+        control_mode="normal",
+        reference_role=reference_role,
+        family=family,
+        suffix=suffix or stabilizer_type,
+    )
+    name = (
+        f"generated_stage_stabilizer_{target_family}_{seed_family}_{stabilizer_group}"
+        f"_{stabilizer_type}_{safe_token(value)}"
+    )
+    return BridgeGeneratedStageStabilizerConfig(
+        name=name,
+        servo_config=replace(
+            servo,
+            name=name,
+            note="generated-2f stage stabilization before target lock; no direct 2f/3f drive",
+        ),
+        stabilizer_group=stabilizer_group,
+        stabilizer_type=stabilizer_type,
+        stabilizer_value=value,
+        guard_gain=guard_gain,
+        guard_amp_gain=guard_amp_gain,
+        guard_clamp=guard_clamp,
+        artificial_envelope_strength=artificial_strength,
+        reference_role=reference_role,
+        family=family,
+        target_family=target_family,
+        note="generated-stage stabilizer candidate",
+    )
+
+
+def bridge_generated_stage_stabilizer_specs(include_sweeps: bool) -> List[Tuple[str, str, BridgeGeneratedStageStabilizerConfig]]:
+    default_specs = [
+        ("no_stabilizer", "baseline", 0.0, 0.0, 0.0, 0.0),
+        ("generated_stage_damping", "moderate_q_damping", 0.92, 0.0, 0.0, 0.0),
+        ("stage_A_tuning", "tune_plus_0p03", 0.03, 0.0, 0.0, 0.0),
+        ("coupling_asymmetry", "stronger_A_to_B", 1.35, 0.0, 0.0, 0.0),
+        ("passive_saturable_limiter", "soft_limiter", 0.22, 0.0, 0.0, 0.0),
+        ("magnetic_loss", "lossy_hysteretic", 0.045, 0.0, 0.0, 0.0),
+        ("predictive_slip_guard", "generated_envelope_guard", 1.0, 0.0045, 0.0018, 0.012),
+        ("artificial_envelope_reference", "diagnostic_ceiling", 0.55, 0.0, 0.0, 0.0),
+    ]
+    sweep_specs = [
+        ("generated_stage_damping", "light_q_damping", 0.72, 0.0, 0.0, 0.0),
+        ("generated_stage_damping", "heavy_q_damping", 1.18, 0.0, 0.0, 0.0),
+        ("stage_A_tuning", "tune_minus_0p06", -0.06, 0.0, 0.0, 0.0),
+        ("stage_A_tuning", "tune_plus_0p06", 0.06, 0.0, 0.0, 0.0),
+        ("coupling_asymmetry", "mild_asymmetry", 1.18, 0.0, 0.0, 0.0),
+        ("coupling_asymmetry", "strong_asymmetry", 1.65, 0.0, 0.0, 0.0),
+        ("passive_saturable_limiter", "light_limiter", 0.14, 0.0, 0.0, 0.0),
+        ("passive_saturable_limiter", "firm_limiter", 0.34, 0.0, 0.0, 0.0),
+        ("magnetic_loss", "light_hysteretic", 0.025, 0.0, 0.0, 0.0),
+        ("magnetic_loss", "firm_hysteretic", 0.075, 0.0, 0.0, 0.0),
+        ("predictive_slip_guard", "weak_guard", 0.7, 0.0028, 0.0010, 0.008),
+        ("predictive_slip_guard", "firm_guard", 1.3, 0.0065, 0.0026, 0.016),
+    ]
+    active_specs = default_specs + (sweep_specs if include_sweeps else [])
+    specs: List[Tuple[str, str, BridgeGeneratedStageStabilizerConfig]] = []
+    for target_family, seed_family, family, base_config in bridge_generated_stage_base_templates():
+        for group, stabilizer_type, value, guard_gain, guard_amp_gain, guard_clamp in active_specs:
+            artificial = value if group == "artificial_envelope_reference" else 0.0
+            specs.append((
+                group,
+                stabilizer_type,
+                bridge_generated_stage_make_config(
+                    target_family,
+                    seed_family,
+                    family,
+                    base_config,
+                    group,
+                    stabilizer_type,
+                    value,
+                    suffix=stabilizer_type,
+                    guard_gain=guard_gain,
+                    guard_amp_gain=guard_amp_gain,
+                    guard_clamp=guard_clamp,
+                    artificial_strength=artificial,
+                ),
+            ))
+    return specs
+
+
+def bridge_generated_stage_phase_error(config: BridgeAmpConfig,
+                                       sample_times: List[float],
+                                       sample_qs: List[np.ndarray],
+                                       sample_dt: float) -> float:
+    window = max(24, int(6.0 / max(sample_dt, 1e-9)))
+    if len(sample_times) < window:
+        return 0.0
+    times = np.asarray(sample_times[-window:])
+    qs = np.asarray(sample_qs[-window:])
+    amp_source = complex_projection(qs[:, 0], times, 0.045 * config.mode_freqs[0])
+    amp_generated = complex_projection(qs[:, 1], times, 0.045 * config.target_6)
+    if min(abs(amp_source), abs(amp_generated)) < 1e-12:
+        return 0.0
+    return float(wrap_angle(2.0 * float(np.angle(amp_source)) - float(np.angle(amp_generated))))
+
+
+def bridge_generated_stage_recent_amplitude(config: BridgeAmpConfig,
+                                            sample_times: List[float],
+                                            sample_qs: List[np.ndarray],
+                                            sample_dt: float) -> float:
+    window = max(24, int(6.0 / max(sample_dt, 1e-9)))
+    if len(sample_times) < window:
+        return 0.0
+    times = np.asarray(sample_times[-window:])
+    qs = np.asarray(sample_qs[-window:])
+    return float(abs(complex_projection(qs[:, 1], times, 0.045 * config.target_6)))
+
+
+def bridge_generated_stage_guard_correction(config: BridgeGeneratedStageStabilizerConfig,
+                                            generated_phase_error: float,
+                                            amp_slope_fraction: float,
+                                            current_guard: float) -> float:
+    if config.stabilizer_group != "predictive_slip_guard":
+        return 0.0
+    desired = -config.guard_gain * generated_phase_error - config.guard_amp_gain * amp_slope_fraction
+    desired = float(np.clip(desired, -config.guard_clamp, config.guard_clamp))
+    return float(np.clip(
+        current_guard + config.guard_smoothing * (desired - current_guard),
+        -config.guard_clamp,
+        config.guard_clamp,
+    ))
+
+
+def simulate_bridge_generated_stage_stabilizer(config: BridgeGeneratedStageStabilizerConfig,
+                                               seed: int,
+                                               quick: bool,
+                                               dt: float | None = None,
+                                               t_max: float | None = None,
+                                               base_hz: float = 0.045,
+                                               sample_every: int | None = None
+                                               ) -> Tuple[Dict[str, object], List[Dict[str, float | str]]]:
+    servo = config.servo_config
+    rng = np.random.default_rng(seed)
+    default_dt, default_tmax, default_sample = bridge_amp_timebase(quick)
+    dt = default_dt if dt is None else dt
+    t_max = default_tmax if t_max is None else t_max
+    sample_every = default_sample if sample_every is None else sample_every
+    drive_until = 0.74 * t_max
+
+    target_correction = 0.0
+    guard_correction = 0.0
+    total_correction = 0.0
+    phase_error = 0.0
+    integral_phase_error = 0.0
+    generated_phase_error = 0.0
+    last_generated_amp = 0.0
+    effective = bridge_min_nudge_effective_bridge(servo.base_config, total_correction)
+    omega = 2.0 * np.pi * base_hz * np.asarray(effective.mode_freqs, dtype=float)
+    zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+    y = np.zeros(6)
+    y[:3] = 1e-4 * rng.normal(size=3)
+    y[3:] = 1e-4 * rng.normal(size=3)
+    initial_total = float(bridge_amp_potentials(y[:3], y[3:], omega, effective)["total"])
+    drive_work = 0.0
+    positive_input_work = 0.0
+    damping_loss = 0.0
+    spark_loss = 0.0
+    stabilizer_work_signed = 0.0
+    stabilizer_work_abs = 0.0
+    stabilizer_energy_in = 0.0
+    stabilizer_energy_out = 0.0
+    artificial_envelope_work_abs = 0.0
+    guard_work_abs = 0.0
+
+    update_interval = min(
+        servo.update_interval,
+        config.guard_update_interval if config.stabilizer_group == "predictive_slip_guard" else servo.update_interval,
+    )
+    update_steps = max(1, int(update_interval / max(dt, 1e-12)))
+    update_dt = update_steps * dt
+    sample_dt = dt * sample_every
+    times: List[float] = []
+    qs: List[np.ndarray] = []
+    vs: List[np.ndarray] = []
+    energies: List[np.ndarray] = []
+    corrections: List[float] = []
+    target_corrections: List[float] = []
+    guard_corrections: List[float] = []
+    phase_errors: List[float] = []
+    generated_phase_errors: List[float] = []
+    ledger: List[Dict[str, float | str]] = []
+
+    n_steps = int(t_max / dt)
+    for step in range(n_steps):
+        t = step * dt
+        q = y[:3]
+        v = y[3:]
+
+        if step > 0 and step % update_steps == 0:
+            phase_error = bridge_min_nudge_phase_error(effective, times, qs, sample_dt)
+            generated_phase_error = bridge_generated_stage_phase_error(effective, times, qs, sample_dt)
+            generated_amp = bridge_generated_stage_recent_amplitude(effective, times, qs, sample_dt)
+            amp_slope_fraction = 0.0
+            if last_generated_amp > 1e-12:
+                amp_slope_fraction = (generated_amp - last_generated_amp) / max(abs(last_generated_amp), 1e-12)
+            last_generated_amp = generated_amp
+            if servo.control_mode == "no_servo":
+                integral_phase_error = 0.0
+                target_correction = 0.0
+            else:
+                integral_phase_error = float(np.clip(
+                    integral_phase_error + phase_error * update_dt,
+                    -servo.integral_clamp,
+                    servo.integral_clamp,
+                ))
+                target_correction = bridge_phase_servo_next_correction(servo, rng, phase_error, integral_phase_error, target_correction)
+            previous_guard = guard_correction
+            guard_correction = bridge_generated_stage_guard_correction(config, generated_phase_error, amp_slope_fraction, guard_correction)
+            next_total = float(np.clip(
+                target_correction + guard_correction,
+                -(servo.correction_clamp + config.guard_clamp),
+                servo.correction_clamp + config.guard_clamp,
+            ))
+            if abs(next_total - total_correction) > 1e-15:
+                before = bridge_amp_potentials(q, v, omega, effective)
+                next_effective = bridge_min_nudge_effective_bridge(servo.base_config, next_total)
+                next_omega = 2.0 * np.pi * base_hz * np.asarray(next_effective.mode_freqs, dtype=float)
+                after_param = bridge_amp_potentials(q, v, next_omega, next_effective)
+                delta_work = float(after_param["total"] - before["total"])
+                stabilizer_work_signed += delta_work
+                stabilizer_work_abs += abs(delta_work)
+                stabilizer_energy_in += max(0.0, delta_work)
+                stabilizer_energy_out += max(0.0, -delta_work)
+                if abs(guard_correction - previous_guard) > 1e-15:
+                    guard_work_abs += abs(delta_work)
+                total_correction = next_total
+                effective = next_effective
+                omega = next_omega
+                zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+        drive_forces = bridge_amp_drive_forces(effective, t, base_hz, drive_until, 3)
+        drive_power = float(np.dot(drive_forces, v))
+        drive_work += drive_power * dt
+        positive_input_work += max(0.0, drive_power) * dt
+        damping_loss += float(np.sum(2.0 * zeta * omega * (v ** 2))) * dt
+        if effective.spark_strength:
+            for i, j in ((0, 1), (1, 2)):
+                gate = float(spark_gate(q[i] - q[j], threshold=effective.spark_threshold))
+                c = 0.030 * effective.spark_strength * gate
+                spark_loss += float(c * ((v[i] - v[j]) ** 2)) * dt
+
+        y_next = rk4_step(y, t, dt, bridge_amp_derivative, omega, effective, base_hz, drive_until, zeta)
+        qn = y_next[:3].copy()
+        vn = y_next[3:].copy()
+        after = bridge_amp_potentials(qn, vn, omega, effective)
+
+        if config.artificial_envelope_strength > 0.0 and len(energies) >= 24:
+            prior_generated = np.asarray([float(e[1]) for e in energies[-80:]])
+            cap = float(np.median(prior_generated) * (1.0 + 0.20 * (1.0 - min(config.artificial_envelope_strength, 0.95))))
+            current_modal = clean_modal_energy(qn, vn, omega)
+            current_generated = float(current_modal[1])
+            if cap > 1e-18 and current_generated > cap:
+                before_total = float(after["total"])
+                scale = math.sqrt(max(1e-18, cap) / max(current_generated, 1e-18))
+                blend = min(1.0, config.artificial_envelope_strength)
+                scale = 1.0 + blend * (scale - 1.0)
+                qn[1] *= scale
+                vn[1] *= scale
+                after = bridge_amp_potentials(qn, vn, omega, effective)
+                delta_work = float(after["total"] - before_total)
+                stabilizer_work_signed += delta_work
+                stabilizer_work_abs += abs(delta_work)
+                artificial_envelope_work_abs += abs(delta_work)
+                stabilizer_energy_in += max(0.0, delta_work)
+                stabilizer_energy_out += max(0.0, -delta_work)
+
+        y = np.concatenate([qn, vn])
+        if not np.all(np.isfinite(y)) or np.max(np.abs(y)) > 1e6:
+            break
+
+        if step % sample_every == 0:
+            modal = clean_modal_energy(qn, vn, omega)
+            total_accounted = initial_total + drive_work + stabilizer_work_signed - damping_loss - spark_loss
+            error_abs = float(after["total"]) - total_accounted
+            error_rel = abs(error_abs) / (abs(float(after["total"])) + abs(total_accounted) + 1e-18)
+            now = float(t + dt)
+            times.append(now)
+            qs.append(qn.copy())
+            vs.append(vn.copy())
+            energies.append(modal)
+            corrections.append(total_correction)
+            target_corrections.append(target_correction)
+            guard_corrections.append(guard_correction)
+            phase_errors.append(phase_error)
+            generated_phase_errors.append(generated_phase_error)
+            ledger.append({
+                "case": config.name,
+                "time": now,
+                "target_family": config.target_family,
+                "stabilizer_group": config.stabilizer_group,
+                "stabilizer_type": config.stabilizer_type,
+                "actuator_type": servo.actuator_type,
+                "correction_type": servo.correction_type,
+                "control_mode": servo.control_mode,
+                "phase_error_9": phase_error,
+                "phase_error_generated_2f": generated_phase_error,
+                "correction_value": total_correction,
+                "target_servo_correction": target_correction,
+                "predictive_guard_correction": guard_correction,
+                "receiver_tuning": float(effective.mode_freqs[2]),
+                "stage_B_tuning": float(effective.mode_freqs[1]),
+                "energy_at_source_mode": float(modal[0]),
+                "energy_at_generated_mode": float(modal[1]),
+                "energy_at_target_mode": float(modal[2]),
+                "total_stored_energy": float(after["total"]),
+                "drive_input_work": drive_work,
+                "positive_input_work": positive_input_work,
+                "damping_loss": damping_loss,
+                "spark_loss": spark_loss,
+                "stabilizer_work_signed": stabilizer_work_signed,
+                "stabilizer_work": stabilizer_work_abs,
+                "guard_work": guard_work_abs,
+                "artificial_envelope_work": artificial_envelope_work_abs,
+                "total_accounted_energy": total_accounted,
+                "energy_budget_error_abs": error_abs,
+                "energy_budget_error_rel": error_rel,
+            })
+
+    correction_arr = np.asarray(corrections)
+    target_arr = np.asarray(target_corrections)
+    guard_arr = np.asarray(guard_corrections)
+    sim: Dict[str, object] = {
+        "times": np.asarray(times),
+        "qs": np.asarray(qs),
+        "vs": np.asarray(vs),
+        "energy": np.asarray(energies),
+        "omega": omega,
+        "drive_until": drive_until,
+        "dt_sample": sample_dt,
+        "positive_input_work": positive_input_work,
+        "net_input_work": drive_work,
+        "damping_loss": damping_loss,
+        "spark_loss": spark_loss,
+        "servo_work_signed": stabilizer_work_signed,
+        "servo_work": stabilizer_work_abs,
+        "servo_energy_in": stabilizer_energy_in,
+        "servo_energy_out": stabilizer_energy_out,
+        "stabilizer_work_signed": stabilizer_work_signed,
+        "stabilizer_work": stabilizer_work_abs,
+        "guard_work": guard_work_abs,
+        "artificial_envelope_work": artificial_envelope_work_abs,
+        "correction_work_signed": stabilizer_work_signed,
+        "correction_work": stabilizer_work_abs,
+        "correction_rms": float(np.sqrt(np.mean(correction_arr ** 2))) if len(correction_arr) else 0.0,
+        "correction_peak": float(np.max(np.abs(correction_arr))) if len(correction_arr) else 0.0,
+        "correction_mean_abs": float(np.mean(np.abs(correction_arr))) if len(correction_arr) else 0.0,
+        "correction_final": float(correction_arr[-1]) if len(correction_arr) else 0.0,
+        "target_correction_rms": float(np.sqrt(np.mean(target_arr ** 2))) if len(target_arr) else 0.0,
+        "guard_correction_rms": float(np.sqrt(np.mean(guard_arr ** 2))) if len(guard_arr) else 0.0,
+        "energy_budget_error_rel": float(ledger[-1]["energy_budget_error_rel"]) if ledger else 1.0,
+        "max_energy_budget_error_rel": max((float(r["energy_budget_error_rel"]) for r in ledger), default=1.0),
+        "effective_config": effective,
+    }
+    return sim, ledger
+
+
+def bridge_generated_stage_series_metrics(timeseries_rows: List[Dict[str, float | str]]) -> Dict[str, float | str]:
+    rows = [r for r in timeseries_rows if str(r.get("diagnostic_type", "")) != "emergent_frequency_window"]
+    if not rows:
+        return {
+            "generated_envelope_cv": 0.0,
+            "generated_envelope_slope_rms": 0.0,
+            "generated_phase_error_rms": 0.0,
+            "generated_phase_slip_count": 0,
+            "slip_free_lock_duration": 0.0,
+        }
+    t = np.asarray([float(r.get("time_mid", 0.0)) for r in rows])
+    generated_amp = np.asarray([float(r.get("generated_2f_amplitude_envelope", 0.0)) for r in rows])
+    generated_phase = np.asarray([float(r.get("phase_error_generated_2f", 0.0)) for r in rows])
+    unwrapped_generated = np.unwrap(generated_phase)
+    if len(t) >= 2:
+        slope = np.gradient(generated_amp, t)
+        generated_phase_step = np.abs(np.diff(unwrapped_generated))
+    else:
+        slope = np.zeros_like(generated_amp)
+        generated_phase_step = np.asarray([])
+    median_step = float(np.median(generated_phase_step)) if len(generated_phase_step) else 0.0
+    slip_threshold = max(1.05, 3.0 * median_step + 0.05)
+    generated_slips = bridge_phase_slip_coalesced_indices(np.where(generated_phase_step > slip_threshold)[0] + 1)
+    target_slip_indices = [idx for idx, row in enumerate(rows) if str(row.get("phase_slip_event", "False")) == "True"]
+    if target_slip_indices and len(t):
+        slip_free = float(t[target_slip_indices[0]] - t[0])
+    elif len(t) >= 2:
+        slip_free = float(t[-1] - t[0])
+    else:
+        slip_free = 0.0
+    return {
+        "generated_envelope_cv": bridge_phase_slip_cv(generated_amp),
+        "generated_envelope_slope_rms": float(np.sqrt(np.mean(slope ** 2))) if len(slope) else 0.0,
+        "generated_phase_error_rms": float(np.sqrt(np.mean(generated_phase ** 2))) if len(generated_phase) else 0.0,
+        "generated_phase_slip_count": len(generated_slips),
+        "slip_free_lock_duration": slip_free,
+    }
+
+
+def bridge_generated_stage_stabilizer_measure(config: BridgeGeneratedStageStabilizerConfig,
+                                              seed: int,
+                                              quick: bool,
+                                              dt: float,
+                                              runtime: float,
+                                              sample_every: int,
+                                              direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                              ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]]]:
+    sim, ledger = simulate_bridge_generated_stage_stabilizer(config, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    target_key = f"{effective.mode_freqs[0]:g}:{effective.target_6:g}:{effective.target_9:g}"
+    cache_key = (target_key, dt, runtime)
+    if cache_key not in direct_cache:
+        direct_cfg = bridge_min_nudge_direct_reference(effective)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 12100, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 12100, "direct_reference", "direct_source_plus_generated", "reference", 0.35, 1.0)
+        direct_cache[cache_key] = (direct_sim, direct_row)
+    direct_sim, direct_row = direct_cache[cache_key]
+
+    nominal_row = bridge_metrics_window(effective, sim, seed, "generated_stage_stabilizer", config.stabilizer_group, config.stabilizer_type, 0.35, 1.0)
+    diagnostic_rows, emergent_summary = bridge_emergent_lock_diagnostics(effective, sim, direct_sim, 0.50, 1.0)
+    timeseries_rows, slip_summary = bridge_phase_slip_audit_timeseries(effective, sim, direct_sim, ledger, 0.50, 1.0)
+    series_metrics = bridge_generated_stage_series_metrics(timeseries_rows)
+    row = dict(nominal_row)
+    row.update(emergent_summary)
+    row.update(slip_summary)
+    row.update(series_metrics)
+    total_input_before = max(float(row.get("total_input_work", 0.0)), 1e-18)
+    total_input_with_stabilizer = total_input_before + float(sim["stabilizer_work"])
+    row["experiment"] = "bridge_generated_stage_stabilizer"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:{config.runtime_factor:g}x"
+    row["target_family"] = config.target_family
+    row["source_frequency"] = effective.mode_freqs[0]
+    row["generated_frequency"] = effective.target_6
+    row["nominal_target"] = effective.target_9
+    row["stabilizer_group"] = config.stabilizer_group
+    row["stabilizer_type"] = config.stabilizer_type
+    row["stabilizer_value"] = config.stabilizer_value
+    row["actuator_type"] = config.servo_config.actuator_type
+    row["correction_type"] = config.servo_config.correction_type
+    row["control_mode"] = config.servo_config.control_mode
+    row["Kp"] = config.servo_config.kp
+    row["Ki"] = config.servo_config.ki
+    row["correction_clamp"] = config.servo_config.correction_clamp
+    row["guard_gain"] = config.guard_gain
+    row["guard_amp_gain"] = config.guard_amp_gain
+    row["guard_clamp"] = config.guard_clamp
+    row["runtime_factor"] = config.runtime_factor
+    row["reference_role"] = config.reference_role
+    row["family"] = config.family
+    row["nominal_phase_lock_target"] = row.get("nominal_phase_lock_target", row.get("phase_lock_9", 0.0))
+    row["target_phase_lock"] = row.get("emergent_phase_lock_target", row.get("phase_lock_9", 0.0))
+    row["emergent_phase_lock"] = row.get("emergent_phase_lock_target", row.get("phase_lock_9", 0.0))
+    row["fitted_target_frequency"] = row.get("fitted_effective_target_frequency", effective.target_9)
+    row["spectral_purity_target"] = row.get("spectral_purity_target", row.get("spectral_purity_9", 0.0))
+    row["nominal_bridge_ratio"] = metric_ratio(float(row.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0)))
+    row["target_phase_slip_count"] = row.get("phase_slip_count", 0)
+    row["max_target_phase_jump"] = row.get("max_phase_jump", 0.0)
+    row["pre_slip_generated_instability"] = row.get("generated_2f_instability_before_slip", 0.0)
+    row["pre_slip_amplitude_drop"] = row.get("amplitude_drop_before_slip", 0.0)
+    row["stabilizer_work"] = float(sim["stabilizer_work"])
+    row["stabilizer_work_signed"] = float(sim["stabilizer_work_signed"])
+    row["guard_work"] = float(sim["guard_work"])
+    row["artificial_envelope_work"] = float(sim["artificial_envelope_work"])
+    row["stabilizer_work_fraction"] = metric_ratio(float(sim["stabilizer_work"]), total_input_with_stabilizer)
+    row["servo_work_fraction"] = row["stabilizer_work_fraction"]
+    row["correction_rms"] = float(sim["correction_rms"])
+    row["correction_peak"] = float(sim["correction_peak"])
+    row["energy_budget_error"] = float(row.get("energy_budget_error", sim.get("energy_budget_error_rel", 1.0)))
+    row["damping_loss"] = float(sim["damping_loss"])
+    row["spark_loss"] = float(sim["spark_loss"])
+    row["no_direct_2f_drive"] = str(not any(abs(freq - effective.target_6) < 1e-9 and mode == 1 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_direct_3f_drive"] = str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_target_frequency_injection"] = row["no_direct_3f_drive"]
+    row["half_dt_preserved"] = "False"
+    row["quarter_dt_preserved"] = "False"
+    row["non369_controls_do_not_beat"] = "False"
+    row["promotion_ready"] = "False"
+    row["passed"] = "False"
+    row["note"] = config.note
+    bridge_generated_stage_update_score(row)
+
+    for item in timeseries_rows + diagnostic_rows:
+        item["experiment"] = "bridge_generated_stage_stabilizer"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["target_family"] = config.target_family
+        item["stabilizer_group"] = config.stabilizer_group
+        item["stabilizer_type"] = config.stabilizer_type
+        item["runtime_factor"] = config.runtime_factor
+    for item in ledger:
+        item["experiment"] = "bridge_generated_stage_stabilizer"
+        item["candidate_id"] = row["candidate_id"]
+        item["runtime_factor"] = config.runtime_factor
+    return row, timeseries_rows + diagnostic_rows + ledger
+
+
+def bridge_generated_stage_core_pass(row: Dict[str, float | str],
+                                     require_validation: bool = False,
+                                     require_non369: bool = False) -> bool:
+    base = (
+        str(row.get("target_family")) == "369"
+        and str(row.get("reference_role")) == "discovery_candidate"
+        and float(row.get("runtime_factor", 1.0)) >= 4.0
+        and float(row.get("target_phase_lock", 0.0)) > 0.90
+        and float(row.get("target_phase_slip_count", 99.0)) <= 1.0
+        and float(row.get("max_target_phase_jump", 99.0)) < 1.0
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.25
+        and float(row.get("pre_slip_generated_instability", 99.0)) < 0.10
+        and float(row.get("spectral_purity_target", 0.0)) > 0.80
+        and float(row.get("bridge_ratio", 0.0)) > 2.0
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+        and float(row.get("stabilizer_work_fraction", 1.0)) < 0.002
+        and str(row.get("no_direct_2f_drive", "False")) == "True"
+        and str(row.get("no_direct_3f_drive", "False")) == "True"
+        and str(row.get("no_target_frequency_injection", "False")) == "True"
+    )
+    if require_validation:
+        base = base and str(row.get("half_dt_preserved", "False")) == "True" and str(row.get("quarter_dt_preserved", "False")) == "True"
+    if require_non369:
+        base = base and str(row.get("non369_controls_do_not_beat", "False")) == "True"
+    return base
+
+
+def bridge_generated_stage_update_score(row: Dict[str, float | str]) -> None:
+    lock = float(row.get("target_phase_lock", 0.0))
+    purity = float(row.get("spectral_purity_target", 0.0))
+    bridge_ratio = float(row.get("bridge_ratio", 0.0))
+    slips = float(row.get("target_phase_slip_count", 99.0))
+    jump = float(row.get("max_target_phase_jump", 99.0))
+    generated_cv = float(row.get("generated_envelope_cv", 99.0))
+    pre_slip = float(row.get("pre_slip_generated_instability", 99.0))
+    budget = float(row.get("energy_budget_error", 1.0))
+    work = float(row.get("stabilizer_work_fraction", 1.0))
+    normalized = (
+        lock
+        * purity
+        * min(4.0, bridge_ratio)
+        / (
+            1.0
+            + 2.5 * max(0.0, slips)
+            + 1.2 * max(0.0, jump)
+            + 7.0 * max(0.0, generated_cv)
+            + 10.0 * max(0.0, pre_slip)
+            + 700.0 * max(0.0, budget)
+            + 1400.0 * max(0.0, work)
+        )
+    )
+    core_no_validation = bridge_generated_stage_core_pass(row, require_validation=False, require_non369=False)
+    failures = []
+    if float(row.get("runtime_factor", 1.0)) < 4.0:
+        failures.append("not_4x_runtime")
+    if lock <= 0.90:
+        failures.append("target_phase_lock")
+    if slips > 1.0:
+        failures.append("target_phase_slip_count")
+    if jump >= 1.0:
+        failures.append("max_target_phase_jump")
+    if generated_cv >= 0.25:
+        failures.append("generated_envelope_cv")
+    if pre_slip >= 0.10:
+        failures.append("pre_slip_generated_instability")
+    if purity <= 0.80:
+        failures.append("spectral_purity_target")
+    if bridge_ratio <= 2.0:
+        failures.append("bridge_ratio")
+    if budget >= 0.005:
+        failures.append("energy_budget")
+    if work >= 0.002:
+        failures.append("stabilizer_work_fraction")
+    if str(row.get("no_direct_2f_drive", "False")) != "True" or str(row.get("no_direct_3f_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+    if str(row.get("reference_role")) != "discovery_candidate":
+        failures.append("reference_or_control")
+    if core_no_validation and str(row.get("half_dt_preserved", "False")) != "True":
+        failures.append("half_dt_validation")
+    if core_no_validation and str(row.get("quarter_dt_preserved", "False")) != "True":
+        failures.append("quarter_dt_validation")
+    if core_no_validation and str(row.get("non369_controls_do_not_beat", "False")) != "True":
+        failures.append("non369_control")
+    if "energy_budget" in failures:
+        failure_mode = "budget_artifact"
+    elif "generated_envelope_cv" in failures or "pre_slip_generated_instability" in failures:
+        failure_mode = "generated_stage_instability"
+    elif "target_phase_slip_count" in failures or "max_target_phase_jump" in failures:
+        failure_mode = "target_phase_slips"
+    elif "target_phase_lock" in failures:
+        failure_mode = "weak_target_lock"
+    elif "bridge_ratio" in failures:
+        failure_mode = "weak_bridge_ratio"
+    elif "non369_control" in failures:
+        failure_mode = "non369_control_stronger"
+    elif failures:
+        failure_mode = failures[0]
+    else:
+        failure_mode = "generated_stage_stabilized"
+    passed = bridge_generated_stage_core_pass(row, require_validation=True, require_non369=True)
+    budget_clean = budget < 0.005 and work < 0.002
+    row["budget_normalized_score"] = normalized
+    row["bridge_generated_stage_stabilizer_score"] = normalized if str(row.get("reference_role")) == "discovery_candidate" and budget_clean else 0.0
+    row["score"] = row["bridge_generated_stage_stabilizer_score"]
+    row["pre_validation_pass"] = str(core_no_validation)
+    row["passed"] = str(passed)
+    row["promotion_ready"] = str(passed)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+
+
+def bridge_generated_stage_apply_validation(candidate: Dict[str, float | str],
+                                             validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt"), {})
+
+    def preserved(row: Dict[str, float | str]) -> bool:
+        if not row:
+            return False
+        return (
+            float(row.get("target_phase_lock", 0.0)) > 0.90
+            and float(row.get("target_phase_slip_count", 99.0)) <= 1.0
+            and float(row.get("max_target_phase_jump", 99.0)) < 1.0
+            and float(row.get("generated_envelope_cv", 99.0)) < 0.25
+            and float(row.get("pre_slip_generated_instability", 99.0)) < 0.10
+            and float(row.get("energy_budget_error", 1.0)) < 0.005
+            and float(row.get("stabilizer_work_fraction", 1.0)) < 0.002
+        )
+
+    candidate["half_dt_preserved"] = str(preserved(half))
+    candidate["quarter_dt_preserved"] = str(preserved(quarter))
+    candidate["half_dt_target_phase_lock"] = float(half.get("target_phase_lock", 0.0))
+    candidate["quarter_dt_target_phase_lock"] = float(quarter.get("target_phase_lock", 0.0))
+    candidate["half_dt_target_phase_slip_count"] = float(half.get("target_phase_slip_count", 0.0))
+    candidate["quarter_dt_target_phase_slip_count"] = float(quarter.get("target_phase_slip_count", 0.0))
+    candidate["half_dt_generated_envelope_cv"] = float(half.get("generated_envelope_cv", 0.0))
+    candidate["quarter_dt_generated_envelope_cv"] = float(quarter.get("generated_envelope_cv", 0.0))
+    bridge_generated_stage_update_score(candidate)
+
+
+def bridge_generated_stage_annotate_non369(rows: List[Dict[str, float | str]]) -> None:
+    non369_best = max(
+        [
+            float(r.get("budget_normalized_score", 0.0))
+            for r in rows
+            if str(r.get("target_family")) != "369"
+            and float(r.get("energy_budget_error", 1.0)) < 0.005
+            and float(r.get("stabilizer_work_fraction", 1.0)) < 0.002
+        ],
+        default=0.0,
+    )
+    for row in rows:
+        row["best_budget_clean_non369_score"] = non369_best
+        if str(row.get("target_family")) == "369":
+            row["non369_controls_do_not_beat"] = str(float(row.get("budget_normalized_score", 0.0)) > non369_best * 1.02)
+        bridge_generated_stage_update_score(row)
+
+
+def bridge_generated_stage_validation(config: BridgeGeneratedStageStabilizerConfig,
+                                      seed: int,
+                                      quick: bool,
+                                      dt: float,
+                                      runtime: float,
+                                      sample_every: int
+                                      ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [("half_dt", dt * 0.5, seed + 401), ("quarter_dt", dt * 0.25, seed + 809)]
+    rows: List[Dict[str, float | str]] = []
+    series_rows: List[Dict[str, float | str]] = []
+    for name, test_dt, test_seed in tests:
+        direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+        row, series = bridge_generated_stage_stabilizer_measure(config, test_seed, quick, test_dt, runtime, sample_every, direct_cache)
+        row["validation_test"] = name
+        rows.append(row)
+        series_rows.extend(series)
+    return rows, series_rows
+
+
+def write_bridge_generated_stage_stabilizer_report(out_dir: Path,
+                                                   ranked: List[Dict[str, float | str]],
+                                                   validation_rows: List[Dict[str, float | str]]) -> None:
+    best_369 = max([r for r in ranked if str(r.get("target_family")) == "369"], key=lambda r: (float(r.get("bridge_generated_stage_stabilizer_score", 0.0)), float(r.get("budget_normalized_score", 0.0))), default={})
+    raw_best_369 = max([r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("reference_role")) == "discovery_candidate"], key=lambda r: (-(float(r.get("target_phase_slip_count", 99.0))), float(r.get("target_phase_lock", 0.0))), default={})
+    baseline_369 = next((r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("stabilizer_group")) == "no_stabilizer"), {})
+    non369_budget_best = max([float(r.get("budget_normalized_score", 0.0)) for r in ranked if str(r.get("target_family")) != "369" and float(r.get("energy_budget_error", 1.0)) < 0.005], default=0.0)
+    slip_reduction = float(baseline_369.get("target_phase_slip_count", 0.0)) - float(best_369.get("target_phase_slip_count", 0.0))
+    cv_reduction = float(baseline_369.get("generated_envelope_cv", 0.0)) - float(best_369.get("generated_envelope_cv", 0.0))
+    raw_slip_reduction = float(baseline_369.get("target_phase_slip_count", 0.0)) - float(raw_best_369.get("target_phase_slip_count", 0.0))
+    causal = cv_reduction > 0.05 and slip_reduction > 0.0
+    best_by_group: Dict[str, Dict[str, float | str]] = {}
+    for row in ranked:
+        group = str(row.get("stabilizer_group", ""))
+        if not group:
+            continue
+        if group not in best_by_group or float(row.get("budget_normalized_score", 0.0)) > float(best_by_group[group].get("budget_normalized_score", 0.0)):
+            best_by_group[group] = row
+    if str(best_369.get("passed")) == "True":
+        next_step = "geometry/evolve is justified as a follow-up, with non-369 controls retained"
+    elif str(best_369.get("stabilizer_group")) == "predictive_slip_guard" or float(best_369.get("correction_lag_before_slip", 0.0)) > 1.4:
+        next_step = "full predictive PLL"
+    else:
+        next_step = "continue generated-6 passive stabilization before geometry/evolve"
+    lines = [
+        "# Bridge Generated Stage Stabilizer Report",
+        "",
+        "This mode stabilizes the generated-2f stage first, then checks whether the 3f target lock becomes 4x-stable. It does not relax promotion gates.",
+        "",
+        "## Direct Answers",
+        f"1. Did generated-2f stabilization reduce phase slips? {'yes in raw rows, but not under strict budget' if raw_slip_reduction > 0 and slip_reduction <= 0 else ('yes' if slip_reduction > 0 else 'no')}; baseline_slips={float(baseline_369.get('target_phase_slip_count', 0.0)):.6g}, best_budget_clean_slips={float(best_369.get('target_phase_slip_count', 0.0)):.6g}, raw_best_slips={float(raw_best_369.get('target_phase_slip_count', 0.0)):.6g}.",
+        f"2. Is generated-envelope instability causal for target lock loss? {'likely in the raw intervention, not yet proven under strict budget' if raw_slip_reduction > 0 and not causal else ('likely' if causal else 'not proven')}; budget_clean_cv_reduction={cv_reduction:.6g}, budget_clean_slip_reduction={slip_reduction:.6g}.",
+        f"3. Best strict-budget stabilizer: {best_369.get('stabilizer_group', 'none')} / {best_369.get('stabilizer_type', '')}; lock={float(best_369.get('target_phase_lock', 0.0)):.6g}, slips={float(best_369.get('target_phase_slip_count', 0.0)):.6g}, cv={float(best_369.get('generated_envelope_cv', 0.0)):.6g}. Raw slip reducer: {raw_best_369.get('stabilizer_group', 'none')} / {raw_best_369.get('stabilizer_type', '')}, budget={float(raw_best_369.get('energy_budget_error', 0.0)):.6g}.",
+        f"4. Does 3 -> 6 -> 9 beat budget-normalized non-369 controls? {'yes' if str(best_369.get('non369_controls_do_not_beat')) == 'True' else 'no'}; score_369={float(best_369.get('budget_normalized_score', 0.0)):.6g}, best_clean_non369_score={non369_budget_best:.6g}.",
+        f"5. Geometry/evolve or predictive PLL? {next_step}.",
+        f"Promotion-ready rows: {sum(1 for r in ranked if str(r.get('promotion_ready')) == 'True')}.",
+        "",
+        "## Best By Stabilizer Group",
+    ]
+    for group, row in sorted(best_by_group.items()):
+        lines.append(
+            f"- {group}: family={row.get('target_family')}, type={row.get('stabilizer_type')}, lock={float(row.get('target_phase_lock', 0.0)):.6g}, "
+            f"slips={float(row.get('target_phase_slip_count', 0.0)):.6g}, max_jump={float(row.get('max_target_phase_jump', 0.0)):.6g}, "
+            f"gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, pre_slip={float(row.get('pre_slip_generated_instability', 0.0)):.6g}, "
+            f"bridge={float(row.get('bridge_ratio', 0.0)):.6g}, purity={float(row.get('spectral_purity_target', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, work={float(row.get('stabilizer_work_fraction', 0.0)):.6g}, pass={row.get('promotion_ready')}, failure={row.get('failure_mode')}"
+        )
+    lines.extend(["", "## Ranked Rows"])
+    for row in ranked[:28]:
+        lines.append(
+            f"- {row.get('candidate_id')}: family={row.get('target_family')}, group={row.get('stabilizer_group')}, type={row.get('stabilizer_type')}, "
+            f"lock={float(row.get('target_phase_lock', 0.0)):.6g}, slips={float(row.get('target_phase_slip_count', 0.0)):.6g}, "
+            f"jump={float(row.get('max_target_phase_jump', 0.0)):.6g}, gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, "
+            f"pre_slip={float(row.get('pre_slip_generated_instability', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+            f"work={float(row.get('stabilizer_work_fraction', 0.0)):.6g}, score={float(row.get('budget_normalized_score', 0.0)):.6g}, failure={row.get('failure_mode')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Dt Validation Rows"])
+        for row in validation_rows[:16]:
+            lines.append(
+                f"- {row.get('candidate_id')}: test={row.get('validation_test')}, lock={float(row.get('target_phase_lock', 0.0)):.6g}, "
+                f"slips={float(row.get('target_phase_slip_count', 0.0)):.6g}, gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, "
+                f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, work={float(row.get('stabilizer_work_fraction', 0.0)):.6g}"
+            )
+    (out_dir / "README_BRIDGE_GENERATED_STAGE_STABILIZER_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_generated_stage_stabilizer(out_dir: Path, seed: int, quick: bool = False,
+                                                 include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    specs = bridge_generated_stage_stabilizer_specs(include_sweeps)
+    runtime = base_tmax * 1.25 * 4.0
+    summary_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    config_by_case: Dict[str, BridgeGeneratedStageStabilizerConfig] = {}
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    for idx, (sweep, value, config) in enumerate(specs):
+        row, series = bridge_generated_stage_stabilizer_measure(config, seed + idx * 379, quick, dt, runtime, sample_every, direct_cache)
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        summary_rows.append(row)
+        timeseries_rows.extend(series)
+        config_by_case[str(row.get("case"))] = config
+
+    bridge_generated_stage_annotate_non369(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_generated_stage_stabilizer_score", 0.0)),
+            float(r.get("budget_normalized_score", 0.0)),
+            1.0 if str(r.get("target_family")) == "369" else 0.0,
+            -float(r.get("target_phase_slip_count", 99.0)),
+            float(r.get("target_phase_lock", 0.0)),
+        ),
+        reverse=True,
+    )
+
+    validation_rows: List[Dict[str, float | str]] = []
+    top_369 = [r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("reference_role")) == "discovery_candidate"][:3 if include_sweeps else 2]
+    for idx, candidate in enumerate(top_369):
+        config = config_by_case.get(str(candidate.get("case")))
+        if config is None:
+            continue
+        rows, series = bridge_generated_stage_validation(config, seed + 88000 + idx * 1000, quick, dt, runtime, sample_every)
+        validation_rows.extend(rows)
+        timeseries_rows.extend(series)
+        bridge_generated_stage_apply_validation(candidate, validation_rows)
+    bridge_generated_stage_annotate_non369(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_generated_stage_stabilizer_score", 0.0)),
+            float(r.get("budget_normalized_score", 0.0)),
+            1.0 if str(r.get("target_family")) == "369" else 0.0,
+            -float(r.get("target_phase_slip_count", 99.0)),
+            float(r.get("target_phase_lock", 0.0)),
+        ),
+        reverse=True,
+    )
+
+    write_csv(out_dir / "bridge_generated_stage_stabilizer_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "bridge_generated_stage_stabilizer_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_generated_stage_stabilizer_timeseries.csv", timeseries_rows)
+    write_bridge_generated_stage_stabilizer_report(out_dir, ranked, validation_rows)
+    return [
+        {
+            "experiment": "bridge_generated_stage_stabilizer",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_generated_stage_stabilizer_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "target_family": row.get("target_family", ""),
+            "stabilizer_group": row.get("stabilizer_group", ""),
+            "stabilizer_type": row.get("stabilizer_type", ""),
+            "target_phase_lock": row.get("target_phase_lock", 0.0),
+            "target_phase_slip_count": row.get("target_phase_slip_count", 0.0),
+            "generated_envelope_cv": row.get("generated_envelope_cv", 0.0),
+            "pre_slip_generated_instability": row.get("pre_slip_generated_instability", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "stabilizer_work_fraction": row.get("stabilizer_work_fraction", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -13569,8 +14534,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -13627,6 +14592,8 @@ def main() -> None:
         rows.extend(experiment_bridge_emergent_lock(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_phase_slip_audit",):
         rows.extend(experiment_bridge_phase_slip_audit(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_generated_stage_stabilizer",):
+        rows.extend(experiment_bridge_generated_stage_stabilizer(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

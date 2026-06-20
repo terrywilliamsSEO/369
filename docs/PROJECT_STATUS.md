@@ -25,6 +25,7 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - PI phase servo improves the 3 -> 6 -> 9 phase lock modestly, but non-369 controls still look stronger on phase lock.
 - Emergent-lock diagnostics find a small pulled local 3 -> 6 -> 9 target near 9.02, but not a stable >0.90 emergent phase lock.
 - Phase-slip audit points to discrete phase slips driven by generated-6 envelope instability, not a clean stable pulled-frequency lock.
+- Generated-stage stabilization confirms the lead: raw tuning can remove slips, but the current slip-free row breaks energy budget.
 
 ## Current Blocker
 
@@ -185,13 +186,39 @@ Quick smoke result from `runs/bridge_phase_slip_audit_quick_smoke`:
 - Servo correction lag was high in the top 369 row, about 2.36, but the root fix is generated-6 stabilization.
 - Non-369 controls reached high lock by violating budget: best 4 -> 8 -> 12 budget error was about 0.044 and 5 -> 10 -> 15 was about 0.20.
 
+## Latest Generated Stage Stabilizer Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode bridge_generated_stage_stabilizer
+python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick
+python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --sweeps
+```
+
+What it tests:
+
+- Generated-stage damping/Q, Stage A tuning around generated 2f, A->B/B->target coupling asymmetry, passive saturation, lossy/hysteretic magnetic damping, predictive slip guard, and a diagnostic artificial-envelope ceiling.
+- 3 -> 6 -> 9 discovery candidate plus 4 -> 8 -> 12 and 5 -> 10 -> 15 controls in every ranking.
+- Generated-envelope CV/slope, generated phase error/slips, target phase slips/jumps, pre-slip generated instability, correction lag, target lock, fitted target, bridge ratio, spectral purity, budget, and stabilizer work.
+- Half-dt and quarter-dt checks for top 369 rows before any promotion.
+
+Quick smoke result from `runs/bridge_generated_stage_stabilizer_quick_smoke`:
+
+- Best strict-budget 369 row: `generated_stage_damping / moderate_q_damping`.
+- Metrics: target phase lock 0.825, target slips 2, max target phase jump 2.84 rad, generated envelope CV 0.559, pre-slip generated instability 0.308, bridge ratio 3.166, spectral purity 0.952, budget error 0.000921, work fraction 0.000165.
+- Raw `stage_A_tuning / tune_plus_0p03` removed target slips, but failed budget with error 0.0127; it is evidence, not a promotable result.
+- The diagnostic artificial-envelope ceiling reduced generated CV to 0.134 and slips to 0, but it also broke budget/work and collapsed bridge ratio, so it remains a ceiling/control only.
+- No row passed promotion. Dt validation did not preserve a slip-free, budget-clean result.
+- Current read: generated-envelope instability is likely causal, but the budget-clean stabilizer is not strong enough yet.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Target generated-6 stabilization first: damp or tune the 2f stage so the generated envelope stops slipping before the 3f target.
+1. Continue budget-clean generated-6 stabilization first: tune damping/Q and Stage A detuning without exceeding the 0.005 budget gate.
 2. Then revisit servo timing, because current corrections arrive late relative to the slips.
 3. Treat non-369 controls as first-class competitors because they still beat 3 -> 6 -> 9 on raw phase lock, while failing budget.
 4. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

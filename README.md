@@ -29,11 +29,13 @@ What has not survived yet:
 - PI phase servo improves the 3 -> 6 -> 9 phase lock modestly, but still does not reach the 4x lock gate.
 - Emergent-lock diagnostics find a small pulled local target near 9.02 for the 3 -> 6 -> 9 bridge, but the fitted-frequency phase lock still stays below the 0.90 gate.
 - Phase-slip audit shows the 3 -> 6 -> 9 bridge loses 4x lock through discrete phase slips, with generated-6 envelope instability before target lock loss.
+- Generated-stage stabilization reduced slips only in a budget-breaking raw Stage A tuning row; the best budget-clean damping row improved lock/purity but did not remove slips.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
 - Stabilize generated 6 before trying geometry/evolve or a stronger target servo.
+- Focus on budget-clean generated-stage damping/tuning, because raw slip fixes can be artifacts if they break energy accounting.
 - 3 -> 6 -> 9 is not uniquely special yet; keep non-369 controls central before geometry/evolve.
 
 ## Repo Map
@@ -86,6 +88,8 @@ python tesla_369_lab.py --mode bridge_emergent_lock --quick
 python tesla_369_lab.py --mode bridge_emergent_lock --quick --sweeps
 python tesla_369_lab.py --mode bridge_phase_slip_audit --quick
 python tesla_369_lab.py --mode bridge_phase_slip_audit --quick --sweeps
+python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick
+python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick --sweeps
 ```
 
 Key bridge modes:
@@ -102,6 +106,7 @@ python tesla_369_lab.py --mode bridge_drift_feedforward --quick --sweeps
 python tesla_369_lab.py --mode bridge_phase_servo --quick --sweeps
 python tesla_369_lab.py --mode bridge_emergent_lock --quick --sweeps
 python tesla_369_lab.py --mode bridge_phase_slip_audit --quick --sweeps
+python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -177,3 +182,14 @@ Quick smoke result from `runs/bridge_phase_slip_audit_quick_smoke`:
 - The servo acted late in the best 369 row: correction lag before slip was about 2.36.
 - Non-369 controls reached high lock, but only with budget-breaking errors around 0.044 for 4->8->12 and 0.20 for 5->10->15.
 - Current recommendation: generated-6 stabilization is the next fix; do not move to geometry/evolve yet.
+
+## Latest Generated Stage Stabilizer Read
+
+Quick smoke result from `runs/bridge_generated_stage_stabilizer_quick_smoke`:
+
+- Best strict-budget 369 row was `generated_stage_damping` with moderate Q damping.
+- It reached target phase lock 0.825, bridge ratio 3.166, spectral purity 0.952, budget error 0.000921, and stabilizer work fraction 0.000165.
+- It did not pass: target slips stayed at 2, max target phase jump was 2.84 rad, generated envelope CV was 0.559, and pre-slip generated instability was 0.308.
+- Raw `stage_A_tuning +0.03` removed target slips, but failed budget with error 0.0127, so it is not promotable.
+- Non-369 controls again reached high raw lock but failed budget, leaving no budget-clean non-369 winner.
+- Current recommendation: continue budget-clean generated-6 passive stabilization; geometry/evolve and full predictive PLL are not justified yet.

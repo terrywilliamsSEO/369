@@ -184,3 +184,14 @@ Added a diagnostic-only phase-slip audit:
 - Quick smoke found the 369 bridge loses lock by discrete phase slips: best row had 4 slips, max phase jump about 3.11 radians, bridge ratio 3.226, purity 0.929, and budget error 0.00109.
 - Generated 6 destabilized before target lock loss, and the servo correction lagged the slip timing. Non-369 high-lock controls were budget-breaking.
 - Current next fix: generated-6 stabilization before geometry/evolve or stronger target servo.
+
+## Bridge Generated Stage Stabilizer
+
+Added a generated-2f-first stabilizer mode:
+
+- Starts from the best phase-slip audit seed: 3 -> 6 -> 9, `feedforward_best_magnetic_bias`, `stage_B_detuning_servo`, pulled target near 9.0226.
+- Tests generated-stage damping/Q, Stage A tuning around 2f, A->B/B->target coupling asymmetry, passive saturable limiting, lossy/hysteretic magnetic damping, predictive slip guard, and an artificial-envelope ceiling reference.
+- Keeps direct 2f/3f drive and target-frequency injection out of discovery rows, includes 4 -> 8 -> 12 and 5 -> 10 -> 15 controls in every ranking, and counts stabilizer work explicitly.
+- Quick smoke did not promote. The best strict-budget row was generated-stage damping: target lock 0.825, slips 2, generated-envelope CV 0.559, bridge ratio 3.166, purity 0.952, budget error 0.000921.
+- Raw Stage A tuning eliminated target slips, but failed the energy budget with error 0.0127, so it is only evidence that generated-stage control is causal.
+- Current next fix: keep searching budget-clean generated-stage damping/tuning before moving to geometry/evolve or full predictive PLL.

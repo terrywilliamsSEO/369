@@ -128,6 +128,12 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Tracks sliding-window generated-2f phase error, target-3f phase error, unwrapped target phase, instantaneous drift, fitted target, amplitude envelopes, bridge ratio, spectral purity, correction lag, damping loss, spark loss, and energy-budget error.
    - Detects phase-slip events and classifies failure as smooth drift, discrete slips, amplitude-phase coupling, generated-stage instability, servo lag, budget artifact, or bridge collapse.
 
+23. **Bridge generated-stage stabilizer**
+   - Stabilizes the generated-2f stage first, then checks whether the 3f target lock becomes 4x-stable.
+   - Tests generated-stage damping/Q, Stage A tuning, A->B/B->target coupling asymmetry, passive saturation, lossy/hysteretic magnetic damping, predictive slip guard, and a diagnostic artificial-envelope ceiling.
+   - Keeps direct 2f/3f drive and target-frequency injection out of discovery rows, includes non-369 controls in every ranking, and counts active stabilizer work.
+   - Promotes only if 369 passes strict phase-slip, generated-envelope, bridge-ratio, purity, budget/work, half-dt/quarter-dt, and non-369 comparison gates.
+
 ## Install
 
 ```bash
@@ -218,6 +224,10 @@ python tesla_369_lab.py --mode bridge_phase_slip_audit
 python tesla_369_lab.py --mode bridge_phase_slip_audit --quick
 python tesla_369_lab.py --mode bridge_phase_slip_audit --sweeps
 python tesla_369_lab.py --mode bridge_phase_slip_audit --quick --sweeps
+python tesla_369_lab.py --mode bridge_generated_stage_stabilizer
+python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick
+python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --sweeps
+python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -313,6 +323,9 @@ bridge_emergent_lock_timeseries.csv
 bridge_phase_slip_audit_summary.csv
 bridge_phase_slip_audit_ranked.csv
 bridge_phase_slip_audit_timeseries.csv
+bridge_generated_stage_stabilizer_summary.csv
+bridge_generated_stage_stabilizer_ranked.csv
+bridge_generated_stage_stabilizer_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -340,6 +353,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In bridge lock threshold mode, what is the minimum explicitly accounted correction needed for 4x lock, if any?
 - In bridge emergent lock mode, is nominal 4x phase failure actually a stable pulled-frequency lock, and does 3->6->9 still beat non-369 controls after normalization?
 - In bridge phase-slip audit mode, does target lock fail by smooth drift, discrete slips, generated-6 instability, servo lag, amplitude breathing, or budget artifacts?
+- In bridge generated-stage stabilizer mode, can budget-clean generated-2f stabilization remove target phase slips and preserve 4x lock?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results
