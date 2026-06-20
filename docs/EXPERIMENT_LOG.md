@@ -150,3 +150,14 @@ Added a fixed-ramp feedforward test:
 - Includes linear, piecewise-linear, S-curve, hold-after-capture, and two-stage ramps plus wrong-sign, random, overcorrected, and non-369 controls.
 - Quick smoke did not promote: best row was `magnetic_bias_ramp` with phase_lock_9 0.780, feedforward work fraction 0.0000083, and only about 0.14% drift reduction.
 - A non-369 control reached phase_lock_9 0.996 under the same feedforward rules, so fixed feedforward does not currently support promotion.
+
+## Bridge Phase Servo
+
+Added a PI phase-servo test:
+
+- Uses proportional plus small integral feedback: `correction = -Kp * phase_error_9 - Ki * integral_phase_error_9`.
+- Moves only receiver tuning, Stage B detuning, or magnetic bias; no direct 6/9 drive and no injected 9-frequency reference.
+- Compares 3 -> 6 -> 9 against 4 -> 8 -> 12 and 5 -> 10 -> 15 under the same servo rules.
+- Includes no-servo, wrong-sign, and random-servo controls plus half/quarter-dt validation for top rows.
+- Quick smoke did not promote: best 3 -> 6 -> 9 row used `receiver_tuning_servo`, reached phase_lock_target 0.808, and used servo work fraction 0.000492.
+- Non-369 controls reached phase_lock_target 0.994-0.996 but failed energy-budget gates, so no family passed the full 4x promotion gate.

@@ -110,6 +110,12 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Tests linear, piecewise-linear, slow S-curve, hold-after-capture, and two-stage ramps with wrong-sign, random, overcorrected, and non-369 controls.
    - Reports feedforward work fraction, ramp size/smoothness, before/after drift, generated-frequency pull, lock duration, and dt preservation.
 
+20. **Bridge phase servo**
+   - Tests proportional plus small integral feedback through physical tuning/bias actuators only.
+   - Uses receiver tuning, Stage B detuning, and magnetic bias servos; no direct 6/9 drive and no injected 9-frequency reference.
+   - Compares 3->6->9 against 4->8->12 and 5->10->15, plus no-servo, wrong-sign, and random-servo controls.
+   - Reports target-family phase lock, target spectral purity, servo work, correction RMS/peak, phase drift, lock duration, and half/quarter-dt preservation.
+
 ## Install
 
 ```bash
@@ -188,6 +194,10 @@ python tesla_369_lab.py --mode bridge_drift_feedforward
 python tesla_369_lab.py --mode bridge_drift_feedforward --quick
 python tesla_369_lab.py --mode bridge_drift_feedforward --sweeps
 python tesla_369_lab.py --mode bridge_drift_feedforward --quick --sweeps
+python tesla_369_lab.py --mode bridge_phase_servo
+python tesla_369_lab.py --mode bridge_phase_servo --quick
+python tesla_369_lab.py --mode bridge_phase_servo --sweeps
+python tesla_369_lab.py --mode bridge_phase_servo --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -273,6 +283,10 @@ bridge_drift_feedforward_summary.csv
 bridge_drift_feedforward_ranked.csv
 bridge_drift_feedforward_sweeps.csv
 bridge_drift_feedforward_timeseries.csv
+bridge_phase_servo_summary.csv
+bridge_phase_servo_ranked.csv
+bridge_phase_servo_sweeps.csv
+bridge_phase_servo_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv

@@ -26,12 +26,13 @@ What has not survived yet:
 - The long-runtime failure remains phase drift, sometimes with energy-budget growth.
 - Open-loop control-authority tests now measure whether allowed real-world actuators can pull that drift without direct 6/9 drive or target-frequency injection.
 - Precomputed drift feedforward ramps stayed energetically tiny but did not hold 4x lock in quick smoke.
+- PI phase servo improves the 3 -> 6 -> 9 phase lock modestly, but still does not reach the 4x lock gate.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Use `bridge_drift_feedforward --sweeps` only to confirm the fixed-ramp result across timing/ramp-size variants.
-- The stronger next path is proportional control; move to a real PLL if fixed feedforward remains phase-limited.
+- Use `bridge_phase_servo --sweeps` only to confirm whether stronger/tighter PI variants can close the gap.
+- 3 -> 6 -> 9 is not uniquely special yet; keep non-369 controls central before geometry/evolve.
 
 ## Repo Map
 
@@ -77,6 +78,8 @@ python tesla_369_lab.py --mode bridge_control_authority --quick
 python tesla_369_lab.py --mode bridge_control_authority --quick --sweeps
 python tesla_369_lab.py --mode bridge_drift_feedforward --quick
 python tesla_369_lab.py --mode bridge_drift_feedforward --quick --sweeps
+python tesla_369_lab.py --mode bridge_phase_servo --quick
+python tesla_369_lab.py --mode bridge_phase_servo --quick --sweeps
 ```
 
 Key bridge modes:
@@ -90,6 +93,7 @@ python tesla_369_lab.py --mode bridge_min_nudge --quick --sweeps
 python tesla_369_lab.py --mode bridge_lock_threshold --quick --sweeps
 python tesla_369_lab.py --mode bridge_control_authority --quick --sweeps
 python tesla_369_lab.py --mode bridge_drift_feedforward --quick --sweeps
+python tesla_369_lab.py --mode bridge_phase_servo --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -131,3 +135,14 @@ Quick smoke result:
 - No discovery row passed the 4x phase-lock gate.
 - A non-369 control reached phase lock 0.996 under the same feedforward rules, so the 3 -> 6 -> 9 bridge is not promoted.
 - Current recommendation: stronger proportional control next; move to PLL if fixed feedforward remains phase-limited.
+
+## Latest Phase Servo Read
+
+Quick smoke result:
+
+- Best 3 -> 6 -> 9 row used `receiver_tuning_servo` with Kp 0.003 and Ki 0.000045.
+- It reached phase lock 0.808, bridge ratio 2.722, spectral purity 0.773, and budget error 0.00404.
+- Servo work was small, about 0.000492 of total input work, with correction peak about 0.0090.
+- No discovery row passed the 4x phase-lock gate.
+- Non-369 controls reached phase lock 0.994-0.996, but failed full promotion by energy budget.
+- Current recommendation: do not move to geometry/evolve yet; 3 -> 6 -> 9 is not uniquely special under these servo rules.

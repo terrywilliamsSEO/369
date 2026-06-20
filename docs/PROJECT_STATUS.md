@@ -22,6 +22,7 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Open-loop magnetic autolock sweeps and hybrid tuning improve 1x capture in quick sweeps.
 - Open-loop control-authority tests now quantify whether receiver tuning, magnetic bias, or Stage B detuning can pull 4x phase drift under clean accounting.
 - Precomputed drift feedforward ramps do not currently hold 4x phase lock, even with tiny counted work.
+- PI phase servo improves the 3 -> 6 -> 9 phase lock modestly, but non-369 controls still look stronger on phase lock.
 
 ## Current Blocker
 
@@ -103,13 +104,39 @@ Quick smoke result from `runs/bridge_drift_feedforward_quick_smoke`:
 - No discovery row passed the 4x phase-lock gate.
 - A non-369 control reached phase_lock_9 0.996 under the same feedforward rules.
 
+## Latest Phase Servo Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode bridge_phase_servo
+python tesla_369_lab.py --mode bridge_phase_servo --quick
+python tesla_369_lab.py --mode bridge_phase_servo --sweeps
+```
+
+What it tests:
+
+- Proportional plus small integral feedback using only receiver tuning, Stage B detuning, and magnetic bias servos.
+- No direct 6 drive, no direct 9 drive, and no injected 9-frequency reference.
+- 3 -> 6 -> 9, 4 -> 8 -> 12, and 5 -> 10 -> 15 under the same servo rules.
+- No-servo, wrong-sign, and random-servo controls.
+- Half-dt and quarter-dt validation for top rows.
+
+Quick smoke result from `runs/bridge_phase_servo_quick_smoke`:
+
+- Best 3 -> 6 -> 9 row: `receiver_tuning_servo`, Kp 0.003, Ki 0.000045.
+- Metrics: phase_lock_target 0.808, bridge ratio 2.722, spectral purity 0.773, budget error 0.00404, servo work fraction 0.000492.
+- The servo improved phase lock by about 0.031 over the 369 no-servo baseline, but still missed the 0.90 gate.
+- No discovery row passed the 4x gate.
+- Non-369 controls reached phase_lock_target 0.994-0.996, but failed full promotion by energy-budget error.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run `bridge_drift_feedforward --sweeps` only if we need a broader fixed-ramp confirmation across timing, ramp size, and runtime.
-2. Move to stronger proportional control using the measured actuator gains.
-3. Move to active self-lock / PLL and explicitly account for active work if proportional control still cannot hold 4x.
-4. Add a geometry mode only after a 4x-stable seed exists.
+1. Run `bridge_phase_servo --sweeps` only if we need a broader PI-control confirmation across gain, clamp, smoothing, tuning, and runtime.
+2. Treat non-369 controls as first-class competitors because they beat 3 -> 6 -> 9 on phase lock in quick servo smoke.
+3. Move to a full PLL only if the goal is active stabilization rather than proving 3 -> 6 -> 9 uniqueness.
+4. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

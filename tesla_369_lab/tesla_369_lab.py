@@ -11278,6 +11278,923 @@ def experiment_bridge_drift_feedforward(out_dir: Path, seed: int, quick: bool = 
 
 
 # ----------------------------
+# Experiment 20: bridge phase servo
+# ----------------------------
+
+@dataclass
+class BridgePhaseServoConfig:
+    name: str
+    actuator_type: str
+    correction_type: str
+    base_config: BridgeMinNudgeConfig
+    kp: float
+    ki: float
+    correction_clamp: float
+    smoothing: float
+    update_interval: float
+    runtime_factor: float = 4.0
+    integral_clamp: float = 18.0
+    control_mode: str = "normal"
+    seed_family: str = "base"
+    target_family: str = "369"
+    reference_role: str = "discovery_candidate"
+    family: str = "369"
+    note: str = ""
+
+
+BRIDGE_PHASE_SERVO_ACTUATORS = {
+    "receiver_tuning_servo": "receiver_tuning_nudge",
+    "stage_B_detuning_servo": "stage_B_detuning_nudge",
+    "magnetic_bias_servo": "magnetic_bias_nudge",
+}
+
+
+def bridge_phase_servo_template(seed_family: str,
+                                receiver_tuning: float = 8.90,
+                                phase_bias: float = 30.0,
+                                stage_b_strength: float = 0.84,
+                                stage_b_detuning: float = 0.0,
+                                target_family: str = "369",
+                                reference_role: str = "discovery_candidate",
+                                family: str = "369") -> BridgeMinNudgeConfig:
+    return bridge_control_authority_template(
+        "receiver_tuning_nudge",
+        seed_family,
+        receiver_tuning=receiver_tuning,
+        phase_bias=phase_bias,
+        stage_b_strength=stage_b_strength,
+        stage_b_detuning=stage_b_detuning,
+        reference_role=reference_role,
+        family=family,
+    )
+
+
+def bridge_phase_servo_non369_template(source: float, target: float) -> BridgeMinNudgeConfig:
+    magnetic = bridge_min_nudge_non369_seed(source, target)
+    bridge = replace(
+        magnetic.bridge,
+        stage_b_phase_bias_deg=30.0,
+        stage_b_nonlinear_strength=0.84,
+        note="non-369 bridge phase servo comparison",
+    )
+    magnetic = replace(magnetic, bridge=bridge, reference_role="control", family="non369")
+    return BridgeMinNudgeConfig(
+        name=f"phase_servo_non369_template_{safe_token(source)}_{safe_token(target)}",
+        correction_type="receiver_tuning_nudge",
+        magnetic_config=magnetic,
+        kp=0.0,
+        correction_clamp=0.0,
+        update_interval=1.0,
+        smoothing=1.0,
+        magnetic_bias_strength=2.0,
+        control_mode="no_nudge",
+        reference_role="control",
+        family="non369",
+        note=f"non-369 {source:g} -> {source * 2:g} -> {target:g} phase servo control",
+    )
+
+
+def bridge_phase_servo_seed_templates(quick: bool, include_sweeps: bool) -> List[Tuple[str, str, str, BridgeMinNudgeConfig]]:
+    seeds = [
+        ("369", "receiver_best_4x_raw", "369", bridge_phase_servo_template("receiver_best_4x_raw", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("369", "stageB_best_budget_clean", "369", bridge_phase_servo_template("stageB_best_budget_clean", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("369", "autolock_seed_s0p9", "369", bridge_phase_servo_template("autolock_seed_s0p9", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.90)),
+        ("369", "magnetic_stageB0p84_lead", "369", bridge_phase_servo_template("magnetic_stageB0p84_lead", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("369", "feedforward_best_magnetic_bias", "369", bridge_phase_servo_template("feedforward_best_magnetic_bias", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+    ]
+    if include_sweeps:
+        receiver_values = [8.86, 8.90, 8.93] if quick else [8.86, 8.875, 8.90, 8.915, 8.93]
+        phase_values = [15.0, 25.0, 35.0] if quick else [15.0, 20.0, 25.0, 30.0, 35.0]
+        strength_values = [0.80, 0.84, 0.94] if quick else [0.80, 0.84, 0.88, 0.90, 0.94]
+        for receiver in receiver_values:
+            seeds.append(("369", f"sweep_receiver_{safe_token(receiver)}", "369", bridge_phase_servo_template(f"sweep_receiver_{safe_token(receiver)}", receiver_tuning=receiver, phase_bias=30.0, stage_b_strength=0.84)))
+        for phase in phase_values:
+            seeds.append(("369", f"sweep_phase_{safe_token(phase)}", "369", bridge_phase_servo_template(f"sweep_phase_{safe_token(phase)}", receiver_tuning=8.90, phase_bias=phase, stage_b_strength=0.84)))
+        for strength in strength_values:
+            seeds.append(("369", f"sweep_stageB_{safe_token(strength)}", "369", bridge_phase_servo_template(f"sweep_stageB_{safe_token(strength)}", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=strength)))
+    seeds.append(("4812", "non369_4_8_12", "non369", bridge_phase_servo_non369_template(4.0, 12.0)))
+    seeds.append(("51015", "non369_5_10_15", "non369", bridge_phase_servo_non369_template(5.0, 15.0)))
+    return seeds
+
+
+def bridge_phase_servo_make_config(target_family: str,
+                                   seed_family: str,
+                                   base_config: BridgeMinNudgeConfig,
+                                   actuator_type: str,
+                                   kp: float,
+                                   ki: float,
+                                   correction_clamp: float,
+                                   smoothing: float,
+                                   update_interval: float,
+                                   runtime_factor: float = 4.0,
+                                   control_mode: str = "normal",
+                                   reference_role: str = "discovery_candidate",
+                                   family: str = "369",
+                                   suffix: str = "") -> BridgePhaseServoConfig:
+    correction_type = BRIDGE_PHASE_SERVO_ACTUATORS[actuator_type]
+    role_token = control_mode if control_mode != "normal" else "pi"
+    name = (
+        f"phase_servo_{target_family}_{seed_family}_{actuator_type}_{role_token}"
+        f"_kp{safe_token(kp)}_ki{safe_token(ki)}_c{safe_token(correction_clamp)}"
+        f"_sm{safe_token(smoothing)}_u{safe_token(update_interval)}_r{safe_token(runtime_factor)}x"
+    )
+    if suffix:
+        name = f"{name}_{suffix}"
+    servo_base = replace(
+        base_config,
+        correction_type=correction_type,
+        reference_role=reference_role,
+        family=family,
+        control_mode="no_nudge",
+        correction_clamp=0.0,
+    )
+    return BridgePhaseServoConfig(
+        name=name,
+        actuator_type=actuator_type,
+        correction_type=correction_type,
+        base_config=servo_base,
+        kp=kp,
+        ki=ki,
+        correction_clamp=correction_clamp,
+        smoothing=smoothing,
+        update_interval=update_interval,
+        runtime_factor=runtime_factor,
+        control_mode=control_mode,
+        seed_family=seed_family,
+        target_family=target_family,
+        reference_role=reference_role,
+        family=family,
+        note="PI phase servo using physical tuning/bias actuator only; no target-frequency injection",
+    )
+
+
+def bridge_phase_servo_next_correction(config: BridgePhaseServoConfig,
+                                       rng: np.random.Generator,
+                                       phase_error: float,
+                                       integral_phase_error: float,
+                                       current: float) -> float:
+    if config.control_mode == "no_servo":
+        desired = 0.0
+    elif config.control_mode == "wrong_sign":
+        desired = config.kp * phase_error + config.ki * integral_phase_error
+    elif config.control_mode == "random":
+        desired = float(rng.uniform(-config.correction_clamp, config.correction_clamp))
+    else:
+        desired = -config.kp * phase_error - config.ki * integral_phase_error
+    desired = float(np.clip(desired, -config.correction_clamp, config.correction_clamp))
+    return float(np.clip(current + config.smoothing * (desired - current), -config.correction_clamp, config.correction_clamp))
+
+
+def simulate_bridge_phase_servo(config: BridgePhaseServoConfig, seed: int, quick: bool,
+                                dt: float | None = None, t_max: float | None = None,
+                                base_hz: float = 0.045, sample_every: int | None = None
+                                ) -> Tuple[Dict[str, object], List[Dict[str, float | str]]]:
+    rng = np.random.default_rng(seed)
+    default_dt, default_tmax, default_sample = bridge_amp_timebase(quick)
+    dt = default_dt if dt is None else dt
+    t_max = default_tmax if t_max is None else t_max
+    sample_every = default_sample if sample_every is None else sample_every
+    drive_until = 0.74 * t_max
+
+    correction = 0.0
+    phase_error = 0.0
+    integral_phase_error = 0.0
+    effective = bridge_min_nudge_effective_bridge(config.base_config, correction)
+    omega = 2.0 * np.pi * base_hz * np.asarray(effective.mode_freqs, dtype=float)
+    zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+    y = np.zeros(6)
+    y[:3] = 1e-4 * rng.normal(size=3)
+    y[3:] = 1e-4 * rng.normal(size=3)
+    initial_total = float(bridge_amp_potentials(y[:3], y[3:], omega, effective)["total"])
+    drive_work = 0.0
+    positive_input_work = 0.0
+    damping_loss = 0.0
+    spark_loss = 0.0
+    servo_work_signed = 0.0
+    servo_work_abs = 0.0
+    servo_energy_in = 0.0
+    servo_energy_out = 0.0
+
+    update_steps = max(1, int(config.update_interval / max(dt, 1e-12)))
+    sample_dt = dt * sample_every
+    times: List[float] = []
+    qs: List[np.ndarray] = []
+    vs: List[np.ndarray] = []
+    energies: List[np.ndarray] = []
+    corrections: List[float] = []
+    phase_errors: List[float] = []
+    integral_errors: List[float] = []
+    receiver_trace: List[float] = []
+    stage_b_trace: List[float] = []
+    magnetic_bias_trace: List[float] = []
+    ledger: List[Dict[str, float | str]] = []
+
+    n_steps = int(t_max / dt)
+    for step in range(n_steps):
+        t = step * dt
+        q = y[:3]
+        v = y[3:]
+
+        if step > 0 and step % update_steps == 0:
+            phase_error = bridge_min_nudge_phase_error(effective, times, qs, sample_dt)
+            if config.control_mode == "no_servo":
+                integral_phase_error = 0.0
+            else:
+                integral_phase_error = float(np.clip(
+                    integral_phase_error + phase_error * config.update_interval,
+                    -config.integral_clamp,
+                    config.integral_clamp,
+                ))
+            next_correction = bridge_phase_servo_next_correction(config, rng, phase_error, integral_phase_error, correction)
+            if abs(next_correction - correction) > 1e-15:
+                before = bridge_amp_potentials(q, v, omega, effective)
+                next_effective = bridge_min_nudge_effective_bridge(config.base_config, next_correction)
+                next_omega = 2.0 * np.pi * base_hz * np.asarray(next_effective.mode_freqs, dtype=float)
+                after_param = bridge_amp_potentials(q, v, next_omega, next_effective)
+                delta_work = float(after_param["total"] - before["total"])
+                servo_work_signed += delta_work
+                servo_work_abs += abs(delta_work)
+                servo_energy_in += max(0.0, delta_work)
+                servo_energy_out += max(0.0, -delta_work)
+                correction = next_correction
+                effective = next_effective
+                omega = next_omega
+                zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+        drive_forces = bridge_amp_drive_forces(effective, t, base_hz, drive_until, 3)
+        drive_power = float(np.dot(drive_forces, v))
+        drive_work += drive_power * dt
+        positive_input_work += max(0.0, drive_power) * dt
+        damping_loss += float(np.sum(2.0 * zeta * omega * (v ** 2))) * dt
+        if effective.spark_strength:
+            for i, j in ((0, 1), (1, 2)):
+                gate = float(spark_gate(q[i] - q[j], threshold=effective.spark_threshold))
+                c = 0.030 * effective.spark_strength * gate
+                spark_loss += float(c * ((v[i] - v[j]) ** 2)) * dt
+
+        y_next = rk4_step(y, t, dt, bridge_amp_derivative, omega, effective, base_hz, drive_until, zeta)
+        qn = y_next[:3]
+        vn = y_next[3:]
+        after = bridge_amp_potentials(qn, vn, omega, effective)
+        y = y_next
+        if not np.all(np.isfinite(y)) or np.max(np.abs(y)) > 1e6:
+            break
+
+        if step % sample_every == 0:
+            modal = clean_modal_energy(qn, vn, omega)
+            total_accounted = initial_total + drive_work + servo_work_signed - damping_loss - spark_loss
+            error_abs = float(after["total"]) - total_accounted
+            error_rel = abs(error_abs) / (abs(float(after["total"])) + abs(total_accounted) + 1e-18)
+            now = float(t + dt)
+            times.append(now)
+            qs.append(qn.copy())
+            vs.append(vn.copy())
+            energies.append(modal)
+            corrections.append(correction)
+            phase_errors.append(phase_error)
+            integral_errors.append(integral_phase_error)
+            receiver_trace.append(float(effective.mode_freqs[2]))
+            stage_b_trace.append(float(effective.mode_freqs[1]))
+            magnetic_bias_trace.append(float(config.base_config.magnetic_config.magnetic_bias_field + (config.base_config.magnetic_bias_strength * correction if config.correction_type == "magnetic_bias_nudge" else 0.0)))
+            ledger.append({
+                "case": config.name,
+                "time": now,
+                "target_family": config.target_family,
+                "actuator_type": config.actuator_type,
+                "correction_type": config.correction_type,
+                "control_mode": config.control_mode,
+                "Kp": config.kp,
+                "Ki": config.ki,
+                "phase_error_9": phase_error,
+                "integral_phase_error_9": integral_phase_error,
+                "correction_value": correction,
+                "receiver_tuning": float(effective.mode_freqs[2]),
+                "stage_B_tuning": float(effective.mode_freqs[1]),
+                "magnetic_bias_field": magnetic_bias_trace[-1],
+                "energy_at_source_mode": float(modal[0]),
+                "energy_at_generated_mode": float(modal[1]),
+                "energy_at_target_mode": float(modal[2]),
+                "total_stored_energy": float(after["total"]),
+                "drive_input_work": drive_work,
+                "positive_input_work": positive_input_work,
+                "damping_loss": damping_loss,
+                "spark_loss": spark_loss,
+                "servo_work_signed": servo_work_signed,
+                "servo_work": servo_work_abs,
+                "servo_energy_in": servo_energy_in,
+                "servo_energy_out": servo_energy_out,
+                "total_accounted_energy": total_accounted,
+                "energy_budget_error_abs": error_abs,
+                "energy_budget_error_rel": error_rel,
+            })
+
+    correction_arr = np.asarray(corrections)
+    phase_error_arr = np.asarray(phase_errors)
+    integral_arr = np.asarray(integral_errors)
+    sim: Dict[str, object] = {
+        "times": np.asarray(times),
+        "qs": np.asarray(qs),
+        "vs": np.asarray(vs),
+        "energy": np.asarray(energies),
+        "omega": omega,
+        "drive_until": drive_until,
+        "dt_sample": sample_dt,
+        "positive_input_work": positive_input_work,
+        "net_input_work": drive_work,
+        "damping_loss": damping_loss,
+        "spark_loss": spark_loss,
+        "servo_work_signed": servo_work_signed,
+        "servo_work": servo_work_abs,
+        "servo_energy_in": servo_energy_in,
+        "servo_energy_out": servo_energy_out,
+        "correction_work_signed": servo_work_signed,
+        "correction_work": servo_work_abs,
+        "correction_energy_in": servo_energy_in,
+        "correction_energy_out": servo_energy_out,
+        "correction_rms": float(np.sqrt(np.mean(correction_arr ** 2))) if len(correction_arr) else 0.0,
+        "correction_peak": float(np.max(np.abs(correction_arr))) if len(correction_arr) else 0.0,
+        "correction_mean_abs": float(np.mean(np.abs(correction_arr))) if len(correction_arr) else 0.0,
+        "correction_final": float(correction_arr[-1]) if len(correction_arr) else 0.0,
+        "phase_error_rms": float(np.sqrt(np.mean(phase_error_arr ** 2))) if len(phase_error_arr) else 0.0,
+        "integral_phase_error_rms": float(np.sqrt(np.mean(integral_arr ** 2))) if len(integral_arr) else 0.0,
+        "energy_budget_error_rel": float(ledger[-1]["energy_budget_error_rel"]) if ledger else 1.0,
+        "max_energy_budget_error_rel": max((float(r["energy_budget_error_rel"]) for r in ledger), default=1.0),
+        "effective_config": effective,
+        "receiver_tuning_trace": np.asarray(receiver_trace),
+        "stage_b_tuning_trace": np.asarray(stage_b_trace),
+        "magnetic_bias_trace": np.asarray(magnetic_bias_trace),
+    }
+    return sim, ledger
+
+
+def bridge_phase_servo_measure(config: BridgePhaseServoConfig, seed: int, quick: bool,
+                               dt: float, runtime: float, sample_every: int,
+                               direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]],
+                               baseline_row: Dict[str, float | str] | None = None
+                               ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    sim, ledger = simulate_bridge_phase_servo(config, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    target_key = f"{effective.mode_freqs[0]:g}:{effective.target_6:g}:{effective.target_9:g}"
+    cache_key = (target_key, dt, runtime)
+    if cache_key not in direct_cache:
+        direct_cfg = bridge_min_nudge_direct_reference(effective)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 9700, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 9700, "direct_reference", "direct_source_plus_generated", "reference", 0.35, 1.0)
+        direct_cache[cache_key] = (direct_sim, direct_row)
+    direct_sim, direct_row = direct_cache[cache_key]
+
+    row = bridge_metrics_window(effective, sim, seed, "phase_servo", config.control_mode, f"{config.kp:g}:{config.ki:g}", 0.35, 1.0)
+    drift_rows, drift_summary = bridge_phase_diagnostic_series(effective, sim, direct_sim, 0.50, 1.0)
+    row.update(drift_summary)
+    row["experiment"] = "bridge_phase_servo"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:{config.runtime_factor:g}x"
+    row["target_family"] = config.target_family
+    row["actuator_type"] = config.actuator_type
+    row["correction_type"] = config.correction_type
+    row["control_mode"] = config.control_mode
+    row["Kp"] = config.kp
+    row["Ki"] = config.ki
+    row["correction_clamp"] = config.correction_clamp
+    row["smoothing"] = config.smoothing
+    row["update_interval"] = config.update_interval
+    row["runtime_factor"] = config.runtime_factor
+    row["seed_family"] = config.seed_family
+    row["reference_role"] = config.reference_role
+    row["family"] = config.family
+    row["bridge_ratio"] = metric_ratio(float(row.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0)))
+    row["generated_vs_direct_bridge_ratio"] = row["bridge_ratio"]
+    row["energy_at_target"] = row.get("energy_at_9", 0.0)
+    row["energy_at_target_from_direct_reference"] = direct_row.get("energy_at_9", 0.0)
+    row["phase_lock_target"] = row.get("phase_lock_9", 0.0)
+    row["spectral_purity_target"] = row.get("spectral_purity_9", 0.0)
+    row["phase_drift_rate"] = drift_summary.get("phase_drift_rate", 0.0)
+    row["effective_generated_frequency"] = drift_summary.get("effective_target_frequency", effective.target_9)
+    total_input_before = max(float(row.get("total_input_work", 0.0)), 1e-18)
+    total_input_with_servo = total_input_before + float(sim["servo_work"])
+    row["total_input_work_before_servo"] = total_input_before
+    row["total_input_work"] = total_input_with_servo
+    row["servo_work"] = float(sim["servo_work"])
+    row["servo_work_signed"] = float(sim["servo_work_signed"])
+    row["servo_energy_in"] = float(sim["servo_energy_in"])
+    row["servo_energy_out"] = float(sim["servo_energy_out"])
+    row["servo_work_fraction"] = metric_ratio(float(sim["servo_work"]), total_input_with_servo)
+    row["correction_work"] = row["servo_work"]
+    row["correction_work_fraction"] = row["servo_work_fraction"]
+    row["correction_rms"] = float(sim["correction_rms"])
+    row["correction_peak"] = float(sim["correction_peak"])
+    row["correction_mean_abs"] = float(sim["correction_mean_abs"])
+    row["correction_final"] = float(sim["correction_final"])
+    row["phase_error_rms"] = float(sim["phase_error_rms"])
+    row["integral_phase_error_rms"] = float(sim["integral_phase_error_rms"])
+    row["baseline_phase_lock_target"] = float(baseline_row.get("phase_lock_target", 0.0)) if baseline_row else float(row.get("phase_lock_target", 0.0))
+    row["baseline_phase_drift_rate"] = float(baseline_row.get("phase_drift_rate", 0.0)) if baseline_row else float(row.get("phase_drift_rate", 0.0))
+    row["servo_gain_vs_baseline"] = float(row.get("phase_lock_target", 0.0)) - float(row.get("baseline_phase_lock_target", 0.0))
+    row["phase_drift_reduction_vs_baseline"] = metric_ratio(
+        float(row.get("baseline_phase_drift_rate", 0.0)) - float(row.get("phase_drift_rate", 0.0)),
+        float(row.get("baseline_phase_drift_rate", 0.0)),
+    )
+    row["lock_duration_fraction"] = metric_ratio(float(row.get("lock_duration", 0.0)), float(row.get("runtime", runtime)))
+    row["no_direct_6_drive"] = str(not any(abs(freq - effective.target_6) < 1e-9 and mode == 1 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_direct_9_drive"] = str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_target_frequency_injection"] = row["no_direct_9_drive"]
+    row["note"] = config.note
+    bridge_phase_servo_update_score(row)
+
+    for item in ledger:
+        item["experiment"] = "bridge_phase_servo"
+        item["candidate_id"] = row["candidate_id"]
+        item["runtime_factor"] = config.runtime_factor
+        item["target_family"] = config.target_family
+    for item in drift_rows:
+        item["experiment"] = "bridge_phase_servo"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["runtime_factor"] = config.runtime_factor
+        item["target_family"] = config.target_family
+        item["actuator_type"] = config.actuator_type
+        item["control_mode"] = config.control_mode
+    return row, ledger, drift_rows
+
+
+def bridge_phase_servo_update_score(row: Dict[str, float | str]) -> None:
+    runtime_factor = float(row.get("runtime_factor", 1.0))
+    phase_lock = float(row.get("phase_lock_target", row.get("phase_lock_9", 0.0)))
+    purity = float(row.get("spectral_purity_target", row.get("spectral_purity_9", 0.0)))
+    bridge_ratio = float(row.get("bridge_ratio", row.get("generated_vs_direct_bridge_ratio", 0.0)))
+    budget = float(row.get("energy_budget_error", 1.0))
+    work = float(row.get("servo_work_fraction", 1.0))
+    discovery = str(row.get("reference_role")) == "discovery_candidate"
+    direct_clean = (
+        str(row.get("no_direct_6_drive", "False")) == "True"
+        and str(row.get("no_direct_9_drive", "False")) == "True"
+        and str(row.get("no_target_frequency_injection", "False")) == "True"
+    )
+    core_pass = (
+        runtime_factor >= 4.0
+        and phase_lock > 0.90
+        and purity > 0.60
+        and bridge_ratio > 0.75
+        and budget < 0.005
+        and work < 0.05
+        and direct_clean
+    )
+    has_dt_flags = "half_dt_preserved" in row or "quarter_dt_preserved" in row
+    dt_ok = (
+        str(row.get("half_dt_preserved", "False")) == "True"
+        and str(row.get("quarter_dt_preserved", "False")) == "True"
+    ) if has_dt_flags else True
+    passed = core_pass and dt_ok and discovery
+    strong = (
+        passed
+        and phase_lock > 0.95
+        and purity > 0.75
+        and bridge_ratio > 0.85
+        and work < 0.02
+    )
+    failures = []
+    if runtime_factor < 4.0:
+        failures.append("not_4x_runtime")
+    if phase_lock <= 0.90:
+        failures.append("phase_lock_target")
+    if purity <= 0.60:
+        failures.append("spectral_purity_target")
+    if bridge_ratio <= 0.75:
+        failures.append("bridge_ratio")
+    if budget >= 0.005:
+        failures.append("energy_budget")
+    if work >= 0.05:
+        failures.append("servo_work_fraction")
+    if not direct_clean:
+        failures.append("direct_drive_or_target_injection")
+    if has_dt_flags and not dt_ok:
+        failures.append("dt_validation")
+
+    if not failures:
+        failure_mode = "4x_lock_held"
+    elif "phase_lock_target" in failures:
+        failure_mode = "phase_drift"
+    elif "energy_budget" in failures:
+        failure_mode = "energy_budget_drift"
+    elif "servo_work_fraction" in failures:
+        failure_mode = "overpowered_servo"
+    elif "bridge_ratio" in failures:
+        failure_mode = "bridge_collapse"
+    else:
+        failure_mode = failures[0]
+
+    gentle_bonus = 1.0 / (
+        1.0
+        + 130.0 * max(0.0, work)
+        + 15.0 * max(0.0, float(row.get("correction_peak", 0.0)))
+        + 650.0 * max(0.0, budget)
+        + 0.25 * max(0.0, float(row.get("Kp", 0.0)) * 1000.0)
+        + 0.20 * max(0.0, float(row.get("Ki", 0.0)) * 100000.0)
+    )
+    gain_bonus = 1.0 + max(0.0, min(0.35, float(row.get("servo_gain_vs_baseline", 0.0))))
+    score = bridge_ratio * phase_lock * purity * gain_bonus * gentle_bonus
+    if not core_pass or not discovery:
+        score = 0.0
+
+    row["4x_pass"] = str(core_pass and discovery)
+    row["passed"] = str(passed)
+    row["strong_passed"] = str(strong)
+    row["promotion_ready"] = str(strong)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+    row["bridge_phase_servo_score"] = score
+    row["score"] = score
+
+
+def bridge_phase_servo_validation(config: BridgePhaseServoConfig, seed: int, quick: bool,
+                                  dt: float, runtime: float, sample_every: int
+                                  ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [("baseline_dt", dt), ("half_dt", dt * 0.5), ("quarter_dt", dt * 0.25)]
+    rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    drift_rows: List[Dict[str, float | str]] = []
+    for idx, (name, test_dt) in enumerate(tests):
+        direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+        baseline_config = replace(
+            config,
+            name=f"{config.name}_validation_no_servo_{name}",
+            control_mode="no_servo",
+            kp=0.0,
+            ki=0.0,
+            correction_clamp=0.0,
+            reference_role=config.reference_role,
+        )
+        baseline_row, baseline_ledger, baseline_drift = bridge_phase_servo_measure(
+            baseline_config, seed + idx * 197, quick, test_dt, runtime, sample_every, direct_cache
+        )
+        row, ledger, drift = bridge_phase_servo_measure(
+            config, seed + idx * 197 + 23, quick, test_dt, runtime, sample_every, direct_cache, baseline_row
+        )
+        row["validation_test"] = name
+        rows.append(row)
+        ledger_rows.extend(baseline_ledger)
+        ledger_rows.extend(ledger)
+        drift_rows.extend(baseline_drift)
+        drift_rows.extend(drift)
+    return rows, ledger_rows, drift_rows
+
+
+def apply_bridge_phase_servo_validation_status(candidate: Dict[str, float | str],
+                                               validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    base = next((r for r in rows if str(r.get("validation_test")) == "baseline_dt"), {})
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt"), {})
+    base_phase = float(base.get("phase_lock_target", candidate.get("phase_lock_target", 0.0)))
+
+    def preserved(row: Dict[str, float | str]) -> bool:
+        if not row:
+            return False
+        core = str(row.get("4x_pass", "False")) == "True"
+        phase_ok = float(row.get("phase_lock_target", 0.0)) >= 0.90 or ratio_stability_score(float(row.get("phase_lock_target", 0.0)), base_phase) > 0.85
+        budget_ok = float(row.get("energy_budget_error", 1.0)) < 0.005
+        work_ok = float(row.get("servo_work_fraction", 1.0)) < 0.05
+        return core and phase_ok and budget_ok and work_ok
+
+    half_ok = preserved(half)
+    quarter_ok = preserved(quarter)
+    candidate["half_dt_preserved"] = str(half_ok)
+    candidate["quarter_dt_preserved"] = str(quarter_ok)
+    candidate["half_dt_phase_lock_target"] = float(half.get("phase_lock_target", 0.0))
+    candidate["quarter_dt_phase_lock_target"] = float(quarter.get("phase_lock_target", 0.0))
+    candidate["half_dt_servo_work_fraction"] = float(half.get("servo_work_fraction", 1.0))
+    candidate["quarter_dt_servo_work_fraction"] = float(quarter.get("servo_work_fraction", 1.0))
+    bridge_phase_servo_update_score(candidate)
+
+
+def bridge_phase_servo_specs(quick: bool, include_sweeps: bool) -> List[Tuple[str, str, BridgePhaseServoConfig]]:
+    specs: List[Tuple[str, str, BridgePhaseServoConfig]] = []
+    seeds = bridge_phase_servo_seed_templates(quick, include_sweeps)
+    base_gain_sets = [
+        ("tiny_pi", 0.00075, 0.000008, 0.012, 0.14, 2.5),
+        ("small_pi", 0.00150, 0.000020, 0.018, 0.18, 2.0),
+        ("modest_pi", 0.00300, 0.000045, 0.024, 0.22, 1.5),
+    ]
+    runtime_factors = [4.0]
+    if include_sweeps:
+        runtime_factors = [1.0, 2.0, 4.0]
+    for target_family, seed_family, family, base_config in seeds:
+        is_sweep_seed = seed_family.startswith("sweep_")
+        reference_role = "discovery_candidate" if target_family == "369" else "control"
+        for runtime_factor in runtime_factors:
+            if include_sweeps and runtime_factor < 4.0 and seed_family != "receiver_best_4x_raw":
+                continue
+            gain_sets = [base_gain_sets[1]] if is_sweep_seed else base_gain_sets
+            for actuator_type in BRIDGE_PHASE_SERVO_ACTUATORS:
+                for label, kp, ki, clamp, smoothing, update_interval in gain_sets:
+                    config = bridge_phase_servo_make_config(
+                        target_family,
+                        seed_family,
+                        base_config,
+                        actuator_type,
+                        kp,
+                        ki,
+                        clamp,
+                        smoothing,
+                        update_interval,
+                        runtime_factor=runtime_factor,
+                        reference_role=reference_role,
+                        family=family,
+                        suffix=label,
+                    )
+                    specs.append((label, seed_family, config))
+    if include_sweeps:
+        primary = bridge_phase_servo_template("receiver_best_4x_raw", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)
+        sweep_sets = [
+            ("Kp", [(0.00035, 0.000020, 0.018, 0.18, 2.0), (0.0022, 0.000020, 0.018, 0.18, 2.0), (0.0045, 0.000020, 0.024, 0.18, 2.0)]),
+            ("Ki", [(0.0015, 0.0, 0.018, 0.18, 2.0), (0.0015, 0.000010, 0.018, 0.18, 2.0), (0.0015, 0.000060, 0.024, 0.18, 2.0)]),
+            ("correction_clamp", [(0.0015, 0.000020, 0.006, 0.18, 2.0), (0.0015, 0.000020, 0.012, 0.18, 2.0), (0.0015, 0.000020, 0.036, 0.18, 2.0)]),
+            ("smoothing", [(0.0015, 0.000020, 0.018, 0.08, 2.0), (0.0015, 0.000020, 0.018, 0.30, 2.0)]),
+            ("update_interval", [(0.0015, 0.000020, 0.018, 0.18, 1.0), (0.0015, 0.000020, 0.018, 0.18, 4.0)]),
+        ]
+        for sweep_name, values in sweep_sets:
+            for actuator_type in BRIDGE_PHASE_SERVO_ACTUATORS:
+                for kp, ki, clamp, smoothing, update_interval in values:
+                    config = bridge_phase_servo_make_config(
+                        "369",
+                        "receiver_best_4x_raw",
+                        primary,
+                        actuator_type,
+                        kp,
+                        ki,
+                        clamp,
+                        smoothing,
+                        update_interval,
+                        runtime_factor=4.0,
+                        reference_role="discovery_candidate",
+                        family="369",
+                        suffix=sweep_name,
+                    )
+                    specs.append((sweep_name, f"{kp:g}:{ki:g}:{clamp:g}:{smoothing:g}:{update_interval:g}", config))
+    return specs
+
+
+def bridge_phase_servo_control_specs(include_sweeps: bool) -> List[Tuple[str, str, BridgePhaseServoConfig]]:
+    controls: List[Tuple[str, str, BridgePhaseServoConfig]] = []
+    base = bridge_phase_servo_template("control_baseline", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84, reference_role="control")
+    control_modes = [
+        ("no_servo", "receiver_tuning_servo", 0.0, 0.0, 0.0),
+        ("wrong_sign", "receiver_tuning_servo", 0.0015, 0.000020, 0.018),
+        ("random", "receiver_tuning_servo", 0.0015, 0.000020, 0.018),
+    ]
+    if include_sweeps:
+        for actuator_type in BRIDGE_PHASE_SERVO_ACTUATORS:
+            control_modes.append(("wrong_sign", actuator_type, 0.0015, 0.000020, 0.018))
+            control_modes.append(("random", actuator_type, 0.0015, 0.000020, 0.018))
+    seen = set()
+    for control_mode, actuator_type, kp, ki, clamp in control_modes:
+        key = (control_mode, actuator_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        config = bridge_phase_servo_make_config(
+            "369",
+            "control_baseline",
+            base,
+            actuator_type,
+            kp,
+            ki,
+            clamp,
+            0.18,
+            2.0,
+            runtime_factor=4.0,
+            control_mode=control_mode,
+            reference_role="control",
+            family="369",
+            suffix="control",
+        )
+        controls.append((control_mode, actuator_type, config))
+    return controls
+
+
+def write_bridge_phase_servo_report(out_dir: Path,
+                                    ranked: List[Dict[str, float | str]],
+                                    validation_rows: List[Dict[str, float | str]],
+                                    controls: List[Dict[str, float | str]]) -> None:
+    discovery = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate"]
+    best = discovery[0] if discovery else {}
+    passed_rows = [r for r in discovery if str(r.get("passed")) == "True"]
+    core_rows = [r for r in discovery if str(r.get("4x_pass")) == "True"]
+    by_actuator: Dict[str, Dict[str, float | str]] = {}
+    for actuator_type in BRIDGE_PHASE_SERVO_ACTUATORS:
+        typed = [r for r in discovery if str(r.get("actuator_type")) == actuator_type]
+        if typed:
+            by_actuator[actuator_type] = max(typed, key=lambda r: (float(r.get("bridge_phase_servo_score", 0.0)), float(r.get("phase_lock_target", 0.0)), -float(r.get("servo_work_fraction", 1.0))))
+    best_by_family: Dict[str, Dict[str, float | str]] = {}
+    for family in ["369", "4812", "51015"]:
+        rows = [r for r in ranked + controls if str(r.get("target_family")) == family]
+        if rows:
+            best_by_family[family] = max(rows, key=lambda r: (float(r.get("phase_lock_target", 0.0)), float(r.get("bridge_ratio", 0.0)), -float(r.get("servo_work_fraction", 1.0))))
+    no_servo = max([r for r in controls if str(r.get("control_mode")) == "no_servo" and str(r.get("target_family")) == "369"], key=lambda r: float(r.get("phase_lock_target", 0.0)), default={})
+    wrong = max([r for r in controls if str(r.get("control_mode")) == "wrong_sign" and str(r.get("target_family")) == "369"], key=lambda r: float(r.get("phase_lock_target", 0.0)), default={})
+    random_control = max([r for r in controls if str(r.get("control_mode")) == "random" and str(r.get("target_family")) == "369"], key=lambda r: float(r.get("phase_lock_target", 0.0)), default={})
+    best_369 = best_by_family.get("369", {})
+    best_4812 = best_by_family.get("4812", {})
+    best_51015 = best_by_family.get("51015", {})
+    non369_best_phase = max(float(best_4812.get("phase_lock_target", 0.0)), float(best_51015.get("phase_lock_target", 0.0)))
+    beats_non369 = bool(best_369) and float(best_369.get("phase_lock_target", 0.0)) > non369_best_phase
+    gentle = (
+        float(best.get("servo_work_fraction", 1.0)) < 0.02
+        and float(best.get("correction_peak", 1.0)) < 0.75 * max(float(best.get("correction_clamp", 1.0)), 1e-18)
+        and float(best.get("servo_gain_vs_baseline", 0.0)) >= 0.0
+    )
+    if passed_rows:
+        hold_answer = "yes, at least one dt-preserved 3 -> 6 -> 9 discovery row held the 4x gate"
+    elif core_rows:
+        hold_answer = "partially; a discovery row met core 4x gates before dt preservation"
+    else:
+        hold_answer = "no, not under the current promotion gates"
+    next_answer = "geometry/evolve can wait; compare controls first"
+    if passed_rows and beats_non369:
+        next_answer = "geometry/evolve is justified as a follow-up, with non-369 controls kept in every run"
+    elif non369_best_phase >= float(best_369.get("phase_lock_target", 0.0)):
+        next_answer = "3 -> 6 -> 9 is not uniquely special yet; prioritize control comparisons over geometry/evolve"
+
+    lines = [
+        "# Bridge Phase Servo Report",
+        "",
+        "This mode tests PI feedback through physical tuning/bias actuators only. It uses no direct 6 drive, no direct 9 drive, and no injected 9-frequency reference.",
+        "",
+        "## Direct Answers",
+        f"1. Can a physical tuning servo hold 4x lock? {hold_answer}.",
+        f"2. Best actuator: {best.get('actuator_type', 'none')}; phase_lock_target={float(best.get('phase_lock_target', 0.0)):.6g}, bridge={float(best.get('bridge_ratio', 0.0)):.6g}, score={float(best.get('bridge_phase_servo_score', 0.0)):.6g}.",
+        f"3. Servo work required: best_work_fraction={float(best.get('servo_work_fraction', 0.0)):.6g}, rms={float(best.get('correction_rms', 0.0)):.6g}, peak={float(best.get('correction_peak', 0.0)):.6g}.",
+        f"4. Does 3 -> 6 -> 9 beat controls? {'yes' if beats_non369 else 'no on phase lock; no family passed the full gate'}; phase_369={float(best_369.get('phase_lock_target', 0.0)):.6g}, phase_4812={float(best_4812.get('phase_lock_target', 0.0)):.6g}, phase_51015={float(best_51015.get('phase_lock_target', 0.0)):.6g}.",
+        f"5. Servo behavior: {'gentle stabilizing correction' if gentle else 'not proven gentle/effective enough'}; gain_vs_baseline={float(best.get('servo_gain_vs_baseline', 0.0)):.6g}, budget={float(best.get('energy_budget_error', 0.0)):.6g}.",
+        f"6. Next move: {next_answer}.",
+        f"369 controls: no_servo_phase={float(no_servo.get('phase_lock_target', 0.0)):.6g}, wrong_sign_phase={float(wrong.get('phase_lock_target', 0.0)):.6g}, random_phase={float(random_control.get('phase_lock_target', 0.0)):.6g}.",
+        f"Promotion gate: {len(passed_rows)} validated discovery rows passed; {len(core_rows)} discovery rows met the core 4x gates before dt preservation.",
+        "",
+        "## Best By Actuator",
+    ]
+    for actuator_type, row in by_actuator.items():
+        lines.append(
+            f"- {actuator_type}: case={row.get('candidate_id')}, phase={float(row.get('phase_lock_target', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"work={float(row.get('servo_work_fraction', 0.0)):.6g}, gain={float(row.get('servo_gain_vs_baseline', 0.0)):.6g}, "
+            f"pass={row.get('passed')}, failure={row.get('failure_mode', '')}"
+        )
+    lines.extend(["", "## Top Rows"])
+    for row in ranked[:24]:
+        lines.append(
+            f"- {row.get('candidate_id')}: target={row.get('target_family')}, actuator={row.get('actuator_type')}, mode={row.get('control_mode')}, "
+            f"Kp={float(row.get('Kp', 0.0)):.6g}, Ki={float(row.get('Ki', 0.0)):.6g}, score={float(row.get('bridge_phase_servo_score', 0.0)):.6g}, "
+            f"pass={row.get('passed')}, 4x={row.get('4x_pass')}, phase={float(row.get('phase_lock_target', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"work={float(row.get('servo_work_fraction', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+            f"gain={float(row.get('servo_gain_vs_baseline', 0.0)):.6g}, failure={row.get('failure_mode', '')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Dt Validation"])
+        for row in validation_rows[:20]:
+            lines.append(
+                f"- {row.get('candidate_id')}: test={row.get('validation_test', '')}, phase={float(row.get('phase_lock_target', 0.0)):.6g}, "
+                f"work={float(row.get('servo_work_fraction', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, 4x={row.get('4x_pass')}"
+            )
+    (out_dir / "README_BRIDGE_PHASE_SERVO_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_phase_servo(out_dir: Path, seed: int, quick: bool = False,
+                                  include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    specs = bridge_phase_servo_specs(quick, include_sweeps)
+    control_specs = bridge_phase_servo_control_specs(include_sweeps)
+    summary_rows: List[Dict[str, float | str]] = []
+    sweep_rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    drift_rows: List[Dict[str, float | str]] = []
+    controls: List[Dict[str, float | str]] = []
+    config_by_case: Dict[str, BridgePhaseServoConfig] = {}
+    baseline_by_key: Dict[Tuple[str, str, float], Dict[str, float | str]] = {}
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    run_index = 0
+
+    all_configs = specs + control_specs
+    baseline_specs: List[Tuple[str, str, BridgePhaseServoConfig]] = []
+    seen_baselines = set()
+    for _, _, config in all_configs:
+        key = (config.target_family, config.seed_family, config.runtime_factor)
+        if key in seen_baselines:
+            continue
+        seen_baselines.add(key)
+        baseline = replace(
+            config,
+            name=f"phase_servo_{config.target_family}_{config.seed_family}_no_servo_r{safe_token(config.runtime_factor)}x",
+            control_mode="no_servo",
+            actuator_type="receiver_tuning_servo",
+            correction_type="receiver_tuning_nudge",
+            kp=0.0,
+            ki=0.0,
+            correction_clamp=0.0,
+            reference_role="control",
+            note="no-servo phase baseline",
+        )
+        baseline_specs.append(("no_servo", config.seed_family, baseline))
+
+    for sweep, value, config in baseline_specs + all_configs:
+        runtime = base_tmax * 1.25 * float(config.runtime_factor)
+        baseline_key = (config.target_family, config.seed_family, config.runtime_factor)
+        baseline_row = baseline_by_key.get(baseline_key)
+        row, ledger, drift = bridge_phase_servo_measure(
+            config,
+            seed + run_index * 307,
+            quick,
+            dt,
+            runtime,
+            sample_every,
+            direct_cache,
+            baseline_row,
+        )
+        run_index += 1
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        summary_rows.append(row)
+        if str(config.control_mode) == "no_servo":
+            baseline_by_key[baseline_key] = row
+        if include_sweeps or str(config.reference_role) == "discovery_candidate":
+            sweep_rows.append(row)
+        if str(config.reference_role) == "control" or str(config.control_mode) != "normal" or str(config.family) == "non369":
+            controls.append(row)
+        if str(config.reference_role) == "control" or str(config.control_mode) != "normal" or abs(float(row.get("correction_peak", 0.0))) >= 0.004:
+            ledger_rows.extend(ledger)
+            drift_rows.extend(drift)
+        config_by_case[config.name] = config
+
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_phase_servo_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            1.0 if str(r.get("4x_pass")) == "True" else 0.0,
+            float(r.get("phase_lock_target", 0.0)),
+            float(r.get("servo_gain_vs_baseline", 0.0)),
+            -float(r.get("servo_work_fraction", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    validation_rows: List[Dict[str, float | str]] = []
+    top_candidates = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate" and str(r.get("control_mode")) == "normal" and float(r.get("runtime_factor", 1.0)) >= 4.0][:4 if include_sweeps else 2]
+    for idx, candidate in enumerate(top_candidates):
+        config = config_by_case.get(str(candidate.get("case")))
+        if config is None:
+            continue
+        runtime = base_tmax * 1.25 * float(config.runtime_factor)
+        rows, ledger, drift = bridge_phase_servo_validation(config, seed + 91000 + idx * 1000, quick, dt, runtime, sample_every)
+        validation_rows.extend(rows)
+        ledger_rows.extend(ledger)
+        drift_rows.extend(drift)
+        apply_bridge_phase_servo_validation_status(candidate, validation_rows)
+
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_phase_servo_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            1.0 if str(r.get("4x_pass")) == "True" else 0.0,
+            float(r.get("phase_lock_target", 0.0)),
+            float(r.get("servo_gain_vs_baseline", 0.0)),
+            -float(r.get("servo_work_fraction", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    write_csv(out_dir / "bridge_phase_servo_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "bridge_phase_servo_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_phase_servo_sweeps.csv", sweep_rows)
+    write_csv(out_dir / "bridge_phase_servo_timeseries.csv", ledger_rows + drift_rows)
+    write_bridge_phase_servo_report(out_dir, ranked, validation_rows, controls)
+
+    return [
+        {
+            "experiment": "bridge_phase_servo",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_phase_servo_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "target_family": row.get("target_family", ""),
+            "actuator_type": row.get("actuator_type", ""),
+            "phase_lock_target": row.get("phase_lock_target", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "servo_work_fraction": row.get("servo_work_fraction", 0.0),
+            "servo_gain_vs_baseline": row.get("servo_gain_vs_baseline", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -11318,8 +12235,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -11370,6 +12287,8 @@ def main() -> None:
         rows.extend(experiment_bridge_control_authority(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_drift_feedforward",):
         rows.extend(experiment_bridge_drift_feedforward(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_phase_servo",):
+        rows.extend(experiment_bridge_phase_servo(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 
