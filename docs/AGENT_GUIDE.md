@@ -29,4 +29,4 @@ Do not promote a passive bridge to `geometry369` unless it passes:
 - `spectral_purity_9 > 0.60`.
 - Energy budget below the mode-specific gate.
 
-The current best 3 -> 6 -> 9 candidates still fail 4x promotion. The latest blocker is not just phase drift: static Stage A `+0.03` tuning can remove target slips, but the final tuned configuration breaks the strict budget gate. Continue with budget-clean generated-stage/passive compensation sweeps before geometry/evolve.
+The current best 3 -> 6 -> 9 candidates still fail 4x promotion. Stage A `+0.03` tuning can remove target slips, and forensics found budget-clean zero-slip compensation rows, but lock/jump/envelope gates still fail. The budget failure is also strongly dt-sensitive in driven full-model rows, so repair/refine driven nonlinear+damping energy accounting before geometry/evolve.

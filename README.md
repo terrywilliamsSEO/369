@@ -31,12 +31,13 @@ What has not survived yet:
 - Phase-slip audit shows the 3 -> 6 -> 9 bridge loses 4x lock through discrete phase slips, with generated-6 envelope instability before target lock loss.
 - Generated-stage stabilization reduced slips only in a budget-breaking raw Stage A tuning row; the best budget-clean damping row improved lock/purity but did not remove slips.
 - Stage A budget audit shows static `+0.03` tuning can remove target slips, but the final tuned configuration itself breaks the budget gate even with no dynamic retuning.
+- Stage A budget forensics suggests the Stage A budget issue is driven-model ledger/numerical sensitivity: no-drive errors are tiny in absolute terms, and half/quarter-dt reduce full-model budget below gate.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
 - Stabilize generated 6 before trying geometry/evolve or a stronger target servo.
-- Focus on generated-stage damping/tuning compensation that preserves the slip-free basin while reducing budget error below 0.005.
+- Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
 - 3 -> 6 -> 9 is not uniquely special yet; keep non-369 controls central before geometry/evolve.
 
 ## Repo Map
@@ -93,6 +94,8 @@ python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick
 python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick
 python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick --sweeps
+python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick
+python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick --sweeps
 ```
 
 Key bridge modes:
@@ -111,6 +114,7 @@ python tesla_369_lab.py --mode bridge_emergent_lock --quick --sweeps
 python tesla_369_lab.py --mode bridge_phase_slip_audit --quick --sweeps
 python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick --sweeps
+python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -208,3 +212,15 @@ Quick smoke result from `runs/bridge_stageA_budget_audit_quick_smoke`:
 - Best budget-clean 369 row was drive-delayed initialization, but it still had 2 slips and generated-envelope CV 0.522.
 - Non-369 controls did not produce a budget-clean winner.
 - Current recommendation: run full generated-stage/passive compensation sweeps before geometry/evolve or predictive PLL.
+
+## Latest Stage A Budget Forensics Read
+
+Quick smoke result from `runs/bridge_stageA_budget_forensics_quick_smoke`:
+
+- No-drive/no-servo rows only showed relative tiny-denominator artifacts: worst no-drive relative budget was 1, but worst absolute error was only about 1.2e-9.
+- The gate-relevant budget error appears in driven full-model rows: Stage A `+0.03` full model had budget error 0.0137 at baseline dt, but half-dt dropped it to 0.000092 and quarter-dt to 0.0000075.
+- The near-promoted damping row behaved similarly: full-model budget error 0.00547 at baseline dt, half-dt 0.000891, quarter-dt 0.000234.
+- The narrow compensation search found budget-clean zero-slip rows, but they did not promote because lock stayed around 0.83-0.84, max phase jump stayed above 2.2 rad, and generated-envelope CV stayed around 0.55.
+- Best budget-clean zero-slip row: Stage A offset `+0.030`, damping factor `1.05`, A->B coupling `0.90`, limiter `0.04`; budget error 0.000422, lock 0.834, bridge ratio 2.549, purity 0.950.
+- Non-369 controls did not produce a budget-clean winner.
+- Current recommendation: repair/refine the driven nonlinear+damping ledger before geometry/evolve, full sweeps, or predictive servo timing.

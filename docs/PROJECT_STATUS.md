@@ -27,12 +27,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Phase-slip audit points to discrete phase slips driven by generated-6 envelope instability, not a clean stable pulled-frequency lock.
 - Generated-stage stabilization confirms the lead: raw tuning can remove slips, but the current slip-free row breaks energy budget.
 - Stage A budget audit isolates that failure: static `+0.03` tuning removes slips, but the final tuned configuration still breaks budget even with no servo and no dynamic parameter work.
+- Stage A budget forensics suggests that budget failure is dt-sensitive driven-model accounting, not no-drive nonconservation: half-dt and quarter-dt clean the full-model rows.
 
 ## Current Blocker
 
 No passive model has passed the strict 4x runtime lock gate.
 
-The main 4x failure is now more specifically generated-stage instability and budget cleanliness in the slip-free Stage A tuning basin. Some non-369 controls also accumulate unacceptable energy-budget error over long runtime.
+The main 4x failure is now split between generated-stage lock quality and driven-model budget accounting. The narrow forensics search found budget-clean zero-slip rows, but they still miss lock/jump/envelope gates.
 
 ## Latest Magnetic Autolock Summary
 
@@ -239,13 +240,39 @@ Quick smoke result from `runs/bridge_stageA_budget_audit_quick_smoke`:
 - No row passed promotion, and non-369 controls did not produce a budget-clean winner.
 - Current read: the slip-free basin is real but budget-sensitive. The next move should be full generated-stage/passive compensation sweeps.
 
+## Latest Stage A Budget Forensics Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode bridge_stageA_budget_forensics
+python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick
+python tesla_369_lab.py --mode bridge_stageA_budget_forensics --sweeps
+```
+
+What it tests:
+
+- Part A isolates the Stage A `+0.03` and tune+damping rows across no-drive/no-servo subsystem accounting cases.
+- Part B runs a narrow compensation search around Stage A offset, generated-stage damping/Q, A->B coupling, Stage B detuning, and weak passive limiter strength.
+- It reports relative and absolute budget error, budget growth, stored-energy delta, drive work, damping/spark/magnetic loss, nonlinear-potential delta, phase/slip/envelope metrics, and no-direct-drive flags.
+
+Quick smoke result from `runs/bridge_stageA_budget_forensics_quick_smoke`:
+
+- No-drive/no-servo relative budget errors were tiny-denominator artifacts: worst relative error reached 1, but worst absolute error was only about 1.2e-9.
+- Driven full-model rows create the gate-relevant error. Stage A `+0.03` full model had budget error 0.0137 at baseline dt, then 0.000092 at half-dt and 0.0000075 at quarter-dt.
+- Tune+damping full model had budget error 0.00547 at baseline dt, then 0.000891 at half-dt and 0.000234 at quarter-dt.
+- A budget-clean zero-slip row was found: Stage A offset `+0.030`, generated damping factor `1.05`, A->B coupling `0.90`, limiter `0.04`; budget 0.000422, work 0.000109, bridge ratio 2.549, purity 0.950.
+- That row did not promote because target lock was only 0.834, max phase jump was 2.30 rad, and generated-envelope CV was 0.553.
+- No 369 row became promotion-ready, and non-369 controls produced no budget-clean winner.
+- Current read: repair/refine the driven nonlinear+damping ledger, then rerun the compensation search at refined dt before full sweeps or predictive servo timing.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run full generated-stage/passive compensation sweeps around the Stage A `+0.03` slip-free basin, targeting budget error below 0.005.
-2. Then revisit servo timing, because current corrections arrive late relative to the slips.
+1. Repair or refine driven nonlinear+damping energy accounting, because the budget failure is strongly dt-sensitive.
+2. Rerun the Stage A compensation search at refined dt, then revisit servo timing only if lock/jump/envelope gates remain the blocker.
 3. Treat non-369 controls as first-class competitors because they still beat 3 -> 6 -> 9 on raw phase lock, while failing budget.
 4. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

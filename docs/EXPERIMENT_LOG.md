@@ -207,3 +207,15 @@ Added a Stage A budget-isolation diagnostic:
 - Static `+0.03` with no servo also failed budget, with error 0.0137 and zero parameter work, so the budget failure is in the final tuned configuration itself, not just dynamic retuning work.
 - Best near miss was damping/Q compensation: target lock 0.915, slips 0, bridge ratio 3.397, purity 0.969, work fraction 0.000106, but budget error 0.00786.
 - Current next fix: run full generated-stage/passive compensation sweeps around the slip-free Stage A basin before geometry/evolve or predictive PLL.
+
+## Bridge Stage A Budget Forensics
+
+Added a forensics-and-narrow-search mode:
+
+- Part A isolates Stage A `+0.03` and tune+damping rows under no-drive/no-servo subsystem accounting: no damping, damping only, nonlinear only, spark only, magnetic only, drive-only, drive+damping, drive+nonlinear, and full model.
+- Part B searches a narrow compensation grid around Stage A offset, generated-stage damping/Q, A->B coupling reduction, Stage B detuning, and weak passive limiter strength.
+- Reports relative and absolute budget error, budget growth, stored energy delta, drive work, damping/spark/magnetic loss, nonlinear potential delta, target lock/slips, generated-envelope CV, bridge ratio, purity, and direct-drive contamination flags.
+- Quick smoke found no-drive/no-servo relative budget errors are tiny-denominator artifacts: worst no-drive relative error reached 1, but worst absolute error was only about 1.2e-9.
+- Gate-relevant budget error appears in driven full-model rows and is strongly dt-sensitive: Stage A `+0.03` full model went from 0.0137 at baseline dt to 0.000092 at half-dt and 0.0000075 at quarter-dt.
+- A budget-clean zero-slip 369 row was found, but it did not promote: lock 0.834, max jump 2.30 rad, generated-envelope CV 0.553, budget 0.000422.
+- Current next fix: repair/refine driven nonlinear+damping ledger accounting, then rerun compensation search at refined dt before full sweeps, predictive servo timing, or geometry/evolve.

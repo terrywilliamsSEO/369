@@ -8600,10 +8600,12 @@ def simulate_bridge_min_nudge(config: BridgeMinNudgeConfig, seed: int, quick: bo
     y = np.zeros(6)
     y[:3] = 1e-4 * rng.normal(size=3)
     y[3:] = 1e-4 * rng.normal(size=3)
-    initial_total = float(bridge_amp_potentials(y[:3], y[3:], omega, effective)["total"])
+    initial_potentials = bridge_amp_potentials(y[:3], y[3:], omega, effective)
+    initial_total = float(initial_potentials["total"])
     drive_work = 0.0
     positive_input_work = 0.0
     damping_loss = 0.0
+    magnetic_loss = 0.0
     spark_loss = 0.0
     correction_work_signed = 0.0
     correction_work_abs = 0.0
@@ -9790,10 +9792,12 @@ def simulate_bridge_control_authority(config: BridgeControlAuthorityConfig, seed
     y = np.zeros(6)
     y[:3] = 1e-4 * rng.normal(size=3)
     y[3:] = 1e-4 * rng.normal(size=3)
-    initial_total = float(bridge_amp_potentials(y[:3], y[3:], omega, effective)["total"])
+    initial_potentials = bridge_amp_potentials(y[:3], y[3:], omega, effective)
+    initial_total = float(initial_potentials["total"])
     drive_work = 0.0
     positive_input_work = 0.0
     damping_loss = 0.0
+    magnetic_loss = 0.0
     spark_loss = 0.0
     correction_work_signed = 0.0
     correction_work_abs = 0.0
@@ -14506,6 +14510,7 @@ class BridgeStageABudgetAuditConfig:
     audit_type: str
     final_stage_a_offset: float = 0.030
     initial_stage_a_offset: float = 0.030
+    stage_b_static_detuning: float = 0.0
     dynamic_stage_a: bool = False
     ramp_phase: str = "static"
     ramp_shape: str = "linear"
@@ -14531,7 +14536,7 @@ def bridge_stageA_budget_static_base(config: BridgeStageABudgetAuditConfig,
     magnetic = config.base_config.magnetic_config
     bridge = magnetic.bridge
     source = bridge.mode_freqs[0]
-    tuned_generated = max(0.5, bridge.target_6 + stage_a_offset)
+    tuned_generated = max(0.5, bridge.target_6 + stage_a_offset + config.stage_b_static_detuning)
     stage_b_damping = bridge.stage_b_damping
     stage_a_to_stage_b = bridge.stage_a_to_stage_b_coupling
     stage_b_to_receiver = bridge.stage_b_to_receiver_coupling
@@ -14660,6 +14665,20 @@ def bridge_stageA_budget_offset(config: BridgeStageABudgetAuditConfig,
     if config.ramp_shape == "s_curve":
         x = x * x * (3.0 - 2.0 * x)
     return config.initial_stage_a_offset + (config.final_stage_a_offset - config.initial_stage_a_offset) * x
+
+
+def bridge_stageA_budget_magnetic_loss_damping(config: MagneticBridgeConfig) -> float:
+    if config.magnetic_option == "control_no_magnetic_layer":
+        return 0.0
+    loss_damping = (
+        config.magnetic_damping
+        + 0.70 * config.hysteresis_loss
+        + 0.45 * config.eddy_current_loss
+        + 0.30 * config.flux_leakage_loss
+    )
+    if config.magnetic_option == "lossy_hysteretic_core":
+        loss_damping += 0.08
+    return max(0.0, loss_damping)
 
 
 def bridge_stageA_budget_make_config(target_family: str,
@@ -14821,10 +14840,12 @@ def simulate_bridge_stageA_budget_audit(config: BridgeStageABudgetAuditConfig,
     y = np.zeros(6)
     y[:3] = 1e-4 * rng.normal(size=3)
     y[3:] = 1e-4 * rng.normal(size=3)
-    initial_total = float(bridge_amp_potentials(y[:3], y[3:], omega, effective)["total"])
+    initial_potentials = bridge_amp_potentials(y[:3], y[3:], omega, effective)
+    initial_total = float(initial_potentials["total"])
     drive_work = 0.0
     positive_input_work = 0.0
     damping_loss = 0.0
+    magnetic_loss = 0.0
     spark_loss = 0.0
     servo_work_signed = 0.0
     servo_work_abs = 0.0
@@ -14901,6 +14922,12 @@ def simulate_bridge_stageA_budget_audit(config: BridgeStageABudgetAuditConfig,
         drive_work += drive_power * dt
         positive_input_work += max(0.0, drive_power) * dt
         damping_loss += float(np.sum(2.0 * zeta * omega * (v ** 2))) * dt
+        magnetic_loss_damping = bridge_stageA_budget_magnetic_loss_damping(current_base.magnetic_config)
+        if magnetic_loss_damping > 0.0:
+            magnetic_loss += float(
+                2.0 * 0.012 * magnetic_loss_damping * omega[1] * (v[1] ** 2)
+                + 2.0 * 0.008 * magnetic_loss_damping * omega[2] * (v[2] ** 2)
+            ) * dt
         if effective.spark_strength:
             for i, j in ((0, 1), (1, 2)):
                 gate = float(spark_gate(q[i] - q[j], threshold=effective.spark_threshold))
@@ -14956,6 +14983,7 @@ def simulate_bridge_stageA_budget_audit(config: BridgeStageABudgetAuditConfig,
                 "drive_input_work": drive_work,
                 "positive_input_work": positive_input_work,
                 "damping_loss": damping_loss,
+                "magnetic_loss": magnetic_loss,
                 "spark_loss": spark_loss,
                 "parameter_work_signed": parameter_work_signed,
                 "parameter_work_abs": parameter_work_abs,
@@ -14972,6 +15000,7 @@ def simulate_bridge_stageA_budget_audit(config: BridgeStageABudgetAuditConfig,
     stage_offset_arr = np.asarray(stage_offsets)
     stabilizer_work_signed = parameter_work_signed + servo_work_signed
     stabilizer_work_abs = parameter_work_abs + servo_work_abs
+    final_potentials = bridge_amp_potentials(y[:3], y[3:], omega, effective)
     sim: Dict[str, object] = {
         "times": np.asarray(times),
         "qs": np.asarray(qs),
@@ -14984,6 +15013,7 @@ def simulate_bridge_stageA_budget_audit(config: BridgeStageABudgetAuditConfig,
         "positive_input_work": positive_input_work,
         "net_input_work": drive_work,
         "damping_loss": damping_loss,
+        "magnetic_loss": magnetic_loss,
         "spark_loss": spark_loss,
         "parameter_work_signed": parameter_work_signed,
         "parameter_work_abs": parameter_work_abs,
@@ -15001,6 +15031,12 @@ def simulate_bridge_stageA_budget_audit(config: BridgeStageABudgetAuditConfig,
         "correction_peak": float(np.max(np.abs(correction_arr))) if len(correction_arr) else 0.0,
         "stage_A_offset_initial": float(stage_offset_arr[0]) if len(stage_offset_arr) else current_offset,
         "stage_A_offset_final": float(stage_offset_arr[-1]) if len(stage_offset_arr) else current_offset,
+        "initial_stored_energy": initial_total,
+        "final_stored_energy": float(final_potentials["total"]),
+        "stored_energy_delta": float(final_potentials["total"]) - initial_total,
+        "initial_nonlinear_potential": float(initial_potentials["nonlinear_total"]),
+        "final_nonlinear_potential": float(final_potentials["nonlinear_total"]),
+        "nonlinear_potential_delta": float(final_potentials["nonlinear_total"] - initial_potentials["nonlinear_total"]),
         "energy_budget_error_rel": float(ledger[-1]["energy_budget_error_rel"]) if ledger else 1.0,
         "max_energy_budget_error_rel": max((float(r["energy_budget_error_rel"]) for r in ledger), default=1.0),
         "effective_config": effective,
@@ -15057,6 +15093,7 @@ def bridge_stageA_budget_measure(config: BridgeStageABudgetAuditConfig,
     row["stage_A_tuning_offset_final"] = config.final_stage_a_offset
     row["stage_A_tuning_offset_initial"] = config.initial_stage_a_offset
     row["dynamic_stage_A_tuning"] = str(config.dynamic_stage_a)
+    row["stage_B_static_detuning"] = config.stage_b_static_detuning
     row["drive_start_delay"] = config.drive_start_delay
     row["actuator_type"] = config.servo_config.actuator_type
     row["correction_type"] = config.servo_config.correction_type
@@ -15086,6 +15123,8 @@ def bridge_stageA_budget_measure(config: BridgeStageABudgetAuditConfig,
     row["stabilizer_work_fraction"] = metric_ratio(float(sim["stabilizer_work"]), total_input_with_stabilizer)
     row["parameter_work_fraction"] = metric_ratio(float(sim["parameter_work_abs"]), total_input_with_stabilizer)
     row["servo_work_fraction"] = row["stabilizer_work_fraction"]
+    row["drive_input_work"] = float(sim.get("net_input_work", 0.0))
+    row["positive_input_work"] = float(sim.get("positive_input_work", 0.0))
     row["correction_rms"] = float(sim["correction_rms"])
     row["correction_peak"] = float(sim["correction_peak"])
     row["energy_budget_error"] = float(row.get("energy_budget_error", sim.get("energy_budget_error_rel", 1.0)))
@@ -15094,7 +15133,10 @@ def bridge_stageA_budget_measure(config: BridgeStageABudgetAuditConfig,
     row["budget_error_during_drive"] = during_budget
     row["budget_error_after_drive"] = after_budget
     row["damping_loss"] = float(sim["damping_loss"])
+    row["magnetic_loss"] = float(sim.get("magnetic_loss", 0.0))
     row["spark_loss"] = float(sim["spark_loss"])
+    row["stored_energy_delta"] = float(sim.get("stored_energy_delta", 0.0))
+    row["nonlinear_potential_delta"] = float(sim.get("nonlinear_potential_delta", 0.0))
     row["no_direct_2f_drive"] = str(not any(abs(freq - effective.target_6) < 1e-9 and mode == 1 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
     row["no_direct_3f_drive"] = str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
     row["no_target_frequency_injection"] = row["no_direct_3f_drive"]
@@ -15472,6 +15514,700 @@ def experiment_bridge_stageA_budget_audit(out_dir: Path, seed: int, quick: bool 
 
 
 # ----------------------------
+# Experiment 25: bridge Stage A budget forensics
+# ----------------------------
+
+def bridge_stageA_forensics_zero_magnetic(config: MagneticBridgeConfig) -> MagneticBridgeConfig:
+    return replace(
+        config,
+        magnetic_option="control_no_magnetic_layer",
+        mutual_inductance_a_b=0.0,
+        mutual_inductance_b_receiver=0.0,
+        receiver_feedback=0.0,
+        flux_leakage_loss=0.0,
+        hysteresis_loss=0.0,
+        eddy_current_loss=0.0,
+        magnetic_damping=0.0,
+        magnetic_phase_lag_deg=0.0,
+        magnetic_bias_field=0.0,
+        core_saturation_strength=0.0,
+        rotating_flux_bias_phase_deg=0.0,
+    )
+
+
+def bridge_stageA_forensics_physics_base(base_config: BridgeMinNudgeConfig,
+                                         *,
+                                         drive_enabled: bool,
+                                         damping_enabled: bool,
+                                         nonlinear_enabled: bool,
+                                         spark_enabled: bool,
+                                         magnetic_enabled: bool) -> BridgeMinNudgeConfig:
+    magnetic = base_config.magnetic_config
+    bridge = magnetic.bridge
+    if not drive_enabled:
+        bridge = replace(bridge, drive_amp=0.0)
+    if not damping_enabled:
+        bridge = replace(bridge, stage_a_damping=0.0, stage_b_damping=0.0, receiver_damping=0.0)
+    if not nonlinear_enabled:
+        bridge = replace(
+            bridge,
+            stage_a_nonlinear_strength=0.0,
+            stage_b_nonlinear_strength=0.0,
+            varactor_coefficient=0.0,
+        )
+    if not spark_enabled:
+        bridge = replace(bridge, spark_strength=0.0)
+    magnetic = replace(magnetic, bridge=bridge)
+    if not magnetic_enabled:
+        magnetic = bridge_stageA_forensics_zero_magnetic(magnetic)
+    return replace(base_config, magnetic_config=magnetic)
+
+
+def bridge_stageA_forensics_make_audit_config(target_family: str,
+                                              seed_family: str,
+                                              family: str,
+                                              base_config: BridgeMinNudgeConfig,
+                                              name_prefix: str,
+                                              audit_group: str,
+                                              audit_type: str,
+                                              offset: float,
+                                              *,
+                                              generated_damping: float = 0.0,
+                                              coupling_scale: float = 1.0,
+                                              limiter_strength: float = 0.0,
+                                              stage_b_static_detuning: float = 0.0,
+                                              no_servo: bool = False,
+                                              reference_role_override: str | None = None) -> BridgeStageABudgetAuditConfig:
+    config = bridge_stageA_budget_make_config(
+        target_family,
+        seed_family,
+        family,
+        base_config,
+        audit_group,
+        audit_type,
+        offset,
+        no_servo=no_servo,
+        generated_damping=generated_damping,
+        coupling_scale=coupling_scale,
+        limiter_strength=limiter_strength,
+        reference_role_override=reference_role_override,
+    )
+    name = (
+        f"{name_prefix}_{target_family}_{seed_family}_{audit_group}_{audit_type}"
+        f"_a{safe_token(offset)}_d{safe_token(generated_damping)}"
+        f"_c{safe_token(coupling_scale)}_b{safe_token(stage_b_static_detuning)}"
+        f"_l{safe_token(limiter_strength)}"
+    )
+    return replace(
+        config,
+        name=name,
+        servo_config=replace(config.servo_config, name=name),
+        stage_b_static_detuning=stage_b_static_detuning,
+        note="Stage A budget forensics; no direct 2f/3f drive and no target injection",
+    )
+
+
+def bridge_stageA_forensics_isolated_specs() -> List[Tuple[str, str, BridgeStageABudgetAuditConfig, Dict[str, float | str]]]:
+    base_369 = next(
+        base for target_family, _seed_family, family, base in bridge_stageA_budget_audit_base_templates()
+        if target_family == "369" and family == "369"
+    )
+    tuned_rows = [
+        ("stage_A_tune_plus_0p03", 0.030, 0.0),
+        ("tune_plus_damping_compensation", 0.030, 0.92),
+    ]
+    cases = [
+        ("no_drive_no_servo_no_damping_no_spark_no_magnetic", False, False, False, False, False),
+        ("no_drive_damping_only", False, True, False, False, False),
+        ("no_drive_nonlinear_coupling_only", False, False, True, False, False),
+        ("no_drive_spark_only", False, False, False, True, False),
+        ("no_drive_magnetic_layer_only", False, False, False, False, True),
+        ("drive_only_no_servo", True, False, False, False, False),
+        ("drive_plus_damping", True, True, False, False, False),
+        ("drive_plus_nonlinear_coupling", True, False, True, False, False),
+        ("drive_plus_full_model", True, True, True, True, True),
+    ]
+    specs: List[Tuple[str, str, BridgeStageABudgetAuditConfig, Dict[str, float | str]]] = []
+    for tuned_label, offset, damping_value in tuned_rows:
+        for case_name, drive, damping, nonlinear, spark, magnetic in cases:
+            physics_base = bridge_stageA_forensics_physics_base(
+                base_369,
+                drive_enabled=drive,
+                damping_enabled=damping,
+                nonlinear_enabled=nonlinear,
+                spark_enabled=spark,
+                magnetic_enabled=magnetic,
+            )
+            config = bridge_stageA_forensics_make_audit_config(
+                "369",
+                "feedforward_best_magnetic_bias",
+                "369",
+                physics_base,
+                "stageA_budget_forensics",
+                "budget_forensics",
+                f"{tuned_label}_{case_name}",
+                offset,
+                generated_damping=damping_value if damping else 0.0,
+                no_servo=True,
+                reference_role_override="diagnostic_forensics",
+            )
+            meta: Dict[str, float | str] = {
+                "analysis_track": "budget_forensics",
+                "forensics_seed": tuned_label,
+                "forensics_case": case_name,
+                "drive_enabled": str(drive),
+                "damping_enabled": str(damping),
+                "nonlinear_enabled": str(nonlinear),
+                "spark_enabled": str(spark),
+                "magnetic_enabled": str(magnetic),
+                "validation_test": "baseline",
+            }
+            specs.append(("budget_forensics", case_name, config, meta))
+        full_base = bridge_stageA_forensics_physics_base(
+            base_369,
+            drive_enabled=True,
+            damping_enabled=True,
+            nonlinear_enabled=True,
+            spark_enabled=True,
+            magnetic_enabled=True,
+        )
+        full_config = bridge_stageA_forensics_make_audit_config(
+            "369",
+            "feedforward_best_magnetic_bias",
+            "369",
+            full_base,
+            "stageA_budget_forensics",
+            "budget_forensics",
+            f"{tuned_label}_drive_plus_full_model",
+            offset,
+            generated_damping=damping_value,
+            no_servo=True,
+            reference_role_override="diagnostic_forensics",
+        )
+        for validation in ("half_dt", "quarter_dt"):
+            specs.append((
+                "budget_forensics",
+                f"{tuned_label}_{validation}",
+                full_config,
+                {
+                    "analysis_track": "budget_forensics",
+                    "forensics_seed": tuned_label,
+                    "forensics_case": "drive_plus_full_model",
+                    "drive_enabled": "True",
+                    "damping_enabled": "True",
+                    "nonlinear_enabled": "True",
+                    "spark_enabled": "True",
+                    "magnetic_enabled": "True",
+                    "validation_test": validation,
+                },
+            ))
+    return specs
+
+
+def bridge_stageA_forensics_search_values(include_sweeps: bool) -> Tuple[List[float], List[float], List[float], List[float], List[float]]:
+    if include_sweeps:
+        return (
+            [0.018, 0.022, 0.026, 0.030, 0.034, 0.038],
+            [0.85, 0.95, 1.00, 1.05, 1.15],
+            [1.00, 0.95, 0.90, 0.85],
+            [-0.015, -0.0075, 0.0, 0.0075, 0.015],
+            [0.0, 0.02, 0.04, 0.06],
+        )
+    return (
+        [0.026, 0.030, 0.034],
+        [0.95, 1.00, 1.05],
+        [1.00, 0.90],
+        [0.0],
+        [0.0, 0.04],
+    )
+
+
+def bridge_stageA_forensics_search_specs(include_sweeps: bool) -> List[Tuple[str, str, BridgeStageABudgetAuditConfig, Dict[str, float | str]]]:
+    offsets, damping_factors, coupling_scales, stage_b_detunings, limiter_strengths = bridge_stageA_forensics_search_values(include_sweeps)
+    specs: List[Tuple[str, str, BridgeStageABudgetAuditConfig, Dict[str, float | str]]] = []
+    moderate_q = 0.92
+    for target_family, seed_family, family, base_config in bridge_stageA_budget_audit_base_templates():
+        for offset in offsets:
+            for damping_factor in damping_factors:
+                for coupling_scale in coupling_scales:
+                    for stage_b_detuning in stage_b_detunings:
+                        for limiter in limiter_strengths:
+                            generated_damping = moderate_q * damping_factor
+                            audit_type = (
+                                f"a{safe_token(offset)}_q{safe_token(damping_factor)}"
+                                f"_c{safe_token(coupling_scale)}_b{safe_token(stage_b_detuning)}"
+                                f"_l{safe_token(limiter)}"
+                            )
+                            config = bridge_stageA_forensics_make_audit_config(
+                                target_family,
+                                seed_family,
+                                family,
+                                base_config,
+                                "stageA_budget_forensics",
+                                "compensation_search",
+                                audit_type,
+                                offset,
+                                generated_damping=generated_damping,
+                                coupling_scale=coupling_scale,
+                                limiter_strength=limiter,
+                                stage_b_static_detuning=stage_b_detuning,
+                                no_servo=False,
+                                reference_role_override="discovery_candidate" if family == "369" else "control",
+                            )
+                            meta: Dict[str, float | str] = {
+                                "analysis_track": "compensation_search",
+                                "forensics_seed": "tight_compensation_grid",
+                                "forensics_case": "compensation_search",
+                                "stage_A_offset": offset,
+                                "generated_damping_factor": damping_factor,
+                                "generated_damping": generated_damping,
+                                "coupling_reduction": coupling_scale,
+                                "stage_B_detuning_offset": stage_b_detuning,
+                                "limiter_strength": limiter,
+                                "validation_test": "baseline",
+                            }
+                            specs.append(("compensation_search", audit_type, config, meta))
+    return specs
+
+
+def bridge_stageA_forensics_budget_growth_rate(ledger: List[Dict[str, float | str]]) -> float:
+    if len(ledger) < 2:
+        return 0.0
+    t = np.asarray([float(r.get("time", 0.0)) for r in ledger])
+    e = np.asarray([float(r.get("energy_budget_error_rel", 0.0)) for r in ledger])
+    if len(t) >= 6 and float(np.max(t) - np.min(t)) > 1e-12:
+        return float(np.polyfit(t, e, 1)[0])
+    return float((e[-1] - e[0]) / max(t[-1] - t[0], 1e-12))
+
+
+def bridge_stageA_forensics_measure(config: BridgeStageABudgetAuditConfig,
+                                    meta: Dict[str, float | str],
+                                    seed: int,
+                                    quick: bool,
+                                    dt: float,
+                                    runtime: float,
+                                    sample_every: int,
+                                    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                    ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]]]:
+    row, series = bridge_stageA_budget_measure(config, seed, quick, dt, runtime, sample_every, direct_cache)
+    ledger_rows = [r for r in series if "energy_budget_error_rel" in r and "time" in r]
+    final_ledger = ledger_rows[-1] if ledger_rows else {}
+    row["experiment"] = "bridge_stageA_budget_forensics"
+    row["analysis_track"] = meta.get("analysis_track", "")
+    row["forensics_seed"] = meta.get("forensics_seed", "")
+    row["forensics_case"] = meta.get("forensics_case", "")
+    row["validation_test"] = meta.get("validation_test", "baseline")
+    row["budget_error_growth_rate"] = bridge_stageA_forensics_budget_growth_rate(ledger_rows)
+    row["energy_budget_error_abs"] = abs(float(final_ledger.get("energy_budget_error_abs", 0.0)))
+    row["max_energy_budget_error_abs"] = max((abs(float(r.get("energy_budget_error_abs", 0.0))) for r in ledger_rows), default=0.0)
+    row["max_energy_budget_error"] = row.get("max_energy_budget_error", row.get("energy_budget_error", 0.0))
+    row["stored_energy_delta"] = row.get("stored_energy_delta", 0.0)
+    row["nonlinear_potential_delta"] = row.get("nonlinear_potential_delta", 0.0)
+    row["magnetic_loss"] = row.get("magnetic_loss", 0.0)
+    for key, value in meta.items():
+        row[key] = value
+    row["candidate_id"] = f"{row.get('case')}:{row.get('runtime_factor', config.runtime_factor)}x:{row.get('validation_test')}"
+    row["half_dt_preserved"] = "False"
+    row["quarter_dt_preserved"] = "False"
+    row["non369_controls_do_not_beat"] = "False"
+    row["promotion_ready"] = "False"
+    row["passed"] = "False"
+    bridge_stageA_forensics_update_score(row)
+    for item in series:
+        item["experiment"] = "bridge_stageA_budget_forensics"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["analysis_track"] = row["analysis_track"]
+        item["forensics_case"] = row["forensics_case"]
+        item["forensics_seed"] = row["forensics_seed"]
+        item["validation_test"] = row["validation_test"]
+    return row, series
+
+
+def bridge_stageA_forensics_core_pass(row: Dict[str, float | str],
+                                      require_validation: bool = False,
+                                      require_non369: bool = False) -> bool:
+    base = (
+        str(row.get("analysis_track")) == "compensation_search"
+        and str(row.get("target_family")) == "369"
+        and str(row.get("reference_role")) == "discovery_candidate"
+        and float(row.get("runtime_factor", 1.0)) >= 4.0
+        and float(row.get("target_phase_lock", 0.0)) > 0.90
+        and float(row.get("target_phase_slip_count", 99.0)) == 0.0
+        and float(row.get("max_target_phase_jump", 99.0)) < 1.0
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.35
+        and float(row.get("pre_slip_generated_instability", 99.0)) < 0.15
+        and float(row.get("bridge_ratio", 0.0)) > 2.0
+        and float(row.get("spectral_purity_target", 0.0)) > 0.85
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+        and float(row.get("stabilizer_work_fraction", 1.0)) < 0.002
+        and str(row.get("no_direct_2f_drive", "False")) == "True"
+        and str(row.get("no_direct_3f_drive", "False")) == "True"
+        and str(row.get("no_target_frequency_injection", "False")) == "True"
+    )
+    if require_validation:
+        base = base and str(row.get("half_dt_preserved", "False")) == "True" and str(row.get("quarter_dt_preserved", "False")) == "True"
+    if require_non369:
+        base = base and str(row.get("non369_controls_do_not_beat", "False")) == "True"
+    return base
+
+
+def bridge_stageA_forensics_update_score(row: Dict[str, float | str]) -> None:
+    lock = float(row.get("target_phase_lock", 0.0))
+    slips = float(row.get("target_phase_slip_count", 99.0))
+    jump = float(row.get("max_target_phase_jump", 99.0))
+    cv = float(row.get("generated_envelope_cv", 99.0))
+    pre_slip = float(row.get("pre_slip_generated_instability", 99.0))
+    bridge_ratio = float(row.get("bridge_ratio", 0.0))
+    purity = float(row.get("spectral_purity_target", 0.0))
+    budget = float(row.get("energy_budget_error", 1.0))
+    max_budget = float(row.get("max_energy_budget_error", budget))
+    work = float(row.get("stabilizer_work_fraction", 1.0))
+    normalized = (
+        (1.0 if slips == 0.0 else 0.22 / (1.0 + slips))
+        * max(0.0, lock)
+        * max(0.0, purity)
+        * min(4.0, max(0.0, bridge_ratio))
+        / (
+            1.0
+            + 1.5 * max(0.0, jump)
+            + 4.0 * max(0.0, cv)
+            + 8.0 * max(0.0, pre_slip)
+            + 900.0 * max(0.0, budget)
+            + 120.0 * max(0.0, max_budget)
+            + 1500.0 * max(0.0, work)
+        )
+    )
+    failures = []
+    if str(row.get("analysis_track")) != "compensation_search":
+        failures.append("diagnostic_forensics_row")
+    if float(row.get("runtime_factor", 1.0)) < 4.0:
+        failures.append("not_4x_runtime")
+    if lock <= 0.90:
+        failures.append("target_phase_lock")
+    if slips != 0.0:
+        failures.append("target_phase_slip_count")
+    if jump >= 1.0:
+        failures.append("max_target_phase_jump")
+    if cv >= 0.35:
+        failures.append("generated_envelope_cv")
+    if pre_slip >= 0.15:
+        failures.append("pre_slip_generated_instability")
+    if bridge_ratio <= 2.0:
+        failures.append("bridge_ratio")
+    if purity <= 0.85:
+        failures.append("spectral_purity_target")
+    if budget >= 0.005:
+        failures.append("energy_budget")
+    if work >= 0.002:
+        failures.append("stabilizer_work_fraction")
+    if str(row.get("no_direct_2f_drive", "False")) != "True" or str(row.get("no_direct_3f_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+    if str(row.get("reference_role")) != "discovery_candidate":
+        failures.append("reference_or_control")
+    core_no_validation = bridge_stageA_forensics_core_pass(row, require_validation=False, require_non369=False)
+    if core_no_validation and str(row.get("half_dt_preserved", "False")) != "True":
+        failures.append("half_dt_validation")
+    if core_no_validation and str(row.get("quarter_dt_preserved", "False")) != "True":
+        failures.append("quarter_dt_validation")
+    if core_no_validation and str(row.get("non369_controls_do_not_beat", "False")) != "True":
+        failures.append("non369_control")
+
+    if "diagnostic_forensics_row" in failures:
+        failure_mode = "budget_forensics_only"
+    elif "energy_budget" in failures:
+        failure_mode = "budget_artifact"
+    elif "target_phase_slip_count" in failures or "max_target_phase_jump" in failures:
+        failure_mode = "target_phase_slips"
+    elif "generated_envelope_cv" in failures or "pre_slip_generated_instability" in failures:
+        failure_mode = "generated_stage_instability"
+    elif "target_phase_lock" in failures:
+        failure_mode = "weak_target_lock"
+    elif "non369_control" in failures:
+        failure_mode = "non369_control_stronger"
+    elif failures:
+        failure_mode = failures[0]
+    else:
+        failure_mode = "promotion_ready"
+
+    budget_clean = budget < 0.005 and work < 0.002
+    passed = bridge_stageA_forensics_core_pass(row, require_validation=True, require_non369=True)
+    row["budget_normalized_score"] = normalized
+    row["bridge_stageA_budget_forensics_score"] = normalized if str(row.get("reference_role")) == "discovery_candidate" and budget_clean and str(row.get("analysis_track")) == "compensation_search" else 0.0
+    row["score"] = row["bridge_stageA_budget_forensics_score"]
+    row["pre_validation_pass"] = str(core_no_validation)
+    row["passed"] = str(passed)
+    row["promotion_ready"] = str(passed)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+
+
+def bridge_stageA_forensics_annotate_non369(rows: List[Dict[str, float | str]]) -> None:
+    non369_best = max(
+        [
+            float(r.get("budget_normalized_score", 0.0))
+            for r in rows
+            if str(r.get("analysis_track")) == "compensation_search"
+            and str(r.get("target_family")) != "369"
+            and float(r.get("energy_budget_error", 1.0)) < 0.005
+            and float(r.get("stabilizer_work_fraction", 1.0)) < 0.002
+        ],
+        default=0.0,
+    )
+    for row in rows:
+        row["best_budget_clean_non369_score"] = non369_best
+        if str(row.get("target_family")) == "369":
+            row["non369_controls_do_not_beat"] = str(float(row.get("budget_normalized_score", 0.0)) > non369_best * 1.02)
+        bridge_stageA_forensics_update_score(row)
+
+
+def bridge_stageA_forensics_apply_validation(candidate: Dict[str, float | str],
+                                             validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt"), {})
+
+    def preserved(row: Dict[str, float | str]) -> bool:
+        if not row:
+            return False
+        return (
+            float(row.get("target_phase_lock", 0.0)) > 0.90
+            and float(row.get("target_phase_slip_count", 99.0)) == 0.0
+            and float(row.get("max_target_phase_jump", 99.0)) < 1.0
+            and float(row.get("generated_envelope_cv", 99.0)) < 0.35
+            and float(row.get("pre_slip_generated_instability", 99.0)) < 0.15
+            and float(row.get("energy_budget_error", 1.0)) < 0.005
+            and float(row.get("stabilizer_work_fraction", 1.0)) < 0.002
+        )
+
+    candidate["half_dt_preserved"] = str(preserved(half))
+    candidate["quarter_dt_preserved"] = str(preserved(quarter))
+    candidate["half_dt_energy_budget_error"] = float(half.get("energy_budget_error", 0.0))
+    candidate["quarter_dt_energy_budget_error"] = float(quarter.get("energy_budget_error", 0.0))
+    candidate["half_dt_target_phase_lock"] = float(half.get("target_phase_lock", 0.0))
+    candidate["quarter_dt_target_phase_lock"] = float(quarter.get("target_phase_lock", 0.0))
+    candidate["half_dt_target_phase_slip_count"] = float(half.get("target_phase_slip_count", 0.0))
+    candidate["quarter_dt_target_phase_slip_count"] = float(quarter.get("target_phase_slip_count", 0.0))
+    bridge_stageA_forensics_update_score(candidate)
+
+
+def bridge_stageA_forensics_validation(config: BridgeStageABudgetAuditConfig,
+                                       seed: int,
+                                       quick: bool,
+                                       dt: float,
+                                       runtime: float,
+                                       sample_every: int
+                                       ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [("half_dt", dt * 0.5, seed + 613), ("quarter_dt", dt * 0.25, seed + 1013)]
+    rows: List[Dict[str, float | str]] = []
+    series_rows: List[Dict[str, float | str]] = []
+    for validation_name, test_dt, test_seed in tests:
+        direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+        meta: Dict[str, float | str] = {
+            "analysis_track": "compensation_search",
+            "forensics_seed": "dt_validation",
+            "forensics_case": "compensation_search",
+            "validation_test": validation_name,
+        }
+        row, series = bridge_stageA_forensics_measure(config, meta, test_seed, quick, test_dt, runtime, sample_every, direct_cache)
+        rows.append(row)
+        series_rows.extend(series)
+    return rows, series_rows
+
+
+def write_bridge_stageA_budget_forensics_report(out_dir: Path,
+                                                ranked: List[Dict[str, float | str]],
+                                                forensics_rows: List[Dict[str, float | str]],
+                                                validation_rows: List[Dict[str, float | str]]) -> None:
+    search_rows = [r for r in ranked if str(r.get("analysis_track")) == "compensation_search"]
+    best_369 = max([r for r in search_rows if str(r.get("target_family")) == "369"], key=lambda r: (float(r.get("bridge_stageA_budget_forensics_score", 0.0)), float(r.get("budget_normalized_score", 0.0))), default={})
+    best_zero_slip = max([r for r in search_rows if str(r.get("target_family")) == "369" and float(r.get("target_phase_slip_count", 99.0)) == 0.0], key=lambda r: float(r.get("budget_normalized_score", 0.0)), default={})
+    budget_clean_zero_slip = max([r for r in search_rows if str(r.get("target_family")) == "369" and float(r.get("target_phase_slip_count", 99.0)) == 0.0 and float(r.get("energy_budget_error", 1.0)) < 0.005], key=lambda r: float(r.get("budget_normalized_score", 0.0)), default={})
+    non369_budget_best = max([float(r.get("budget_normalized_score", 0.0)) for r in search_rows if str(r.get("target_family")) != "369" and float(r.get("energy_budget_error", 1.0)) < 0.005 and float(r.get("stabilizer_work_fraction", 1.0)) < 0.002], default=0.0)
+    no_drive_rows = [r for r in forensics_rows if str(r.get("forensics_case", "")).startswith("no_drive")]
+    no_drive_budget = max([float(r.get("energy_budget_error", 0.0)) for r in no_drive_rows], default=0.0)
+    no_drive_abs = max([float(r.get("max_energy_budget_error_abs", 0.0)) for r in no_drive_rows], default=0.0)
+    by_case: Dict[str, Dict[str, float | str]] = {}
+    for row in forensics_rows:
+        case = str(row.get("forensics_case", ""))
+        if case not in by_case or float(row.get("max_energy_budget_error_abs", 0.0)) > float(by_case[case].get("max_energy_budget_error_abs", 0.0)):
+            by_case[case] = row
+    subsystem = max(by_case.values(), key=lambda r: float(r.get("max_energy_budget_error_abs", 0.0)), default={})
+    full_rows = [
+        r for r in forensics_rows
+        if str(r.get("forensics_case")) == "drive_plus_full_model"
+    ]
+    subsystem_rel = max(
+        [
+            r for r in forensics_rows
+            if str(r.get("forensics_case", "")).startswith("drive")
+            and str(r.get("forensics_case")) != "drive_only_no_servo"
+        ],
+        key=lambda r: float(r.get("energy_budget_error", 0.0)),
+        default={},
+    )
+    full_baseline_budget = max([float(r.get("energy_budget_error", 0.0)) for r in full_rows if str(r.get("validation_test")) == "baseline"], default=0.0)
+    full_refined_budget = min([float(r.get("energy_budget_error", 1.0)) for r in full_rows if str(r.get("validation_test")) in {"half_dt", "quarter_dt"}], default=1.0)
+    ledger_missing = full_baseline_budget >= 0.005 and full_refined_budget < 0.005
+    no_drive_answer = "yes in relative terms, but only as a tiny-denominator artifact" if no_drive_budget >= 0.005 and no_drive_abs < 1e-6 else ("yes" if no_drive_budget >= 0.005 else "no")
+    if any(str(r.get("promotion_ready")) == "True" for r in search_rows):
+        next_step = "full sweeps around the promoted compensation basin"
+    elif ledger_missing:
+        next_step = "ledger repair focused on driven nonlinear/damping accounting"
+    elif budget_clean_zero_slip:
+        next_step = "predictive servo timing on the budget-clean zero-slip basin"
+    elif best_zero_slip:
+        next_step = "full sweeps around the near-clean zero-slip compensation basin"
+    else:
+        next_step = "geometry/evolve only after budget-clean generated-stage behavior appears"
+
+    lines = [
+        "# Bridge Stage A Budget Forensics Report",
+        "",
+        "This mode asks whether the Stage A tuned no-slip basin is genuinely non-budget-clean or whether the energy ledger is incomplete in that regime, then searches a narrow compensation grid.",
+        "",
+        "## Direct Answers",
+        f"1. Does budget error exist with no drive/no servo? {no_drive_answer}; worst_no_drive_relative={no_drive_budget:.6g}, worst_no_drive_abs={no_drive_abs:.6g}.",
+        f"2. Which subsystem introduces the budget error? The gate-relevant relative error appears in driven full-model rows; largest driven relative row: {subsystem_rel.get('forensics_seed', '')} / {subsystem_rel.get('forensics_case', '')}, rel_budget={float(subsystem_rel.get('energy_budget_error', 0.0)):.6g}, abs_budget={float(subsystem_rel.get('max_energy_budget_error_abs', 0.0)):.6g}. Largest absolute transient row was {subsystem.get('forensics_case', '')}, abs_budget={float(subsystem.get('max_energy_budget_error_abs', 0.0)):.6g}.",
+        f"3. Nonconservative basin or missing ledger term? {'ledger/numerical mismatch is suspected because half-dt/quarter-dt reduce final full-model budget below gate' if ledger_missing else 'evidence points to the tuned driven configuration being budget-sensitive under current accounting'}; full_baseline_budget={full_baseline_budget:.6g}, best_refined_budget={full_refined_budget:.6g}.",
+        f"4. Can compensation reduce budget below 0.005 while preserving zero slips? {'yes' if budget_clean_zero_slip else 'not in this run'}; clean_zero_slip_budget={float(budget_clean_zero_slip.get('energy_budget_error', 0.0)):.6g}, clean_zero_slip_lock={float(budget_clean_zero_slip.get('target_phase_lock', 0.0)):.6g}, best_clean_zero_slip={budget_clean_zero_slip.get('candidate_id', 'none')}.",
+        f"5. Does any 369 row become promotion-ready? {'yes' if any(str(r.get('promotion_ready')) == 'True' for r in search_rows if str(r.get('target_family')) == '369') else 'no'}.",
+        f"6. Do non-369 controls produce a budget-clean winner? {'yes' if non369_budget_best > 0.0 else 'no'}; best_clean_non369_score={non369_budget_best:.6g}.",
+        f"7. Next step: {next_step}.",
+        "",
+        "## Budget Forensics Rows",
+    ]
+    for row in sorted(forensics_rows, key=lambda r: (str(r.get("forensics_seed", "")), str(r.get("forensics_case", "")), str(r.get("validation_test", ""))))[:40]:
+        lines.append(
+            f"- {row.get('forensics_seed')} / {row.get('forensics_case')} / {row.get('validation_test')}: "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, max_budget={float(row.get('max_energy_budget_error', 0.0)):.6g}, abs_budget={float(row.get('max_energy_budget_error_abs', 0.0)):.6g}, "
+            f"growth={float(row.get('budget_error_growth_rate', 0.0)):.6g}, stored_delta={float(row.get('stored_energy_delta', 0.0)):.6g}, "
+            f"drive={float(row.get('drive_input_work', 0.0)):.6g}, damping={float(row.get('damping_loss', 0.0)):.6g}, "
+            f"spark={float(row.get('spark_loss', 0.0)):.6g}, magnetic={float(row.get('magnetic_loss', 0.0)):.6g}, "
+            f"nonlinear_delta={float(row.get('nonlinear_potential_delta', 0.0)):.6g}"
+        )
+    lines.extend(["", "## Ranked Compensation Rows"])
+    for row in search_rows[:32]:
+        lines.append(
+            f"- {row.get('candidate_id')}: family={row.get('target_family')}, lock={float(row.get('target_phase_lock', 0.0)):.6g}, "
+            f"slips={float(row.get('target_phase_slip_count', 0.0)):.6g}, jump={float(row.get('max_target_phase_jump', 0.0)):.6g}, "
+            f"cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+            f"max_budget={float(row.get('max_energy_budget_error', 0.0)):.6g}, work={float(row.get('stabilizer_work_fraction', 0.0)):.6g}, "
+            f"score={float(row.get('budget_normalized_score', 0.0)):.6g}, failure={row.get('failure_mode')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Dt Validation Rows"])
+        for row in validation_rows[:16]:
+            lines.append(
+                f"- {row.get('case')} / {row.get('validation_test')}: lock={float(row.get('target_phase_lock', 0.0)):.6g}, "
+                f"slips={float(row.get('target_phase_slip_count', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+                f"cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, work={float(row.get('stabilizer_work_fraction', 0.0)):.6g}"
+            )
+    (out_dir / "README_BRIDGE_STAGEA_BUDGET_FORENSICS_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_stageA_budget_forensics(out_dir: Path, seed: int, quick: bool = False,
+                                              include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    runtime = base_tmax * 1.25 * 4.0
+    summary_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    config_by_case: Dict[str, BridgeStageABudgetAuditConfig] = {}
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+
+    for idx, (sweep, value, config, meta) in enumerate(bridge_stageA_forensics_isolated_specs()):
+        validation = str(meta.get("validation_test", "baseline"))
+        test_dt = dt * 0.5 if validation == "half_dt" else dt * 0.25 if validation == "quarter_dt" else dt
+        row, series = bridge_stageA_forensics_measure(config, meta, seed + idx * 421, quick, test_dt, runtime, sample_every, direct_cache)
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        summary_rows.append(row)
+        timeseries_rows.extend(series)
+
+    search_specs = bridge_stageA_forensics_search_specs(include_sweeps)
+    for idx, (sweep, value, config, meta) in enumerate(search_specs):
+        row, series = bridge_stageA_forensics_measure(config, meta, seed + 18000 + idx * 431, quick, dt, runtime, sample_every, direct_cache)
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        summary_rows.append(row)
+        timeseries_rows.extend(series)
+        config_by_case[str(row.get("case"))] = config
+
+    bridge_stageA_forensics_annotate_non369(summary_rows)
+    search_rows = [r for r in summary_rows if str(r.get("analysis_track")) == "compensation_search"]
+    ranked = sorted(
+        search_rows,
+        key=lambda r: (
+            float(r.get("bridge_stageA_budget_forensics_score", 0.0)),
+            1.0 if float(r.get("target_phase_slip_count", 99.0)) == 0.0 else 0.0,
+            1.0 if float(r.get("energy_budget_error", 1.0)) < 0.005 else 0.0,
+            float(r.get("target_phase_lock", 0.0)),
+            float(r.get("spectral_purity_target", 0.0)),
+            float(r.get("bridge_ratio", 0.0)),
+            -float(r.get("generated_envelope_cv", 99.0)),
+            -float(r.get("stabilizer_work_fraction", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    validation_rows: List[Dict[str, float | str]] = []
+    top_369 = [r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("reference_role")) == "discovery_candidate"][:3 if include_sweeps else 2]
+    for idx, candidate in enumerate(top_369):
+        config = config_by_case.get(str(candidate.get("case")))
+        if config is None:
+            continue
+        rows, series = bridge_stageA_forensics_validation(config, seed + 99000 + idx * 1000, quick, dt, runtime, sample_every)
+        validation_rows.extend(rows)
+        timeseries_rows.extend(series)
+        bridge_stageA_forensics_apply_validation(candidate, validation_rows)
+
+    bridge_stageA_forensics_annotate_non369(summary_rows)
+    ranked = sorted(
+        search_rows,
+        key=lambda r: (
+            float(r.get("bridge_stageA_budget_forensics_score", 0.0)),
+            1.0 if float(r.get("target_phase_slip_count", 99.0)) == 0.0 else 0.0,
+            1.0 if float(r.get("energy_budget_error", 1.0)) < 0.005 else 0.0,
+            float(r.get("target_phase_lock", 0.0)),
+            float(r.get("spectral_purity_target", 0.0)),
+            float(r.get("bridge_ratio", 0.0)),
+            -float(r.get("generated_envelope_cv", 99.0)),
+            -float(r.get("stabilizer_work_fraction", 1.0)),
+        ),
+        reverse=True,
+    )
+    forensics_rows = [r for r in summary_rows if str(r.get("analysis_track")) == "budget_forensics"]
+    write_csv(out_dir / "bridge_stageA_budget_forensics_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "bridge_stageA_budget_forensics_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_stageA_budget_forensics_timeseries.csv", timeseries_rows)
+    write_bridge_stageA_budget_forensics_report(out_dir, ranked, forensics_rows, validation_rows)
+    return [
+        {
+            "experiment": "bridge_stageA_budget_forensics",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_stageA_budget_forensics_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "target_family": row.get("target_family", ""),
+            "analysis_track": row.get("analysis_track", ""),
+            "target_phase_lock": row.get("target_phase_lock", 0.0),
+            "target_phase_slip_count": row.get("target_phase_slip_count", 0.0),
+            "generated_envelope_cv": row.get("generated_envelope_cv", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "max_energy_budget_error": row.get("max_energy_budget_error", 0.0),
+            "stabilizer_work_fraction": row.get("stabilizer_work_fraction", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -15512,8 +16248,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -15574,6 +16310,8 @@ def main() -> None:
         rows.extend(experiment_bridge_generated_stage_stabilizer(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_stageA_budget_audit",):
         rows.extend(experiment_bridge_stageA_budget_audit(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_stageA_budget_forensics",):
+        rows.extend(experiment_bridge_stageA_budget_forensics(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 
