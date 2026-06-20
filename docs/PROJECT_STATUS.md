@@ -24,12 +24,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Precomputed drift feedforward ramps do not currently hold 4x phase lock, even with tiny counted work.
 - PI phase servo improves the 3 -> 6 -> 9 phase lock modestly, but non-369 controls still look stronger on phase lock.
 - Emergent-lock diagnostics find a small pulled local 3 -> 6 -> 9 target near 9.02, but not a stable >0.90 emergent phase lock.
+- Phase-slip audit points to discrete phase slips driven by generated-6 envelope instability, not a clean stable pulled-frequency lock.
 
 ## Current Blocker
 
 No passive model has passed the strict 4x runtime lock gate.
 
-The main 4x failure is phase drift. Some candidates also accumulate unacceptable energy-budget error over long runtime.
+The main 4x failure is now more specifically phase slips in the 3 -> 6 -> 9 target lock. Some non-369 controls also accumulate unacceptable energy-budget error over long runtime.
 
 ## Latest Magnetic Autolock Summary
 
@@ -157,13 +158,40 @@ Quick smoke result from `runs/bridge_emergent_lock_quick_smoke`:
 - Non-369 controls reached emergent phase lock around 0.982-0.998, but failed promotion by energy-budget error.
 - Current read: the failure is still mostly nominal-target drift or broad harmonic behavior, not a stable pulled-frequency lock.
 
+## Latest Phase Slip Audit Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode bridge_phase_slip_audit
+python tesla_369_lab.py --mode bridge_phase_slip_audit --quick
+python tesla_369_lab.py --mode bridge_phase_slip_audit --sweeps
+```
+
+What it tests:
+
+- Whether the 3 -> 6 -> 9 lock failure is smooth drift or discrete phase slips.
+- 3 -> 6 -> 9, 4 -> 8 -> 12, and 5 -> 10 -> 15 under no-servo, receiver-tuning servo, Stage B detuning servo, and magnetic-bias servo rows.
+- Sliding-window generated-2f phase error, target-3f phase error, unwrapped phase, instantaneous drift, fitted target, amplitude envelopes, spectral purity, bridge ratio, correction lag, damping loss, spark loss, and budget error.
+- Event metrics: phase-slip count, mean time between slips, max phase jump, drift before slip, amplitude drop before slip, generated-stage instability, correction lag, and budget spikes.
+
+Quick smoke result from `runs/bridge_phase_slip_audit_quick_smoke`:
+
+- Best 3 -> 6 -> 9 row: `stage_B_detuning_servo` on `feedforward_best_magnetic_bias`.
+- Metrics: emergent phase lock 0.733, fitted target 9.0226, bridge ratio 3.226, spectral purity 0.929, budget error 0.00109, servo work fraction 0.000197.
+- Failure style: discrete phase slips, with 4 detected slips and max phase jump about 3.11 radians.
+- Generated 6 destabilized before target lock loss: generated-envelope CV 0.586 and pre-slip instability 0.341.
+- Target amplitude breathing was not the main predictor; target amplitude/drift correlation was about -0.443 and pre-slip amplitude drop was about 0.101.
+- Servo correction lag was high in the top 369 row, about 2.36, but the root fix is generated-6 stabilization.
+- Non-369 controls reached high lock by violating budget: best 4 -> 8 -> 12 budget error was about 0.044 and 5 -> 10 -> 15 was about 0.20.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run `bridge_emergent_lock --sweeps` only if we need broader confirmation of the pulled-frequency diagnostic across seeds, dt, and tuning.
-2. Treat non-369 controls as first-class competitors because they still beat 3 -> 6 -> 9 on raw phase lock.
-3. Move to passive tuning or a full PLL only if the goal is active stabilization rather than proving 3 -> 6 -> 9 uniqueness.
+1. Target generated-6 stabilization first: damp or tune the 2f stage so the generated envelope stops slipping before the 3f target.
+2. Then revisit servo timing, because current corrections arrive late relative to the slips.
+3. Treat non-369 controls as first-class competitors because they still beat 3 -> 6 -> 9 on raw phase lock, while failing budget.
 4. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

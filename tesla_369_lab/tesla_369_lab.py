@@ -12916,6 +12916,619 @@ def experiment_bridge_emergent_lock(out_dir: Path, seed: int, quick: bool = Fals
 
 
 # ----------------------------
+# Experiment 22: bridge phase-slip audit
+# ----------------------------
+
+def bridge_phase_slip_audit_family_templates() -> List[Tuple[str, str, str, BridgeMinNudgeConfig]]:
+    return [
+        (
+            "369",
+            "feedforward_best_magnetic_bias",
+            "369",
+            bridge_phase_servo_template(
+                "feedforward_best_magnetic_bias",
+                receiver_tuning=8.90,
+                phase_bias=30.0,
+                stage_b_strength=0.84,
+            ),
+        ),
+        ("4812", "non369_4_8_12", "non369", bridge_phase_servo_non369_template(4.0, 12.0)),
+        ("51015", "non369_5_10_15", "non369", bridge_phase_servo_non369_template(5.0, 15.0)),
+    ]
+
+
+def bridge_phase_slip_audit_make_config(target_family: str,
+                                        seed_family: str,
+                                        family: str,
+                                        base_config: BridgeMinNudgeConfig,
+                                        actuator_type: str,
+                                        control_mode: str,
+                                        kp: float,
+                                        ki: float,
+                                        clamp: float,
+                                        smoothing: float,
+                                        update_interval: float,
+                                        suffix: str = "") -> BridgePhaseServoConfig:
+    reference = "discovery_candidate" if family == "369" else "control"
+    config = bridge_phase_servo_make_config(
+        target_family,
+        seed_family,
+        base_config,
+        actuator_type,
+        kp,
+        ki,
+        clamp,
+        smoothing,
+        update_interval,
+        runtime_factor=4.0,
+        control_mode=control_mode,
+        reference_role=reference,
+        family=family,
+        suffix=suffix,
+    )
+    return replace(
+        config,
+        name=config.name.replace("phase_servo", "phase_slip_audit", 1),
+        note="diagnostic phase-slip audit only; promotion gates unchanged",
+    )
+
+
+def bridge_phase_slip_audit_specs(include_sweeps: bool) -> List[Tuple[str, str, BridgePhaseServoConfig]]:
+    gain_sets = [("gentle_pi", 0.0015, 0.000020, 0.018, 0.18, 2.0)]
+    if include_sweeps:
+        gain_sets.append(("modest_pi", 0.0030, 0.000045, 0.024, 0.22, 1.5))
+    specs: List[Tuple[str, str, BridgePhaseServoConfig]] = []
+    for target_family, seed_family, family, base_config in bridge_phase_slip_audit_family_templates():
+        baseline = bridge_phase_slip_audit_make_config(
+            target_family,
+            seed_family,
+            family,
+            base_config,
+            "receiver_tuning_servo",
+            "no_servo",
+            0.0,
+            0.0,
+            0.0,
+            0.18,
+            2.0,
+            suffix="baseline",
+        )
+        specs.append(("no_servo_baseline", seed_family, baseline))
+        for actuator_type in BRIDGE_PHASE_SERVO_ACTUATORS:
+            for label, kp, ki, clamp, smoothing, update_interval in gain_sets:
+                specs.append((
+                    label,
+                    seed_family,
+                    bridge_phase_slip_audit_make_config(
+                        target_family,
+                        seed_family,
+                        family,
+                        base_config,
+                        actuator_type,
+                        "normal",
+                        kp,
+                        ki,
+                        clamp,
+                        smoothing,
+                        update_interval,
+                        suffix=label,
+                    ),
+                ))
+    return specs
+
+
+def bridge_phase_slip_nearest_ledger(ledger: List[Dict[str, float | str]],
+                                     time_value: float) -> Dict[str, float | str]:
+    if not ledger:
+        return {}
+    times = np.asarray([float(item.get("time", 0.0)) for item in ledger])
+    idx = int(np.searchsorted(times, time_value))
+    if idx <= 0:
+        return ledger[0]
+    if idx >= len(times):
+        return ledger[-1]
+    before = idx - 1
+    after = idx
+    return ledger[before] if abs(times[before] - time_value) <= abs(times[after] - time_value) else ledger[after]
+
+
+def bridge_phase_slip_cv(values: np.ndarray) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean_abs = float(np.mean(np.abs(values)))
+    if mean_abs <= 1e-18:
+        return 0.0
+    return float(np.std(values) / mean_abs)
+
+
+def bridge_phase_slip_corr(a: np.ndarray, b: np.ndarray) -> float:
+    if len(a) < 3 or len(b) < 3:
+        return 0.0
+    n = min(len(a), len(b))
+    aa = np.asarray(a[:n], dtype=float)
+    bb = np.asarray(b[:n], dtype=float)
+    if float(np.std(aa)) <= 1e-18 or float(np.std(bb)) <= 1e-18:
+        return 0.0
+    return float(np.corrcoef(aa, bb)[0, 1])
+
+
+def bridge_phase_slip_coalesced_indices(indices: np.ndarray, min_separation: int = 2) -> List[int]:
+    events: List[int] = []
+    last = -1000000
+    for raw_idx in indices:
+        idx = int(raw_idx)
+        if idx - last >= min_separation:
+            events.append(idx)
+            last = idx
+        elif events and idx > events[-1]:
+            events[-1] = idx
+            last = idx
+    return events
+
+
+def bridge_phase_slip_audit_timeseries(config: BridgeAmpConfig,
+                                       sim: Dict[str, object],
+                                       direct_sim: Dict[str, object] | None,
+                                       ledger: List[Dict[str, float | str]],
+                                       start_fraction: float = 0.50,
+                                       end_fraction: float = 1.0,
+                                       base_hz: float = 0.045
+                                       ) -> Tuple[List[Dict[str, float | str]], Dict[str, float | str]]:
+    times = sim["times"]  # type: ignore[assignment]
+    qs = sim["qs"]  # type: ignore[assignment]
+    vs = sim["vs"]  # type: ignore[assignment]
+    energy = sim["energy"]  # type: ignore[assignment]
+    omega = sim["omega"]  # type: ignore[assignment]
+    drive_until = float(sim["drive_until"])
+    dt_sample = float(sim["dt_sample"])
+    if len(times) < 40:
+        return [], {
+            "phase_slip_count": 0,
+            "mean_time_between_phase_slips": 0.0,
+            "max_phase_jump": 0.0,
+            "failure_mode": "smooth_phase_drift",
+        }
+
+    start_idx = int(np.searchsorted(times, start_fraction * drive_until))
+    stop_idx = int(np.searchsorted(times, end_fraction * drive_until))
+    start_idx = max(0, min(start_idx, len(times) - 2))
+    stop_idx = max(start_idx + 2, min(stop_idx, len(times)))
+    window = max(30, int(6.0 / max(dt_sample, 1e-9)))
+    step = max(6, window // 5)
+
+    direct_times = direct_sim["times"] if direct_sim else None  # type: ignore[index]
+    direct_qs = direct_sim["qs"] if direct_sim else None  # type: ignore[index]
+    direct_vs = direct_sim["vs"] if direct_sim else None  # type: ignore[index]
+    direct_omega = direct_sim["omega"] if direct_sim else None  # type: ignore[index]
+
+    raw_rows: List[Dict[str, float | str]] = []
+    for start in range(start_idx, max(start_idx + 1, stop_idx - window), step):
+        stop = min(start + window, stop_idx)
+        if stop - start < 12:
+            continue
+        t_win = times[start:stop]
+        q_win = qs[start:stop]
+        v_win = vs[start:stop]
+        e_win = energy[start:stop]
+        local_sim = {
+            "times": t_win,
+            "qs": q_win,
+            "vs": v_win,
+            "energy": e_win,
+            "omega": omega,
+            "drive_until": float(t_win[-1]),
+            "dt_sample": dt_sample,
+        }
+        fitted, target_energy, _ = bridge_emergent_lock_peak_frequency(
+            config,
+            local_sim,
+            0.0,
+            1.0,
+            span_fraction=0.025,
+            n_grid=51,
+            base_hz=base_hz,
+        )
+        source_amp = complex_projection(q_win[:, 0], t_win, base_hz * config.mode_freqs[0])
+        generated_amp = complex_projection(q_win[:, 1], t_win, base_hz * config.target_6)
+        target_amp = complex_projection(q_win[:, 2], t_win, base_hz * fitted)
+        phase_error_generated = float(wrap_angle(2.0 * float(np.angle(source_amp)) - float(np.angle(generated_amp))))
+        phase_error_target = float(wrap_angle(float(np.angle(source_amp)) + float(np.angle(generated_amp)) - float(np.angle(target_amp))))
+        generated_energy = target_mode_energy(q_win[:, 1], v_win[:, 1], t_win, base_hz * config.target_6, float(omega[1]))
+        total_target_energy = float(np.mean(e_win[:, 2]) + 1e-18)
+        direct_target_energy = 0.0
+        if direct_sim is not None and direct_times is not None and direct_qs is not None and direct_vs is not None and direct_omega is not None:
+            dmask = (direct_times >= float(t_win[0])) & (direct_times <= float(t_win[-1]))
+            if int(np.sum(dmask)) >= 4:
+                direct_target_energy = target_mode_energy(
+                    direct_qs[dmask, 2],
+                    direct_vs[dmask, 2],
+                    direct_times[dmask],
+                    base_hz * fitted,
+                    float(direct_omega[2]),
+                )
+        time_mid = float(np.mean(t_win))
+        ledger_row = bridge_phase_slip_nearest_ledger(ledger, time_mid)
+        raw_rows.append({
+            "time_mid": time_mid,
+            "phase_error_generated_2f": phase_error_generated,
+            "phase_error_target_3f": phase_error_target,
+            "fitted_effective_target_frequency": fitted,
+            "target_frequency_delta": fitted - float(config.target_9),
+            "generated_2f_amplitude_envelope": float(abs(generated_amp)),
+            "target_3f_amplitude_envelope": float(abs(target_amp)),
+            "energy_generated": generated_energy,
+            "energy_target": target_energy,
+            "energy_generated_over_energy_target": metric_ratio(generated_energy, target_energy),
+            "spectral_purity_target": float(min(1.0, target_energy / total_target_energy)),
+            "bridge_ratio": metric_ratio(target_energy, direct_target_energy),
+            "correction_value": float(ledger_row.get("correction_value", 0.0)),
+            "energy_budget_error": float(ledger_row.get("energy_budget_error_rel", sim.get("energy_budget_error_rel", 1.0))),
+            "damping_loss": float(ledger_row.get("damping_loss", sim.get("damping_loss", 0.0))),
+            "spark_loss": float(ledger_row.get("spark_loss", sim.get("spark_loss", 0.0))),
+        })
+
+    if not raw_rows:
+        return [], {
+            "phase_slip_count": 0,
+            "mean_time_between_phase_slips": 0.0,
+            "max_phase_jump": 0.0,
+            "failure_mode": "smooth_phase_drift",
+        }
+
+    t_mid = np.asarray([float(r["time_mid"]) for r in raw_rows])
+    target_phase = np.asarray([float(r["phase_error_target_3f"]) for r in raw_rows])
+    generated_phase = np.asarray([float(r["phase_error_generated_2f"]) for r in raw_rows])
+    unwrapped_target = np.unwrap(target_phase)
+    unwrapped_generated = np.unwrap(generated_phase)
+    correction = np.asarray([float(r["correction_value"]) for r in raw_rows])
+    if len(t_mid) >= 2:
+        instantaneous_drift = np.gradient(unwrapped_target, t_mid)
+        generated_phase_drift = np.gradient(unwrapped_generated, t_mid)
+        correction_derivative = np.gradient(correction, t_mid)
+    else:
+        instantaneous_drift = np.zeros_like(t_mid)
+        generated_phase_drift = np.zeros_like(t_mid)
+        correction_derivative = np.zeros_like(t_mid)
+
+    phase_step = np.abs(np.diff(unwrapped_target)) if len(unwrapped_target) >= 2 else np.asarray([])
+    median_step = float(np.median(phase_step)) if len(phase_step) else 0.0
+    slip_threshold = max(1.05, 3.0 * median_step + 0.05)
+    slip_events = bridge_phase_slip_coalesced_indices(np.where(phase_step > slip_threshold)[0] + 1)
+    max_phase_jump = float(np.max(phase_step)) if len(phase_step) else 0.0
+    if len(slip_events) >= 2:
+        mean_time_between = float(np.mean(np.diff(t_mid[slip_events])))
+    else:
+        mean_time_between = 0.0
+
+    generated_amp = np.asarray([float(r["generated_2f_amplitude_envelope"]) for r in raw_rows])
+    target_amp = np.asarray([float(r["target_3f_amplitude_envelope"]) for r in raw_rows])
+    budget = np.asarray([float(r["energy_budget_error"]) for r in raw_rows])
+    purity = np.asarray([float(r["spectral_purity_target"]) for r in raw_rows])
+    bridge_ratio = np.asarray([float(r["bridge_ratio"]) for r in raw_rows])
+    abs_drift = np.abs(instantaneous_drift)
+    target_amp_cv = bridge_phase_slip_cv(target_amp)
+    generated_amp_cv = bridge_phase_slip_cv(generated_amp)
+    target_amp_drift_corr = bridge_phase_slip_corr(target_amp, abs_drift)
+    generated_amp_drift_corr = bridge_phase_slip_corr(generated_amp, abs_drift)
+    target_amp_phase_corr = bridge_phase_slip_corr(target_amp, np.abs(unwrapped_target))
+
+    drift_before_values: List[float] = []
+    amplitude_drop_values: List[float] = []
+    generated_instability_values: List[float] = []
+    correction_lag_values: List[float] = []
+    budget_spike_values: List[float] = []
+    for event_idx in slip_events:
+        pre_start = max(0, event_idx - 4)
+        pre_stop = max(pre_start + 1, event_idx)
+        post_stop = min(len(t_mid), event_idx + 4)
+        baseline_start = max(0, pre_start - 6)
+        baseline_stop = max(baseline_start + 1, pre_start)
+        drift_before_values.append(float(np.mean(abs_drift[pre_start:pre_stop])) if pre_stop > pre_start else 0.0)
+        baseline_amp = float(np.median(target_amp[baseline_start:baseline_stop])) if baseline_stop > baseline_start else float(np.median(target_amp[:max(event_idx, 1)]))
+        pre_min_amp = float(np.min(target_amp[pre_start:event_idx + 1])) if event_idx + 1 > pre_start else baseline_amp
+        amplitude_drop_values.append(max(0.0, 1.0 - metric_ratio(pre_min_amp, baseline_amp)))
+        generated_instability_values.append(bridge_phase_slip_cv(generated_amp[pre_start:event_idx + 1]))
+        before_corr = float(np.max(np.abs(correction_derivative[pre_start:pre_stop]))) if pre_stop > pre_start else 0.0
+        after_corr = float(np.max(np.abs(correction_derivative[event_idx:post_stop]))) if post_stop > event_idx else 0.0
+        correction_lag_values.append(metric_ratio(after_corr, before_corr + 1e-12))
+        baseline_budget = float(np.median(budget[baseline_start:baseline_stop])) if baseline_stop > baseline_start else float(np.median(budget[:max(event_idx, 1)]))
+        pre_budget = float(np.max(budget[pre_start:event_idx + 1])) if event_idx + 1 > pre_start else baseline_budget
+        budget_spike_values.append(max(0.0, metric_ratio(pre_budget, baseline_budget + 1e-12) - 1.0))
+
+    drift_before_slip = float(np.mean(drift_before_values)) if drift_before_values else 0.0
+    amplitude_drop_before_slip = float(np.mean(amplitude_drop_values)) if amplitude_drop_values else 0.0
+    generated_instability_before_slip = float(np.mean(generated_instability_values)) if generated_instability_values else 0.0
+    correction_lag_before_slip = float(np.mean(correction_lag_values)) if correction_lag_values else 0.0
+    budget_spike_before_slip = float(np.mean(budget_spike_values)) if budget_spike_values else 0.0
+
+    rows: List[Dict[str, float | str]] = []
+    slip_event_set = set(slip_events)
+    for idx, row in enumerate(raw_rows):
+        rr = dict(row)
+        rr["unwrapped_phase_error_target"] = float(unwrapped_target[idx])
+        rr["unwrapped_phase_error_generated_2f"] = float(unwrapped_generated[idx])
+        rr["instantaneous_phase_drift_rate"] = float(instantaneous_drift[idx])
+        rr["generated_2f_phase_drift_rate"] = float(generated_phase_drift[idx])
+        rr["correction_derivative"] = float(correction_derivative[idx])
+        rr["phase_slip_event"] = str(idx in slip_event_set)
+        rows.append(rr)
+
+    phase_span = float(np.max(unwrapped_target) - np.min(unwrapped_target)) if len(unwrapped_target) else 0.0
+    mean_abs_drift = float(np.mean(abs_drift)) if len(abs_drift) else 0.0
+    phase_loss_style = "phase_slips" if len(slip_events) >= 2 or max_phase_jump > 1.75 else "smooth_drift"
+    max_budget = float(np.max(budget)) if len(budget) else float(sim.get("energy_budget_error_rel", 1.0))
+    min_purity = float(np.min(purity)) if len(purity) else 0.0
+    min_bridge_ratio = float(np.min(bridge_ratio)) if len(bridge_ratio) else 0.0
+
+    if max_budget >= 0.005 or budget_spike_before_slip > 2.5:
+        failure_mode = "budget_artifact"
+    elif min_bridge_ratio < 0.75 or min_purity < 0.60:
+        failure_mode = "bridge_collapse"
+    elif len(slip_events) >= 2 or max_phase_jump > 1.75:
+        failure_mode = "discrete_phase_slips"
+    elif generated_instability_before_slip > 0.22 or generated_amp_cv > 0.35 or abs(generated_amp_drift_corr) > 0.45:
+        failure_mode = "generated_stage_instability"
+    elif amplitude_drop_before_slip > 0.12 or abs(target_amp_drift_corr) > 0.45 or abs(target_amp_phase_corr) > 0.45:
+        failure_mode = "amplitude_phase_coupling"
+    elif float(sim.get("correction_peak", 0.0)) > 0.0 and correction_lag_before_slip > 1.4 and drift_before_slip > 0.02:
+        failure_mode = "servo_lag"
+    else:
+        failure_mode = "smooth_phase_drift"
+
+    summary = {
+        "phase_slip_count": len(slip_events),
+        "mean_time_between_phase_slips": mean_time_between,
+        "max_phase_jump": max_phase_jump,
+        "drift_before_slip": drift_before_slip,
+        "amplitude_drop_before_slip": amplitude_drop_before_slip,
+        "generated_2f_instability_before_slip": generated_instability_before_slip,
+        "correction_lag_before_slip": correction_lag_before_slip,
+        "budget_spike_before_slip": budget_spike_before_slip,
+        "mean_abs_phase_drift_rate": mean_abs_drift,
+        "phase_error_target_span": phase_span,
+        "target_amplitude_cv": target_amp_cv,
+        "generated_2f_amplitude_cv": generated_amp_cv,
+        "target_amplitude_drift_correlation": target_amp_drift_corr,
+        "target_amplitude_phase_correlation": target_amp_phase_corr,
+        "generated_amplitude_drift_correlation": generated_amp_drift_corr,
+        "phase_loss_style": phase_loss_style,
+        "min_sliding_spectral_purity_target": min_purity,
+        "min_sliding_bridge_ratio": min_bridge_ratio,
+        "max_sliding_energy_budget_error": max_budget,
+        "failure_mode": failure_mode,
+    }
+    return rows, summary
+
+
+def bridge_phase_slip_audit_measure(config: BridgePhaseServoConfig, seed: int, quick: bool,
+                                    dt: float, runtime: float, sample_every: int,
+                                    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                    ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]]]:
+    sim, ledger = simulate_bridge_phase_servo(config, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    target_key = f"{effective.mode_freqs[0]:g}:{effective.target_6:g}:{effective.target_9:g}"
+    cache_key = (target_key, dt, runtime)
+    if cache_key not in direct_cache:
+        direct_cfg = bridge_min_nudge_direct_reference(effective)
+        direct_sim, direct_ledger = simulate_bridge_amp(direct_cfg, seed + 11300, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 11300, "direct_reference", "direct_source_plus_generated", "reference", 0.35, 1.0)
+        direct_cache[cache_key] = (direct_sim, direct_row)
+    direct_sim, direct_row = direct_cache[cache_key]
+
+    nominal_row = bridge_metrics_window(effective, sim, seed, "phase_slip_audit", config.control_mode, f"{config.kp:g}:{config.ki:g}", 0.35, 1.0)
+    diagnostic_rows, emergent_summary = bridge_emergent_lock_diagnostics(effective, sim, direct_sim, 0.50, 1.0)
+    timeseries_rows, slip_summary = bridge_phase_slip_audit_timeseries(effective, sim, direct_sim, ledger, 0.50, 1.0)
+    row = dict(nominal_row)
+    row.update(emergent_summary)
+    row.update(slip_summary)
+    total_input_before = max(float(row.get("total_input_work", 0.0)), 1e-18)
+    total_input_with_servo = total_input_before + float(sim["servo_work"])
+    row["experiment"] = "bridge_phase_slip_audit"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:{config.runtime_factor:g}x"
+    row["target_family"] = config.target_family
+    row["source_frequency"] = effective.mode_freqs[0]
+    row["generated_frequency"] = effective.target_6
+    row["nominal_target"] = effective.target_9
+    row["actuator_type"] = config.actuator_type
+    row["correction_type"] = config.correction_type
+    row["control_mode"] = config.control_mode
+    row["Kp"] = config.kp
+    row["Ki"] = config.ki
+    row["correction_clamp"] = config.correction_clamp
+    row["smoothing"] = config.smoothing
+    row["update_interval"] = config.update_interval
+    row["runtime_factor"] = config.runtime_factor
+    row["seed_family"] = config.seed_family
+    row["reference_role"] = config.reference_role
+    row["family"] = config.family
+    row["nominal_phase_lock_target"] = row.get("nominal_phase_lock_target", row.get("phase_lock_9", 0.0))
+    row["phase_lock_target"] = row.get("emergent_phase_lock_target", row.get("phase_lock_9", 0.0))
+    row["spectral_purity_target"] = row.get("spectral_purity_target", row.get("spectral_purity_9", 0.0))
+    row["nominal_bridge_ratio"] = metric_ratio(float(row.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0)))
+    row["total_input_work_before_servo"] = total_input_before
+    row["total_input_work"] = total_input_with_servo
+    row["servo_work"] = float(sim["servo_work"])
+    row["servo_work_signed"] = float(sim["servo_work_signed"])
+    row["servo_work_fraction"] = metric_ratio(float(sim["servo_work"]), total_input_with_servo)
+    row["correction_work"] = row["servo_work"]
+    row["correction_work_fraction"] = row["servo_work_fraction"]
+    row["correction_rms"] = float(sim["correction_rms"])
+    row["correction_peak"] = float(sim["correction_peak"])
+    row["correction_final"] = float(sim["correction_final"])
+    row["damping_loss"] = float(sim["damping_loss"])
+    row["spark_loss"] = float(sim["spark_loss"])
+    row["no_direct_2f_drive"] = str(not any(abs(freq - effective.target_6) < 1e-9 and mode == 1 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_direct_3f_drive"] = str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_target_frequency_injection"] = row["no_direct_3f_drive"]
+    row["promotion_ready"] = "False"
+    row["passed"] = "False"
+    row["diagnostic_only"] = "True"
+    row["note"] = config.note
+
+    diagnostic_priority = (
+        min(3.5, float(row.get("bridge_ratio", 0.0)))
+        * float(row.get("spectral_purity_target", 0.0))
+        * (1.0 + max(0.0, 0.90 - float(row.get("phase_lock_target", 0.0))))
+        * (1.0 + 0.12 * float(row.get("phase_slip_count", 0.0)))
+        / (
+            1.0
+            + 500.0 * max(0.0, float(row.get("energy_budget_error", 0.0)))
+            + 125.0 * max(0.0, float(row.get("servo_work_fraction", 0.0)))
+        )
+    )
+    row["bridge_phase_slip_audit_score"] = diagnostic_priority
+    row["score"] = diagnostic_priority
+
+    for item in timeseries_rows:
+        item["experiment"] = "bridge_phase_slip_audit"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["target_family"] = config.target_family
+        item["actuator_type"] = config.actuator_type
+        item["control_mode"] = config.control_mode
+        item["runtime_factor"] = config.runtime_factor
+    for item in diagnostic_rows:
+        item["experiment"] = "bridge_phase_slip_audit"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["target_family"] = config.target_family
+        item["actuator_type"] = config.actuator_type
+        item["control_mode"] = config.control_mode
+        item["runtime_factor"] = config.runtime_factor
+        item["diagnostic_type"] = "emergent_frequency_window"
+    return row, timeseries_rows + diagnostic_rows
+
+
+def bridge_phase_slip_next_fix(row: Dict[str, float | str]) -> str:
+    mode = str(row.get("failure_mode", "smooth_phase_drift"))
+    if mode == "budget_artifact":
+        return "budget repair"
+    generated_unstable = (
+        mode == "generated_stage_instability"
+        or float(row.get("generated_2f_instability_before_slip", 0.0)) > 0.22
+        or float(row.get("generated_2f_amplitude_cv", 0.0)) > 0.35
+    )
+    if generated_unstable:
+        return "generated-6 stabilization"
+    if mode == "servo_lag":
+        return "servo timing"
+    if mode == "amplitude_phase_coupling" or mode == "bridge_collapse":
+        return "passive damping"
+    if abs(float(row.get("target_frequency_delta", row.get("detuning_delta", 0.0)))) > 0.005 or str(row.get("phase_loss_style")) == "smooth_drift":
+        return "isochronous receiver tuning"
+    return "passive damping"
+
+
+def write_bridge_phase_slip_audit_report(out_dir: Path,
+                                         ranked: List[Dict[str, float | str]]) -> None:
+    best_369 = max([r for r in ranked if str(r.get("target_family")) == "369"], key=lambda r: float(r.get("bridge_phase_slip_audit_score", 0.0)), default={})
+    best_by_family: Dict[str, Dict[str, float | str]] = {}
+    for family in ["369", "4812", "51015"]:
+        family_rows = [r for r in ranked if str(r.get("target_family")) == family]
+        if family_rows:
+            best_by_family[family] = max(family_rows, key=lambda r: float(r.get("bridge_phase_slip_audit_score", 0.0)))
+    non369 = [r for r in ranked if str(r.get("target_family")) != "369"]
+    non369_budget_break = any(float(r.get("energy_budget_error", 0.0)) >= 0.005 for r in non369 if float(r.get("phase_lock_target", 0.0)) > 0.90)
+    generated_unstable = float(best_369.get("generated_2f_instability_before_slip", 0.0)) > 0.22 or float(best_369.get("generated_2f_amplitude_cv", 0.0)) > 0.35
+    target_breathing = abs(float(best_369.get("target_amplitude_drift_correlation", 0.0))) > 0.45 or float(best_369.get("amplitude_drop_before_slip", 0.0)) > 0.12
+    servo_late = str(best_369.get("control_mode")) != "no_servo" and float(best_369.get("correction_lag_before_slip", 0.0)) > 1.4
+    next_fix = bridge_phase_slip_next_fix(best_369)
+    lines = [
+        "# Bridge Phase Slip Audit Report",
+        "",
+        "Diagnostic-only audit. This mode does not relax or promote any discovery gates.",
+        "",
+        "## Direct Answers",
+        f"1. Does 369 lose lock by smooth drift or phase slips? {best_369.get('phase_loss_style', 'unknown')}; slips={int(float(best_369.get('phase_slip_count', 0)))}, max_jump={float(best_369.get('max_phase_jump', 0.0)):.6g}, failure_mode={best_369.get('failure_mode', '')}.",
+        f"2. Does generated 6 destabilize before 9 loses lock? {'yes' if generated_unstable else 'no'}; generated_cv={float(best_369.get('generated_2f_amplitude_cv', 0.0)):.6g}, pre_slip_instability={float(best_369.get('generated_2f_instability_before_slip', 0.0)):.6g}.",
+        f"3. Does target amplitude breathing predict phase drift? {'yes' if target_breathing else 'no'}; target_amp_drift_corr={float(best_369.get('target_amplitude_drift_correlation', 0.0)):.6g}, amp_drop_before_slip={float(best_369.get('amplitude_drop_before_slip', 0.0)):.6g}.",
+        f"4. Does the servo act too late? {'yes' if servo_late else 'no'}; correction_lag_before_slip={float(best_369.get('correction_lag_before_slip', 0.0)):.6g}, correction_peak={float(best_369.get('correction_peak', 0.0)):.6g}.",
+        f"5. Do non-369 controls achieve high lock by spending hidden/budget-breaking energy? {'yes' if non369_budget_break else 'no'}; best_non369_budget={max([float(r.get('energy_budget_error', 0.0)) for r in non369], default=0.0):.6g}.",
+        f"6. Exact next fix recommended: {next_fix}.",
+        "",
+        "## Best By Family",
+    ]
+    for family, row in best_by_family.items():
+        lines.append(
+            f"- {family}: case={row.get('candidate_id')}, mode={row.get('control_mode')}, actuator={row.get('actuator_type')}, "
+            f"lock={float(row.get('phase_lock_target', 0.0)):.6g}, fitted={float(row.get('fitted_effective_target_frequency', 0.0)):.6g}, "
+            f"delta={float(row.get('detuning_delta', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+            f"work={float(row.get('servo_work_fraction', 0.0)):.6g}, slips={int(float(row.get('phase_slip_count', 0)))}, "
+            f"phase_style={row.get('phase_loss_style')}, failure={row.get('failure_mode')}, next={bridge_phase_slip_next_fix(row)}"
+        )
+    lines.extend(["", "## Ranked Rows"])
+    for row in ranked[:24]:
+        lines.append(
+            f"- {row.get('candidate_id')}: family={row.get('target_family')}, mode={row.get('control_mode')}, actuator={row.get('actuator_type')}, "
+            f"nominal={float(row.get('nominal_phase_lock_target', 0.0)):.6g}, emergent={float(row.get('phase_lock_target', 0.0)):.6g}, "
+            f"fitted={float(row.get('fitted_effective_target_frequency', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+            f"work={float(row.get('servo_work_fraction', 0.0)):.6g}, slips={int(float(row.get('phase_slip_count', 0)))}, "
+            f"max_jump={float(row.get('max_phase_jump', 0.0)):.6g}, amp_corr={float(row.get('target_amplitude_drift_correlation', 0.0)):.6g}, "
+            f"gen_cv={float(row.get('generated_2f_amplitude_cv', 0.0)):.6g}, failure={row.get('failure_mode')}"
+        )
+    (out_dir / "README_BRIDGE_PHASE_SLIP_AUDIT_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_phase_slip_audit(out_dir: Path, seed: int, quick: bool = False,
+                                       include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    specs = bridge_phase_slip_audit_specs(include_sweeps)
+    summary_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    runtime = base_tmax * 1.25 * 4.0
+    for idx, (sweep, value, config) in enumerate(specs):
+        row, series = bridge_phase_slip_audit_measure(config, seed + idx * 353, quick, dt, runtime, sample_every, direct_cache)
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        summary_rows.append(row)
+        timeseries_rows.extend(series)
+
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            1.0 if str(r.get("target_family")) == "369" else 0.0,
+            float(r.get("bridge_phase_slip_audit_score", 0.0)),
+            float(r.get("spectral_purity_target", 0.0)),
+            float(r.get("bridge_ratio", 0.0)),
+            -float(r.get("energy_budget_error", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    write_csv(out_dir / "bridge_phase_slip_audit_summary.csv", summary_rows)
+    write_csv(out_dir / "bridge_phase_slip_audit_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_phase_slip_audit_timeseries.csv", timeseries_rows)
+    write_bridge_phase_slip_audit_report(out_dir, ranked)
+    return [
+        {
+            "experiment": "bridge_phase_slip_audit",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_phase_slip_audit_score", 0.0),
+            "passed": "False",
+            "promotion_ready": "False",
+            "target_family": row.get("target_family", ""),
+            "phase_lock_target": row.get("phase_lock_target", 0.0),
+            "fitted_effective_target_frequency": row.get("fitted_effective_target_frequency", 0.0),
+            "phase_slip_count": row.get("phase_slip_count", 0),
+            "phase_loss_style": row.get("phase_loss_style", ""),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "servo_work_fraction": row.get("servo_work_fraction", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "next_fix": bridge_phase_slip_next_fix(row),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -12956,8 +13569,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -13012,6 +13625,8 @@ def main() -> None:
         rows.extend(experiment_bridge_phase_servo(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_emergent_lock",):
         rows.extend(experiment_bridge_emergent_lock(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_phase_slip_audit",):
+        rows.extend(experiment_bridge_phase_slip_audit(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

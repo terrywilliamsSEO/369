@@ -28,11 +28,12 @@ What has not survived yet:
 - Precomputed drift feedforward ramps stayed energetically tiny but did not hold 4x lock in quick smoke.
 - PI phase servo improves the 3 -> 6 -> 9 phase lock modestly, but still does not reach the 4x lock gate.
 - Emergent-lock diagnostics find a small pulled local target near 9.02 for the 3 -> 6 -> 9 bridge, but the fitted-frequency phase lock still stays below the 0.90 gate.
+- Phase-slip audit shows the 3 -> 6 -> 9 bridge loses 4x lock through discrete phase slips, with generated-6 envelope instability before target lock loss.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Use `bridge_emergent_lock --sweeps` only if we need broader confirmation of the pulled-frequency diagnostic across seeds, dt, and tuning.
+- Stabilize generated 6 before trying geometry/evolve or a stronger target servo.
 - 3 -> 6 -> 9 is not uniquely special yet; keep non-369 controls central before geometry/evolve.
 
 ## Repo Map
@@ -83,6 +84,8 @@ python tesla_369_lab.py --mode bridge_phase_servo --quick
 python tesla_369_lab.py --mode bridge_phase_servo --quick --sweeps
 python tesla_369_lab.py --mode bridge_emergent_lock --quick
 python tesla_369_lab.py --mode bridge_emergent_lock --quick --sweeps
+python tesla_369_lab.py --mode bridge_phase_slip_audit --quick
+python tesla_369_lab.py --mode bridge_phase_slip_audit --quick --sweeps
 ```
 
 Key bridge modes:
@@ -98,6 +101,7 @@ python tesla_369_lab.py --mode bridge_control_authority --quick --sweeps
 python tesla_369_lab.py --mode bridge_drift_feedforward --quick --sweeps
 python tesla_369_lab.py --mode bridge_phase_servo --quick --sweeps
 python tesla_369_lab.py --mode bridge_emergent_lock --quick --sweeps
+python tesla_369_lab.py --mode bridge_phase_slip_audit --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -161,3 +165,15 @@ Quick smoke result from `runs/bridge_emergent_lock_quick_smoke`:
 - No `harmonic_bridge_candidate`, `pulled_frequency_discovery`, or `369_unique_candidate` label passed.
 - Non-369 controls had much higher nominal/emergent phase lock, but failed promotion by energy-budget error; after normalized budget/work scoring, the best 369 row scored higher.
 - Current recommendation: treat this as nominal-target drift with a small pulled-frequency component, not a stable emergent-frequency lock. Passive tuning or active PLL remains more justified than geometry/evolve.
+
+## Latest Phase Slip Audit Read
+
+Quick smoke result from `runs/bridge_phase_slip_audit_quick_smoke`:
+
+- Best 3 -> 6 -> 9 audit row again used `stage_B_detuning_servo` on the `feedforward_best_magnetic_bias` seed.
+- It kept the pulled target near 9.0226, bridge ratio 3.226, spectral purity 0.929, budget error 0.00109, and servo work fraction 0.000197.
+- Lock loss was discrete phase slips, not smooth drift: 4 slip events with max phase jump about 3.11 radians.
+- Generated-6 was unstable before target lock loss: generated-envelope CV 0.586 and pre-slip instability 0.341.
+- The servo acted late in the best 369 row: correction lag before slip was about 2.36.
+- Non-369 controls reached high lock, but only with budget-breaking errors around 0.044 for 4->8->12 and 0.20 for 5->10->15.
+- Current recommendation: generated-6 stabilization is the next fix; do not move to geometry/evolve yet.

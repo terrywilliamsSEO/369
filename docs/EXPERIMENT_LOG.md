@@ -172,3 +172,15 @@ Added a pulled-frequency diagnostic track:
 - Keeps direct 2f/3f drive and target-frequency injection out of generated bridge rows.
 - Quick smoke found a reproducible 3 -> 6 -> 9 fitted target near 9.0225, but emergent phase lock only reached about 0.733, below the 0.90 gate.
 - No `harmonic_bridge_candidate`, `pulled_frequency_discovery`, or `369_unique_candidate` label passed. The current read is a small pulled component plus continuing phase drift, not a stable emergent-frequency lock.
+
+## Bridge Phase Slip Audit
+
+Added a diagnostic-only phase-slip audit:
+
+- Starts from the best 369 emergent-lock seed, `feedforward_best_magnetic_bias`, with the pulled target near 9.0226.
+- Compares 3 -> 6 -> 9, 4 -> 8 -> 12, and 5 -> 10 -> 15 under no-servo, receiver-tuning servo, Stage B detuning servo, and magnetic-bias servo rows.
+- Tracks generated-2f phase error, target-3f phase error, unwrapped target phase, instantaneous drift, fitted target, amplitude envelopes, bridge ratio, spectral purity, correction lag, damping loss, spark loss, and budget error.
+- Detects slip events and classifies failures as smooth drift, discrete slips, amplitude-phase coupling, generated-stage instability, servo lag, budget artifact, or bridge collapse.
+- Quick smoke found the 369 bridge loses lock by discrete phase slips: best row had 4 slips, max phase jump about 3.11 radians, bridge ratio 3.226, purity 0.929, and budget error 0.00109.
+- Generated 6 destabilized before target lock loss, and the servo correction lagged the slip timing. Non-369 high-lock controls were budget-breaking.
+- Current next fix: generated-6 stabilization before geometry/evolve or stronger target servo.

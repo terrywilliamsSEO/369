@@ -122,6 +122,12 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Compares 3->6->9 against 4->8->12, 5->10->15, and 6->12->18 under no-servo, receiver-tuning, Stage B detuning, and magnetic-bias servo cases.
    - Keeps direct 2f/3f drive and target-frequency injection out of discovery rows while reporting nominal lock, fitted effective target, emergent lock, detuning drift, work, budget, and dt/seed reproducibility.
 
+22. **Bridge phase-slip audit**
+   - Diagnoses why the high-ratio, high-purity pulled-target bridge still fails phase lock.
+   - Compares 3->6->9 against 4->8->12 and 5->10->15 under no-servo plus receiver-tuning, Stage B detuning, and magnetic-bias servos.
+   - Tracks sliding-window generated-2f phase error, target-3f phase error, unwrapped target phase, instantaneous drift, fitted target, amplitude envelopes, bridge ratio, spectral purity, correction lag, damping loss, spark loss, and energy-budget error.
+   - Detects phase-slip events and classifies failure as smooth drift, discrete slips, amplitude-phase coupling, generated-stage instability, servo lag, budget artifact, or bridge collapse.
+
 ## Install
 
 ```bash
@@ -208,6 +214,10 @@ python tesla_369_lab.py --mode bridge_emergent_lock
 python tesla_369_lab.py --mode bridge_emergent_lock --quick
 python tesla_369_lab.py --mode bridge_emergent_lock --sweeps
 python tesla_369_lab.py --mode bridge_emergent_lock --quick --sweeps
+python tesla_369_lab.py --mode bridge_phase_slip_audit
+python tesla_369_lab.py --mode bridge_phase_slip_audit --quick
+python tesla_369_lab.py --mode bridge_phase_slip_audit --sweeps
+python tesla_369_lab.py --mode bridge_phase_slip_audit --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -300,6 +310,9 @@ bridge_phase_servo_timeseries.csv
 bridge_emergent_lock_summary.csv
 bridge_emergent_lock_ranked.csv
 bridge_emergent_lock_timeseries.csv
+bridge_phase_slip_audit_summary.csv
+bridge_phase_slip_audit_ranked.csv
+bridge_phase_slip_audit_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -326,6 +339,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In bridge minimum nudge mode, can an explicitly accounted tiny tuning correction stabilize 4x lock without overpowering the passive bridge?
 - In bridge lock threshold mode, what is the minimum explicitly accounted correction needed for 4x lock, if any?
 - In bridge emergent lock mode, is nominal 4x phase failure actually a stable pulled-frequency lock, and does 3->6->9 still beat non-369 controls after normalization?
+- In bridge phase-slip audit mode, does target lock fail by smooth drift, discrete slips, generated-6 instability, servo lag, amplitude breathing, or budget artifacts?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results
