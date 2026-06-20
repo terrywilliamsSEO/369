@@ -28,12 +28,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Generated-stage stabilization confirms the lead: raw tuning can remove slips, but the current slip-free row breaks energy budget.
 - Stage A budget audit isolates that failure: static `+0.03` tuning removes slips, but the final tuned configuration still breaks budget even with no servo and no dynamic parameter work.
 - Stage A budget forensics suggests that budget failure is dt-sensitive driven-model accounting, not no-drive nonconservation: half-dt and quarter-dt clean the full-model rows.
+- Harmonic-family mapping shows the strongest normalized quick-smoke row is 5 -> 10 -> 15, not 3 -> 6 -> 9; no family passed the harmonic bridge candidate gate yet.
 
 ## Current Blocker
 
 No passive model has passed the strict 4x runtime lock gate.
 
-The main 4x failure is now split between generated-stage lock quality and driven-model budget accounting. The narrow forensics search found budget-clean zero-slip rows, but they still miss lock/jump/envelope gates.
+The main 4x failure is now split between generated-stage lock quality, driven-model budget accounting, and family specificity. The narrow forensics search found budget-clean zero-slip rows, but they still miss lock/jump/envelope gates. The harmonic-family quick smoke did not support 369 uniqueness.
 
 ## Latest Magnetic Autolock Summary
 
@@ -322,6 +323,33 @@ Quick smoke result from `runs/bridge_limiter_predictive_servo_quick_smoke`:
 - A 5 -> 10 -> 15 control remained much stronger by normalized budget score, so 369 did not beat the controls.
 - Current next fix: general harmonic-bridge study before geometry/evolve; if continuing the 369 branch, try a true active PLL or a more physical limiter redesign.
 
+## Latest Harmonic Bridge Family Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode harmonic_bridge_family --quick
+python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
+```
+
+What it tests:
+
+- Whether staged f->2f->3f bridging is general rather than 369-specific.
+- Families 2->4->6 through 8->16->24.
+- Passive baseline, refined Stage A basin equivalent, adaptive generated damping, envelope-derivative damping, and energy-bucket limiter rows.
+- A `true_PLL_comparator` proxy marked `active_control` and scored separately from passive discovery.
+- Relative and absolute budget error, limiter/servo work, generated/target envelope CV, phase jumps, near slips, normalized family score, and dt preservation at baseline/half/quarter dt for top rows.
+
+Quick smoke result from `runs/harmonic_bridge_family_quick_smoke`:
+
+- Strongest passive normalized family: 5 -> 10 -> 15 passive baseline. Metrics: lock 0.994, bridge ratio 1.122, purity 0.999, budget error 0.000749, generated-envelope CV 0.057, max jump 0.807, normalized score 0.328.
+- 5 -> 10 -> 15 did not promote because bridge ratio stayed below the 1.5 gate.
+- Best 3 -> 6 -> 9 normalized row was passive baseline, but it failed badly on lock/jump/envelope: lock 0.735, generated-envelope CV 0.582, max jump 3.05 rad, and 21 near slips.
+- The prior high-lock 369 adaptive damping row reappeared as a diagnostic: lock 0.968, bridge ratio 2.152, purity 0.991, budget 0.00437, but generated-envelope CV 0.281, max jump 1.744 rad, 22 near slips, and no dt preservation.
+- 4 -> 8 -> 12 was closest to a harmonic candidate: refined Stage A equivalent reached lock 0.984, bridge ratio 1.929, purity 0.992, budget 0.00185, generated-envelope CV 0.126, max jump 1.05 rad, but dt preservation was only 0.667.
+- No family passed `harmonic_bridge_candidate`; no family passed `strict_harmonic_bridge_candidate`; no `369_unique_candidate` or `general_harmonic_bridge_law` label passed.
+- Current read: this does not justify 369-specific promotion. The next step should be family-law mapping before geometry/evolve or a 369-specific PLL.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
@@ -329,6 +357,7 @@ Do not promote to `geometry369` yet.
 Next options:
 
 1. Keep the refined-dt accounting path and continue monitoring absolute/relative budget convergence.
-2. Treat non-369 controls as first-class competitors because 5 -> 10 -> 15 now beats 3 -> 6 -> 9 under normalized budget scoring.
-3. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
-4. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.
+2. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
+3. Map family-law scaling around 4 -> 8 -> 12 and 5 -> 10 -> 15 before a 369-specific PLL.
+4. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
+5. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

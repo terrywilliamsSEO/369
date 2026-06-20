@@ -146,6 +146,21 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Part B searches a narrow compensation grid around Stage A offset, generated-stage damping/Q, A->B coupling, Stage B detuning, and weak passive limiter strength.
    - Reports relative and absolute budget error, budget growth, stored-energy delta, drive work, damping/spark/magnetic loss, nonlinear-potential delta, lock/slip/envelope metrics, and dt validation for top rows.
 
+26. **Bridge Stage A refined basin**
+   - Runs the budget-clean Stage A basin from forensics at half-dt by default.
+   - Maps nearby Stage A offset, generated damping, A->B coupling, passive limiter, and Stage B detuning rows across 3->6->9, 4->8->12, and 5->10->15.
+   - Reports target lock, bridge ratio, purity, relative/absolute budget, generated/target envelope CV, phase jumps, near slips, and dt preservation.
+
+27. **Bridge limiter predictive servo**
+   - Starts from the refined Stage A basin and tests passive limiter redesign, predictive servo timing, and combined limiter/servo rows.
+   - Counts limiter and servo work while keeping direct 2f/3f drive and target-frequency injection out of discovery rows.
+   - Reports envelope CV, phase jumps, near slips, bridge ratio, purity, budget, trigger counts, and dt preservation.
+
+28. **Harmonic bridge family**
+   - Tests whether the staged bridge is a general f->2f->3f family rather than a 369-unique effect.
+   - Compares 2->4->6 through 8->16->24 using passive baseline, refined Stage A basin equivalent, adaptive generated damping, envelope-derivative damping, energy-bucket limiting, and an active PLL comparator proxy.
+   - Scores active PLL rows separately, keeps direct 2f/3f drive and target-frequency injection out of passive discovery rows, and validates top rows at baseline dt, half-dt, and quarter-dt.
+
 ## Install
 
 ```bash
@@ -256,6 +271,8 @@ python tesla_369_lab.py --mode bridge_limiter_predictive_servo
 python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick
 python tesla_369_lab.py --mode bridge_limiter_predictive_servo --sweeps
 python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_family --quick
+python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -366,6 +383,9 @@ bridge_stageA_refined_basin_timeseries.csv
 bridge_limiter_predictive_servo_summary.csv
 bridge_limiter_predictive_servo_ranked.csv
 bridge_limiter_predictive_servo_timeseries.csv
+harmonic_bridge_family_summary.csv
+harmonic_bridge_family_ranked.csv
+harmonic_bridge_family_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -396,6 +416,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In bridge generated-stage stabilizer mode, can budget-clean generated-2f stabilization remove target phase slips and preserve 4x lock?
 - In bridge Stage A budget audit mode, is the slip-free Stage A tuning basin static/passive/budget-clean, or does the final tuned configuration itself break the budget?
 - In bridge Stage A budget forensics mode, is the Stage A budget failure physical nonconservation or a driven-regime ledger/numerical mismatch, and is a nearby budget-clean zero-slip row available?
+- In harmonic bridge family mode, does 3->6->9 beat the broader f->2f->3f family after normalized scoring, or is this a generic harmonic bridge behavior?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results

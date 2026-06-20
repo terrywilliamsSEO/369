@@ -32,11 +32,13 @@ What has not survived yet:
 - Generated-stage stabilization reduced slips only in a budget-breaking raw Stage A tuning row; the best budget-clean damping row improved lock/purity but did not remove slips.
 - Stage A budget audit shows static `+0.03` tuning can remove target slips, but the final tuned configuration itself breaks the budget gate even with no dynamic retuning.
 - Stage A budget forensics suggests the Stage A budget issue is driven-model ledger/numerical sensitivity: no-drive errors are tiny in absolute terms, and half/quarter-dt reduce full-model budget below gate.
+- Harmonic-family mapping now shows 5 -> 10 -> 15 stronger than 3 -> 6 -> 9 under normalized passive scoring, while 4 -> 8 -> 12 is closest to a family candidate.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Stabilize generated 6 before trying geometry/evolve or a stronger target servo.
+- Map the f->2f->3f family law before trying geometry/evolve or a 369-specific stronger target servo.
+- Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
 - 3 -> 6 -> 9 is not uniquely special yet; keep non-369 controls central before geometry/evolve.
 
@@ -100,6 +102,8 @@ python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick
 python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick --sweeps
 python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick
 python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_family --quick
+python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
 ```
 
 Key bridge modes:
@@ -121,6 +125,7 @@ python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick --sweeps
 python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -254,3 +259,14 @@ Quick smoke result from `runs/bridge_limiter_predictive_servo_quick_smoke`:
 - Predictive servo timing fired early enough to measure lead time, but it did not beat passive damping on the actual jump/CV gates.
 - A 5 -> 10 -> 15 control stayed much stronger by normalized budget score, so 369 is not unique under these rules.
 - Current recommendation: general harmonic-bridge study before geometry/evolve; if continuing 369, focus on an active PLL or more physical limiter redesign.
+
+## Latest Harmonic Bridge Family Read
+
+Quick smoke result from `runs/harmonic_bridge_family_quick_smoke`:
+
+- The new mode compares 2->4->6 through 8->16->24 using passive baseline, refined Stage A basin equivalent, adaptive generated damping, envelope-derivative damping, energy-bucket limiting, and an active PLL comparator proxy scored separately.
+- Strongest passive normalized family was 5 -> 10 -> 15 via passive baseline: lock 0.994, purity 0.999, budget 0.000749, generated-envelope CV 0.057, max jump 0.807, score 0.328. It did not promote because bridge ratio was only 1.122, below the 1.5 gate.
+- Best 3 -> 6 -> 9 normalized row was passive baseline by score, but it had lock 0.735, generated-envelope CV 0.582, max jump 3.05 rad, and 21 near slips. The high-lock adaptive/envelope damping rows remained useful diagnostics but were penalized by limiter work and still failed jump/CV preservation.
+- 4 -> 8 -> 12 came closest to a harmonic candidate: refined Stage A equivalent had lock 0.984, bridge ratio 1.929, purity 0.992, budget 0.00185, generated-envelope CV 0.126, and max jump 1.05, but dt preservation was only 0.667.
+- No family passed `harmonic_bridge_candidate`, no family passed strict, and there is not yet evidence for a general harmonic bridge law.
+- Current recommendation: family-law mapping before any 369-specific PLL or geometry/evolve step.

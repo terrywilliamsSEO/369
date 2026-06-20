@@ -246,3 +246,18 @@ Added a limiter/predictive-servo mode:
 - The best high-lock 369 row, passive `adaptive_generated_damping`, reached lock 0.968 at half-dt primary and preserved lock at half/quarter validation, but CV and phase jumps stayed above gate.
 - Predictive servo timing measured lead time before jumps but did not reduce max jump below 1.0 rad.
 - A 5 -> 10 -> 15 control stayed stronger by normalized budget score, so this run argues for a general harmonic-bridge study before geometry/evolve.
+
+## Harmonic Bridge Family
+
+Added a harmonic family mode:
+
+- Compares 2->4->6, 3->6->9, 4->8->12, 5->10->15, 6->12->18, 7->14->21, and 8->16->24.
+- Runs passive baseline, refined Stage A basin equivalent, adaptive generated damping, envelope-derivative damping, energy-bucket limiting, and an optional active PLL comparator proxy.
+- Keeps direct 2f/3f drive and target-frequency injection out of passive discovery rows; active PLL rows are marked `active_control` and scored separately.
+- Reports lock, bridge ratio, purity, relative/absolute budget error, generated/target envelope CV, max phase jump, near slips, limiter/servo work, normalized family score, and dt validation.
+- Quick smoke ran 42 core rows plus baseline/half/quarter-dt validation for top family rows. `--quick --sweeps` expands the grid to 91 rows before validation.
+- Strongest passive normalized family was 5 -> 10 -> 15 passive baseline: lock 0.994, purity 0.999, budget 0.000749, generated-envelope CV 0.057, max jump 0.807, score 0.328. It failed promotion because bridge ratio was 1.122, below the 1.5 gate.
+- 3 -> 6 -> 9 did not beat 5 -> 10 -> 15. Its best normalized row was passive baseline with lock 0.735, generated-envelope CV 0.582, max jump 3.05 rad, and 21 near slips.
+- 4 -> 8 -> 12 came closest to a harmonic candidate: refined Stage A equivalent had lock 0.984, bridge ratio 1.929, purity 0.992, budget 0.00185, generated-envelope CV 0.126, and max jump 1.05 rad, but did not preserve the result across all dt checks.
+- No family passed `harmonic_bridge_candidate`, no family passed strict, and no `general_harmonic_bridge_law` label passed.
+- Current next fix: family-law mapping before geometry/evolve or 369-specific PLL.

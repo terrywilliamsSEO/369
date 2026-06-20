@@ -17792,6 +17792,733 @@ def experiment_bridge_limiter_predictive_servo(out_dir: Path, seed: int, quick: 
 
 
 # ----------------------------
+# Experiment 28: harmonic bridge family
+# ----------------------------
+
+HARMONIC_BRIDGE_FAMILY_SOURCES = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+
+
+def harmonic_bridge_family_label(source: float) -> str:
+    return f"{source:g}->{source * 2.0:g}->{source * 3.0:g}"
+
+
+def harmonic_bridge_family_token(source: float) -> str:
+    return f"{safe_token(source)}_{safe_token(source * 2.0)}_{safe_token(source * 3.0)}"
+
+
+def harmonic_bridge_family_target_token(source: float) -> str:
+    return "".join(str(int(round(value))) for value in (source, source * 2.0, source * 3.0))
+
+
+def harmonic_bridge_family_base_config(source: float) -> Tuple[str, str, str, BridgeMinNudgeConfig]:
+    target = source * 3.0
+    generated = source * 2.0
+    target_family = harmonic_bridge_family_target_token(source)
+    family = "369" if abs(source - 3.0) < 1e-9 else "harmonic_family"
+    seed_family = f"family_{harmonic_bridge_family_token(source)}_seed"
+    magnetic = bridge_min_nudge_non369_seed(source, target)
+    bridge = replace(
+        magnetic.bridge,
+        name=f"harmonic_bridge_family_{harmonic_bridge_family_token(source)}_seed",
+        mode_freqs=(source, generated, target - 0.10),
+        drive_freqs=(source,),
+        drive_modes=(0,),
+        target_6=generated,
+        target_9=target,
+        stage_b_phase_bias_deg=30.0,
+        stage_b_nonlinear_strength=0.84,
+        reference_role="discovery_candidate",
+        family=family,
+        note="harmonic f->2f->3f staged bridge seed; no direct 2f/3f drive",
+    )
+    magnetic = replace(
+        magnetic,
+        name=f"harmonic_bridge_family_magnetic_{harmonic_bridge_family_token(source)}",
+        bridge=bridge,
+        reference_role="discovery_candidate",
+        family=family,
+        note="harmonic family seed with passive magnetic layer",
+    )
+    base = BridgeMinNudgeConfig(
+        name=f"harmonic_bridge_family_base_{harmonic_bridge_family_token(source)}",
+        correction_type="stage_B_detuning_nudge",
+        magnetic_config=magnetic,
+        kp=0.0,
+        correction_clamp=0.0,
+        update_interval=1.0,
+        smoothing=1.0,
+        magnetic_bias_strength=2.0,
+        control_mode="no_nudge",
+        reference_role="discovery_candidate",
+        family=family,
+        note="harmonic family f->2f->3f passive/generated bridge base",
+    )
+    return target_family, seed_family, family, base
+
+
+def harmonic_bridge_family_stage_params(source: float,
+                                        track: str,
+                                        limiter_type: str,
+                                        variant: str = "default") -> Dict[str, float]:
+    scale = source / 3.0
+    params = {
+        "stage_A_offset": 0.0,
+        "generated_damping": 0.0,
+        "coupling_scale": 1.0,
+        "limiter_strength": 0.0,
+        "stage_B_detuning": 0.0,
+        "dynamic_strength": 0.0,
+    }
+    if track == "passive_baseline":
+        return params
+
+    limiter_params = bridge_limiter_predictive_limiter_params(limiter_type)
+    params.update({
+        "stage_A_offset": float(limiter_params["stage_A_offset"]) * scale,
+        "generated_damping": 0.92 * float(limiter_params["generated_damping_factor"]),
+        "coupling_scale": float(limiter_params["coupling_scale"]),
+        "limiter_strength": float(limiter_params["limiter_strength"]),
+        "stage_B_detuning": float(limiter_params["stage_B_detuning"]) * scale,
+        "dynamic_strength": float(limiter_params["dynamic_strength"]),
+    })
+    if track == "refined_stageA_basin_equivalent":
+        params["dynamic_strength"] = 0.0
+    if variant == "light":
+        params["generated_damping"] *= 0.94
+        params["limiter_strength"] *= 0.75
+        params["dynamic_strength"] *= 0.70
+        params["coupling_scale"] = 1.0 - 0.55 * (1.0 - params["coupling_scale"])
+    elif variant == "firm":
+        params["generated_damping"] *= 1.08
+        params["limiter_strength"] *= 1.35
+        params["dynamic_strength"] *= 1.35
+        params["coupling_scale"] = max(0.70, params["coupling_scale"] * 0.96)
+    return params
+
+
+def harmonic_bridge_family_make_config(source: float,
+                                       track: str,
+                                       limiter_type: str,
+                                       actuator_type: str = "none",
+                                       predictive_indicator: str = "none",
+                                       variant: str = "default",
+                                       active_control: bool = False) -> BridgeLimiterPredictiveServoConfig:
+    target_family, seed_family, family, base_config = harmonic_bridge_family_base_config(source)
+    reference_role = "active_control" if active_control else "discovery_candidate"
+    params = harmonic_bridge_family_stage_params(source, track, limiter_type, variant)
+    correction_type = BRIDGE_PREDICTIVE_ACTUATORS.get(actuator_type, "stage_B_detuning_nudge")
+    tuned_base = replace(base_config, correction_type=correction_type, reference_role=reference_role, family=family)
+    actuator = "stage_B_detuning_servo" if actuator_type == "none" else actuator_type.replace("_predictive", "")
+    if active_control:
+        kp, ki, clamp, smoothing, update = 0.0020, 0.000030, 0.026, 0.28, 0.75
+        control_mode = "normal"
+        predictive_gain = 0.010
+        threshold = 0.12
+    else:
+        kp, ki, clamp, smoothing, update = 0.0, 0.0, 0.0, 1.0, 1.0
+        control_mode = "no_servo"
+        predictive_gain = 0.0
+        threshold = 0.20
+    stage = bridge_stageA_forensics_make_audit_config(
+        target_family,
+        seed_family,
+        family,
+        tuned_base,
+        "harmonic_bridge_family",
+        track,
+        f"{limiter_type}_{variant}",
+        float(params["stage_A_offset"]),
+        generated_damping=float(params["generated_damping"]),
+        coupling_scale=float(params["coupling_scale"]),
+        limiter_strength=float(params["limiter_strength"]),
+        stage_b_static_detuning=float(params["stage_B_detuning"]),
+        no_servo=not active_control,
+        reference_role_override=reference_role,
+    )
+    servo = bridge_phase_servo_make_config(
+        target_family,
+        seed_family,
+        tuned_base,
+        actuator,
+        kp,
+        ki,
+        clamp,
+        smoothing,
+        update,
+        runtime_factor=4.0,
+        control_mode=control_mode,
+        reference_role=reference_role,
+        family=family,
+        suffix=f"{track}_{limiter_type}_{variant}_{predictive_indicator}",
+    )
+    name = (
+        f"harmonic_bridge_family_{target_family}_{track}_{limiter_type}_{variant}"
+        f"_{actuator_type}_{predictive_indicator}"
+    )
+    stage = replace(
+        stage,
+        name=name,
+        base_config=replace(stage.base_config, correction_type=correction_type, reference_role=reference_role, family=family),
+        servo_config=servo,
+        note=(
+            "harmonic family passive discovery row; no direct 2f/3f drive and no target-frequency injection"
+            if not active_control
+            else "active PLL comparator proxy; scored separately from passive discovery rows"
+        ),
+    )
+    return BridgeLimiterPredictiveServoConfig(
+        name=name,
+        stage_config=stage,
+        servo_config=servo,
+        track=track,
+        limiter_type=limiter_type,
+        predictive_indicator=predictive_indicator,
+        predictive_gain=predictive_gain,
+        predictive_threshold=threshold,
+        limiter_dynamic_strength=float(params["dynamic_strength"]),
+        runtime_factor=4.0,
+        target_family=target_family,
+        reference_role=reference_role,
+        family=family,
+        note=stage.note,
+    )
+
+
+def harmonic_bridge_family_specs(include_sweeps: bool) -> List[Tuple[str, str, BridgeLimiterPredictiveServoConfig]]:
+    specs: List[Tuple[str, str, BridgeLimiterPredictiveServoConfig]] = []
+    limiter_tracks = [
+        ("adaptive_generated_damping", "adaptive_generated_damping"),
+        ("envelope_derivative_damping", "envelope_derivative_damping"),
+        ("energy_bucket_limiter", "energy_bucket_limiter"),
+    ]
+    variants = ["default", "light", "firm"] if include_sweeps else ["default"]
+    for source in HARMONIC_BRIDGE_FAMILY_SOURCES:
+        specs.append((
+            "passive_baseline",
+            harmonic_bridge_family_label(source),
+            harmonic_bridge_family_make_config(source, "passive_baseline", "existing_limiter"),
+        ))
+        specs.append((
+            "refined_stageA_basin_equivalent",
+            harmonic_bridge_family_label(source),
+            harmonic_bridge_family_make_config(source, "refined_stageA_basin_equivalent", "existing_limiter"),
+        ))
+        for track, limiter_type in limiter_tracks:
+            for variant in variants:
+                specs.append((
+                    track,
+                    f"{harmonic_bridge_family_label(source)}_{variant}",
+                    harmonic_bridge_family_make_config(source, track, limiter_type, variant=variant),
+                ))
+        specs.append((
+            "true_PLL_comparator",
+            harmonic_bridge_family_label(source),
+            harmonic_bridge_family_make_config(
+                source,
+                "true_PLL_comparator",
+                "adaptive_generated_damping",
+                actuator_type="stage_B_detuning_predictive_servo",
+                predictive_indicator="predicted_near_slip_score",
+                variant="default",
+                active_control=True,
+            ),
+        ))
+        if include_sweeps:
+            specs.append((
+                "true_PLL_comparator",
+                f"{harmonic_bridge_family_label(source)}_receiver",
+                harmonic_bridge_family_make_config(
+                    source,
+                    "true_PLL_comparator",
+                    "envelope_derivative_damping",
+                    actuator_type="receiver_tuning_predictive_servo",
+                    predictive_indicator="target_phase_acceleration",
+                    variant="firm",
+                    active_control=True,
+                ),
+            ))
+    return specs
+
+
+def harmonic_bridge_family_broad_pass(row: Dict[str, float | str], require_validation: bool = False) -> bool:
+    base = (
+        str(row.get("reference_role")) == "discovery_candidate"
+        and float(row.get("phase_lock_target", 0.0)) > 0.90
+        and float(row.get("bridge_ratio", 0.0)) > 1.5
+        and float(row.get("spectral_purity_target", 0.0)) > 0.80
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.30
+        and float(row.get("max_phase_jump", 99.0)) < 2.0
+        and str(row.get("no_direct_2f_drive", "False")) == "True"
+        and str(row.get("no_direct_3f_drive", "False")) == "True"
+        and str(row.get("no_target_frequency_injection", "False")) == "True"
+    )
+    if require_validation:
+        base = base and float(row.get("dt_preservation_score", 0.0)) >= 1.0
+    return base
+
+
+def harmonic_bridge_family_strict_pass(row: Dict[str, float | str], require_validation: bool = False) -> bool:
+    base = (
+        harmonic_bridge_family_broad_pass(row, require_validation=False)
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.25
+        and float(row.get("max_phase_jump", 99.0)) < 1.0
+        and float(row.get("near_slip_count", 99.0)) == 0.0
+    )
+    if require_validation:
+        base = base and float(row.get("strict_dt_preservation_score", 0.0)) >= 1.0
+    return base
+
+
+def harmonic_bridge_family_update_score(row: Dict[str, float | str]) -> None:
+    lock = float(row.get("phase_lock_target", 0.0))
+    bridge_ratio = float(row.get("bridge_ratio", 0.0))
+    purity = float(row.get("spectral_purity_target", 0.0))
+    gen_cv = float(row.get("generated_envelope_cv", 99.0))
+    target_cv = float(row.get("target_envelope_cv", 99.0))
+    jump = float(row.get("max_phase_jump", 99.0))
+    near_slips = float(row.get("near_slip_count", 99.0))
+    slips = float(row.get("phase_slip_count", 99.0))
+    budget = float(row.get("energy_budget_error", 1.0))
+    limiter_work = float(row.get("limiter_work_fraction", 1.0))
+    servo_work = float(row.get("servo_work_fraction", 1.0))
+    dt_score = float(row.get("dt_preservation_score", 0.0))
+    score = (
+        max(0.0, lock)
+        * max(0.0, purity)
+        * min(5.0, max(0.0, bridge_ratio))
+        * (1.0 + 0.12 * max(0.0, dt_score))
+        / (
+            1.0
+            + 7.0 * max(0.0, gen_cv)
+            + 1.2 * max(0.0, target_cv)
+            + 1.8 * max(0.0, jump)
+            + 5.5 * max(0.0, near_slips)
+            + 1.6 * max(0.0, slips)
+            + 700.0 * max(0.0, budget)
+            + 300.0 * max(0.0, limiter_work)
+            + 1000.0 * max(0.0, servo_work)
+        )
+    )
+    failures = []
+    if lock <= 0.90:
+        failures.append("phase_lock_target")
+    if bridge_ratio <= 1.5:
+        failures.append("bridge_ratio")
+    if purity <= 0.80:
+        failures.append("spectral_purity_target")
+    if budget >= 0.005:
+        failures.append("energy_budget")
+    if gen_cv >= 0.30:
+        failures.append("generated_envelope_CV")
+    if jump >= 2.0:
+        failures.append("max_phase_jump")
+    if str(row.get("no_direct_2f_drive", "False")) != "True" or str(row.get("no_direct_3f_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+    if str(row.get("no_target_frequency_injection", "False")) != "True":
+        failures.append("target_frequency_injection")
+    if str(row.get("reference_role")) != "discovery_candidate":
+        failures.append("active_or_reference_control")
+
+    broad = harmonic_bridge_family_broad_pass(row, require_validation=True)
+    strict = harmonic_bridge_family_strict_pass(row, require_validation=True)
+    pre_broad = harmonic_bridge_family_broad_pass(row, require_validation=False)
+    pre_strict = harmonic_bridge_family_strict_pass(row, require_validation=False)
+    if pre_broad and float(row.get("dt_preservation_score", 0.0)) < 1.0:
+        failures.append("dt_validation")
+
+    if "active_or_reference_control" in failures:
+        failure_mode = "active_control_comparator"
+    elif "energy_budget" in failures:
+        failure_mode = "budget_artifact"
+    elif "generated_envelope_CV" in failures:
+        failure_mode = "generated_stage_instability"
+    elif "max_phase_jump" in failures:
+        failure_mode = "phase_jump_or_near_slip"
+    elif "phase_lock_target" in failures:
+        failure_mode = "weak_target_lock"
+    elif "dt_validation" in failures:
+        failure_mode = "dt_not_preserved"
+    elif failures:
+        failure_mode = failures[0]
+    else:
+        failure_mode = "harmonic_bridge_candidate"
+
+    row["normalized_family_score"] = score
+    row["budget_normalized_score"] = score
+    row["harmonic_bridge_family_score"] = score if str(row.get("reference_role")) == "discovery_candidate" and budget < 0.005 else 0.0
+    row["active_control_score"] = score if str(row.get("reference_role")) == "active_control" else 0.0
+    row["pre_validation_harmonic_bridge_candidate"] = str(pre_broad)
+    row["pre_validation_strict_harmonic_bridge_candidate"] = str(pre_strict)
+    row["harmonic_bridge_candidate"] = str(broad)
+    row["strict_harmonic_bridge_candidate"] = str(strict)
+    row["passed"] = str(broad)
+    row["promotion_ready"] = str(strict)
+    row["score"] = row["harmonic_bridge_family_score"]
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+
+
+def harmonic_bridge_family_measure(config: BridgeLimiterPredictiveServoConfig,
+                                   seed: int,
+                                   quick: bool,
+                                   dt: float,
+                                   runtime: float,
+                                   sample_every: int,
+                                   direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]],
+                                   validation_test: str) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]]]:
+    row, series = bridge_limiter_predictive_measure(config, seed, quick, dt, runtime, sample_every, direct_cache)
+    effective = config.stage_config.base_config.magnetic_config.bridge
+    source = float(effective.mode_freqs[0])
+    row["experiment"] = "harmonic_bridge_family"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:4.0x:{validation_test}"
+    row["validation_test"] = validation_test
+    row["source_frequency"] = source
+    row["generated_frequency"] = source * 2.0
+    row["target_frequency"] = source * 3.0
+    row["family_label"] = harmonic_bridge_family_label(source)
+    row["family_source"] = source
+    row["target_family"] = config.target_family
+    row["track"] = config.track
+    row["limiter_type"] = config.limiter_type
+    row["reference_role"] = config.reference_role
+    row["discovery_class"] = "active_control" if config.reference_role == "active_control" else "passive_discovery"
+    row["direct_resonance_policy"] = "ceiling_reference_only"
+    row["dt_preservation_score"] = 0.0
+    row["strict_dt_preservation_score"] = 0.0
+    row["baseline_dt_preserved"] = "False"
+    row["half_dt_preserved"] = "False"
+    row["quarter_dt_preserved"] = "False"
+    row["369_unique_candidate"] = "False"
+    row["general_harmonic_bridge_law"] = "False"
+    harmonic_bridge_family_update_score(row)
+
+    for item in series:
+        item["experiment"] = "harmonic_bridge_family"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["validation_test"] = validation_test
+        item["source_frequency"] = source
+        item["generated_frequency"] = source * 2.0
+        item["target_frequency"] = source * 3.0
+        item["family_label"] = harmonic_bridge_family_label(source)
+        item["target_family"] = config.target_family
+        item["track"] = config.track
+        item["limiter_type"] = config.limiter_type
+        item["reference_role"] = config.reference_role
+    return row, series
+
+
+def harmonic_bridge_family_validation(config: BridgeLimiterPredictiveServoConfig,
+                                      seed: int,
+                                      quick: bool,
+                                      base_dt: float,
+                                      runtime: float,
+                                      sample_every: int
+                                      ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [
+        ("baseline_dt", base_dt, seed + 211),
+        ("half_dt", base_dt * 0.5, seed + 613),
+        ("quarter_dt", base_dt * 0.25, seed + 1013),
+    ]
+    rows: List[Dict[str, float | str]] = []
+    series_rows: List[Dict[str, float | str]] = []
+    for validation_name, test_dt, test_seed in tests:
+        direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+        row, series = harmonic_bridge_family_measure(config, test_seed, quick, test_dt, runtime, sample_every, direct_cache, validation_name)
+        rows.append(row)
+        series_rows.extend(series)
+    return rows, series_rows
+
+
+def harmonic_bridge_family_apply_validation(candidate: Dict[str, float | str],
+                                            validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    tests = {
+        "baseline_dt": next((r for r in rows if str(r.get("validation_test")) == "baseline_dt"), {}),
+        "half_dt": next((r for r in rows if str(r.get("validation_test")) == "half_dt"), {}),
+        "quarter_dt": next((r for r in rows if str(r.get("validation_test")) == "quarter_dt"), {}),
+    }
+    broad_count = sum(1 for row in tests.values() if harmonic_bridge_family_broad_pass(row, require_validation=False))
+    strict_count = sum(1 for row in tests.values() if harmonic_bridge_family_strict_pass(row, require_validation=False))
+    candidate["dt_preservation_score"] = broad_count / 3.0
+    candidate["strict_dt_preservation_score"] = strict_count / 3.0
+    for label, row in tests.items():
+        prefix = label
+        candidate[f"{prefix}_preserved"] = str(harmonic_bridge_family_broad_pass(row, require_validation=False))
+        candidate[f"{prefix}_strict_preserved"] = str(harmonic_bridge_family_strict_pass(row, require_validation=False))
+        candidate[f"{prefix}_phase_lock_target"] = float(row.get("phase_lock_target", 0.0))
+        candidate[f"{prefix}_bridge_ratio"] = float(row.get("bridge_ratio", 0.0))
+        candidate[f"{prefix}_spectral_purity_target"] = float(row.get("spectral_purity_target", 0.0))
+        candidate[f"{prefix}_energy_budget_error"] = float(row.get("energy_budget_error", 0.0))
+        candidate[f"{prefix}_generated_envelope_cv"] = float(row.get("generated_envelope_cv", 0.0))
+        candidate[f"{prefix}_max_phase_jump"] = float(row.get("max_phase_jump", 0.0))
+        candidate[f"{prefix}_near_slip_count"] = float(row.get("near_slip_count", 0.0))
+    harmonic_bridge_family_update_score(candidate)
+
+
+def harmonic_bridge_family_apply_global_labels(rows: List[Dict[str, float | str]]) -> None:
+    passive_rows = [r for r in rows if str(r.get("reference_role")) == "discovery_candidate"]
+    best_by_family: Dict[str, Dict[str, float | str]] = {}
+    for row in passive_rows:
+        family_label = str(row.get("family_label", ""))
+        if not family_label:
+            continue
+        if family_label not in best_by_family or float(row.get("normalized_family_score", 0.0)) > float(best_by_family[family_label].get("normalized_family_score", 0.0)):
+            best_by_family[family_label] = row
+    broad_families = [
+        family_label for family_label, row in best_by_family.items()
+        if str(row.get("harmonic_bridge_candidate")) == "True"
+    ]
+    broad_scores = [
+        float(row.get("normalized_family_score", 0.0))
+        for row in best_by_family.values()
+        if str(row.get("harmonic_bridge_candidate")) == "True"
+    ]
+    score_similarity = bool(broad_scores) and min(broad_scores) > 0.0 and max(broad_scores) / min(broad_scores) <= 3.0
+    general_law = len(broad_families) >= 3 and score_similarity
+    best_369 = best_by_family.get("3->6->9", {})
+    other_best = max(
+        [float(row.get("normalized_family_score", 0.0)) for label, row in best_by_family.items() if label != "3->6->9"],
+        default=0.0,
+    )
+    unique_369 = (
+        bool(best_369)
+        and str(best_369.get("strict_harmonic_bridge_candidate")) == "True"
+        and float(best_369.get("normalized_family_score", 0.0)) > other_best * 1.02
+    )
+    best_family = max(best_by_family.values(), key=lambda r: float(r.get("normalized_family_score", 0.0)), default={})
+    for row in rows:
+        row["general_harmonic_bridge_law"] = str(general_law)
+        row["families_passing_harmonic_bridge_candidate"] = len(broad_families)
+        row["passing_family_labels"] = ";".join(broad_families)
+        row["best_passive_family_label"] = best_family.get("family_label", "")
+        row["best_passive_family_score"] = float(best_family.get("normalized_family_score", 0.0))
+        row["best_other_family_score"] = other_best
+        row["369_unique_candidate"] = str(unique_369 and str(row.get("family_label")) == "3->6->9")
+        harmonic_bridge_family_update_score(row)
+        if unique_369 and str(row.get("family_label")) == "3->6->9":
+            row["369_unique_candidate"] = "True"
+        row["general_harmonic_bridge_law"] = str(general_law)
+
+
+def write_harmonic_bridge_family_report(out_dir: Path,
+                                        ranked: List[Dict[str, float | str]],
+                                        validation_rows: List[Dict[str, float | str]],
+                                        include_sweeps: bool) -> None:
+    passive = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate"]
+    active = [r for r in ranked if str(r.get("reference_role")) == "active_control"]
+    best_passive = max(passive, key=lambda r: float(r.get("normalized_family_score", 0.0)), default={})
+    best_369 = max([r for r in passive if str(r.get("family_label")) == "3->6->9"], key=lambda r: float(r.get("normalized_family_score", 0.0)), default={})
+    best_51015 = max([r for r in passive if str(r.get("family_label")) == "5->10->15"], key=lambda r: float(r.get("normalized_family_score", 0.0)), default={})
+    best_active = max(active, key=lambda r: float(r.get("normalized_family_score", 0.0)), default={})
+    broad_families = sorted({str(r.get("family_label")) for r in passive if str(r.get("harmonic_bridge_candidate")) == "True"})
+    strict_families = sorted({str(r.get("family_label")) for r in passive if str(r.get("strict_harmonic_bridge_candidate")) == "True"})
+    general_law = any(str(r.get("general_harmonic_bridge_law")) == "True" for r in ranked)
+    unique_369 = any(str(r.get("369_unique_candidate")) == "True" for r in ranked)
+    if unique_369:
+        next_step = "369-specific PLL only after a focused passive confirmation sweep"
+    elif general_law:
+        next_step = "family-law mapping across source frequency and normalized detuning"
+    elif best_passive and str(best_passive.get("family_label")) != "3->6->9":
+        next_step = "family-law mapping before any 369-specific PLL or geometry/evolve step"
+    elif best_active and float(best_active.get("normalized_family_score", 0.0)) > float(best_passive.get("normalized_family_score", 0.0)) * 1.25:
+        next_step = "active PLL comparator study, kept separate from passive discovery"
+    elif float(best_passive.get("generated_envelope_cv", 1.0)) > 0.30 or float(best_passive.get("max_phase_jump", 9.0)) > 2.0:
+        next_step = "physical limiter redesign before geometry/evolve"
+    else:
+        next_step = "geometry/evolve after family-law controls remain in the ranking"
+
+    by_family: Dict[str, Dict[str, float | str]] = {}
+    for row in passive:
+        family_label = str(row.get("family_label", ""))
+        if family_label not in by_family or float(row.get("normalized_family_score", 0.0)) > float(by_family[family_label].get("normalized_family_score", 0.0)):
+            by_family[family_label] = row
+
+    lines = [
+        "# Harmonic Bridge Family Report",
+        "",
+        "This mode compares f->2f->3f staged harmonic bridge families using the same no-direct-drive limiter/stabilizer accounting used by the limiter/predictive-servo experiment.",
+        "",
+        "## Direct Answers",
+        f"1. Strongest passive family: {best_passive.get('family_label', 'none')} via {best_passive.get('track', '')}/{best_passive.get('limiter_type', '')}; score={float(best_passive.get('normalized_family_score', 0.0)):.6g}, lock={float(best_passive.get('phase_lock_target', 0.0)):.6g}.",
+        f"2. Does 369 beat 5->10->15 after normalized scoring? {'yes' if float(best_369.get('normalized_family_score', 0.0)) > float(best_51015.get('normalized_family_score', 0.0)) else 'no'}; 369_score={float(best_369.get('normalized_family_score', 0.0)):.6g}, 51015_score={float(best_51015.get('normalized_family_score', 0.0)):.6g}.",
+        f"3. Do three or more families pass harmonic_bridge_candidate? {'yes' if len(broad_families) >= 3 else 'no'}; passing={', '.join(broad_families) if broad_families else 'none'}.",
+        f"4. Evidence for a general harmonic bridge law? {'yes' if general_law else 'not yet'}; strict_families={', '.join(strict_families) if strict_families else 'none'}.",
+        f"5. Recommended next step: {next_step}.",
+        f"Active comparator reference: best_active={best_active.get('family_label', 'none')} score={float(best_active.get('normalized_family_score', 0.0)):.6g}, track={best_active.get('track', '')}.",
+        "",
+        "## Run Shape",
+        f"- Grid mode: {'quick expanded family sweep' if include_sweeps else 'quick core family set'}",
+        "- Passive rows include passive baseline, refined Stage A basin equivalent, adaptive generated damping, envelope-derivative damping, and energy-bucket limiter.",
+        "- Active PLL comparator rows are marked `active_control` and excluded from passive promotion.",
+        "- Primary search timestep is half-dt; top rows are validated at baseline dt, half-dt, and quarter-dt.",
+        "",
+        "## Best Passive Row By Family",
+    ]
+    for family_label in sorted(by_family):
+        row = by_family[family_label]
+        lines.append(
+            f"- {family_label}: track={row.get('track')}, limiter={row.get('limiter_type')}, variant={row.get('sweep_value')}, "
+            f"score={float(row.get('normalized_family_score', 0.0)):.6g}, lock={float(row.get('phase_lock_target', 0.0)):.6g}, "
+            f"bridge={float(row.get('bridge_ratio', 0.0)):.6g}, purity={float(row.get('spectral_purity_target', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, abs_budget={float(row.get('absolute_budget_error', 0.0)):.6g}, "
+            f"gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, jump={float(row.get('max_phase_jump', 0.0)):.6g}, "
+            f"near_slips={float(row.get('near_slip_count', 0.0)):.6g}, dt={float(row.get('dt_preservation_score', 0.0)):.6g}, "
+            f"candidate={row.get('harmonic_bridge_candidate')}, strict={row.get('strict_harmonic_bridge_candidate')}, failure={row.get('failure_mode')}"
+        )
+    lines.extend(["", "## Ranked Rows"])
+    for row in ranked[:42]:
+        lines.append(
+            f"- {row.get('candidate_id')}: family={row.get('family_label')}, role={row.get('reference_role')}, track={row.get('track')}, "
+            f"limiter={row.get('limiter_type')}, lock={float(row.get('phase_lock_target', 0.0)):.6g}, "
+            f"bridge={float(row.get('bridge_ratio', 0.0)):.6g}, purity={float(row.get('spectral_purity_target', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, abs_budget={float(row.get('absolute_budget_error', 0.0)):.6g}, "
+            f"gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, target_cv={float(row.get('target_envelope_cv', 0.0)):.6g}, "
+            f"jump={float(row.get('max_phase_jump', 0.0)):.6g}, near_slips={float(row.get('near_slip_count', 0.0)):.6g}, "
+            f"limiter_work={float(row.get('limiter_work_fraction', 0.0)):.6g}, servo_work={float(row.get('servo_work_fraction', 0.0)):.6g}, "
+            f"dt={float(row.get('dt_preservation_score', 0.0)):.6g}, score={float(row.get('normalized_family_score', 0.0)):.6g}, "
+            f"candidate={row.get('harmonic_bridge_candidate')}, strict={row.get('strict_harmonic_bridge_candidate')}, failure={row.get('failure_mode')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Dt Validation Rows"])
+        for row in validation_rows[:36]:
+            lines.append(
+                f"- {row.get('case')} / {row.get('validation_test')}: family={row.get('family_label')}, "
+                f"lock={float(row.get('phase_lock_target', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+                f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+                f"gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, jump={float(row.get('max_phase_jump', 0.0)):.6g}, "
+                f"near_slips={float(row.get('near_slip_count', 0.0)):.6g}, broad={row.get('harmonic_bridge_candidate')}, strict={row.get('strict_harmonic_bridge_candidate')}"
+            )
+    (out_dir / "README_HARMONIC_BRIDGE_FAMILY_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_harmonic_bridge_family(out_dir: Path, seed: int, quick: bool = False,
+                                      include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    base_dt = dt
+    half_dt = dt * 0.5
+    runtime = base_tmax * 1.25 * 4.0
+    summary_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    validation_rows: List[Dict[str, float | str]] = []
+    config_by_case: Dict[str, BridgeLimiterPredictiveServoConfig] = {}
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+
+    specs = harmonic_bridge_family_specs(include_sweeps)
+    for idx, (sweep, value, config) in enumerate(specs):
+        row, series = harmonic_bridge_family_measure(config, seed + 41000 + idx * 449, quick, half_dt, runtime, sample_every, direct_cache, "half_dt_primary")
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        summary_rows.append(row)
+        timeseries_rows.extend(series)
+        config_by_case[str(row.get("case"))] = config
+
+    harmonic_bridge_family_apply_global_labels(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            float(r.get("harmonic_bridge_family_score", 0.0)),
+            float(r.get("normalized_family_score", 0.0)),
+            float(r.get("phase_lock_target", 0.0)),
+            -float(r.get("generated_envelope_cv", 99.0)),
+            -float(r.get("max_phase_jump", 99.0)),
+        ),
+        reverse=True,
+    )
+
+    top_candidates: List[Dict[str, float | str]] = []
+    seen_cases = set()
+    for family_label in [harmonic_bridge_family_label(source) for source in HARMONIC_BRIDGE_FAMILY_SOURCES]:
+        best = max(
+            [
+                r for r in ranked
+                if str(r.get("family_label")) == family_label and str(r.get("reference_role")) == "discovery_candidate"
+            ],
+            key=lambda r: float(r.get("normalized_family_score", 0.0)),
+            default={},
+        )
+        if best and str(best.get("case")) not in seen_cases:
+            top_candidates.append(best)
+            seen_cases.add(str(best.get("case")))
+    extra_count = 4 if include_sweeps else 2
+    for row in ranked:
+        if len(top_candidates) >= len(HARMONIC_BRIDGE_FAMILY_SOURCES) + extra_count:
+            break
+        if str(row.get("reference_role")) != "discovery_candidate":
+            continue
+        if str(row.get("case")) in seen_cases:
+            continue
+        top_candidates.append(row)
+        seen_cases.add(str(row.get("case")))
+
+    for idx, candidate in enumerate(top_candidates):
+        config = config_by_case.get(str(candidate.get("case")))
+        if config is None:
+            continue
+        rows, series = harmonic_bridge_family_validation(config, seed + 176000 + idx * 1000, quick, base_dt, runtime, sample_every)
+        validation_rows.extend(rows)
+        timeseries_rows.extend(series)
+        harmonic_bridge_family_apply_validation(candidate, validation_rows)
+
+    harmonic_bridge_family_apply_global_labels(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("harmonic_bridge_family_score", 0.0)),
+            float(r.get("normalized_family_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            float(r.get("phase_lock_target", 0.0)),
+            -float(r.get("generated_envelope_cv", 99.0)),
+            -float(r.get("max_phase_jump", 99.0)),
+        ),
+        reverse=True,
+    )
+
+    write_csv(out_dir / "harmonic_bridge_family_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "harmonic_bridge_family_ranked.csv", ranked)
+    write_csv(out_dir / "harmonic_bridge_family_timeseries.csv", timeseries_rows)
+    write_harmonic_bridge_family_report(out_dir, ranked, validation_rows, include_sweeps)
+    return [
+        {
+            "experiment": "harmonic_bridge_family",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("harmonic_bridge_family_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "family_label": row.get("family_label", ""),
+            "target_family": row.get("target_family", ""),
+            "reference_role": row.get("reference_role", ""),
+            "track": row.get("track", ""),
+            "limiter_type": row.get("limiter_type", ""),
+            "phase_lock_target": row.get("phase_lock_target", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "absolute_budget_error": row.get("absolute_budget_error", 0.0),
+            "generated_envelope_cv": row.get("generated_envelope_cv", 0.0),
+            "target_envelope_cv": row.get("target_envelope_cv", 0.0),
+            "max_phase_jump": row.get("max_phase_jump", 0.0),
+            "near_slip_count": row.get("near_slip_count", 0.0),
+            "limiter_work_fraction": row.get("limiter_work_fraction", 0.0),
+            "servo_work_fraction": row.get("servo_work_fraction", 0.0),
+            "dt_preservation_score": row.get("dt_preservation_score", 0.0),
+            "normalized_family_score": row.get("normalized_family_score", 0.0),
+            "harmonic_bridge_candidate": row.get("harmonic_bridge_candidate", "False"),
+            "strict_harmonic_bridge_candidate": row.get("strict_harmonic_bridge_candidate", "False"),
+            "369_unique_candidate": row.get("369_unique_candidate", "False"),
+            "general_harmonic_bridge_law": row.get("general_harmonic_bridge_law", "False"),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:24]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -17832,8 +18559,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin/limiter-predictive-servo, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "bridge_limiter_predictive_servo", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin/limiter-predictive-servo/harmonic-bridge-family, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "bridge_limiter_predictive_servo", "harmonic_bridge_family", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -17900,6 +18627,8 @@ def main() -> None:
         rows.extend(experiment_bridge_stageA_refined_basin(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_limiter_predictive_servo",):
         rows.extend(experiment_bridge_limiter_predictive_servo(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("harmonic_bridge_family",):
+        rows.extend(experiment_harmonic_bridge_family(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 
