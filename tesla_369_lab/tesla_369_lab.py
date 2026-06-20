@@ -12195,6 +12195,727 @@ def experiment_bridge_phase_servo(out_dir: Path, seed: int, quick: bool = False,
 
 
 # ----------------------------
+# Experiment 21: bridge emergent lock
+# ----------------------------
+
+def bridge_emergent_lock_peak_frequency(config: BridgeAmpConfig,
+                                        sim: Dict[str, object],
+                                        start_fraction: float = 0.50,
+                                        end_fraction: float = 1.0,
+                                        span_fraction: float = 0.025,
+                                        n_grid: int = 81,
+                                        base_hz: float = 0.045) -> Tuple[float, float, float]:
+    times = sim["times"]  # type: ignore[assignment]
+    qs = sim["qs"]  # type: ignore[assignment]
+    vs = sim["vs"]  # type: ignore[assignment]
+    omega = sim["omega"]  # type: ignore[assignment]
+    drive_until = float(sim["drive_until"])
+    if len(times) < 12:
+        return config.target_9, 0.0, 0.0
+    mask = (times >= start_fraction * drive_until) & (times <= end_fraction * drive_until)
+    if int(np.sum(mask)) < 12:
+        mask = times >= 0.50 * times[-1]
+    t_win = times[mask]
+    q_win = qs[mask, 2]
+    v_win = vs[mask, 2]
+    if len(t_win) < 12:
+        return config.target_9, 0.0, 0.0
+    target = float(config.target_9)
+    low = target * (1.0 - span_fraction)
+    high = target * (1.0 + span_fraction)
+    freqs = np.linspace(low, high, n_grid)
+    scores = []
+    for freq in freqs:
+        q_amp = abs(complex_projection(q_win, t_win, base_hz * freq))
+        v_amp = abs(complex_projection(v_win, t_win, base_hz * freq))
+        scores.append(q_amp * q_amp + (v_amp / max(float(omega[2]), 1e-12)) ** 2)
+    score_arr = np.asarray(scores)
+    best_idx = int(np.argmax(score_arr))
+    best = float(freqs[best_idx])
+    if 0 < best_idx < len(freqs) - 1:
+        y0, y1, y2 = score_arr[best_idx - 1], score_arr[best_idx], score_arr[best_idx + 1]
+        denom = y0 - 2.0 * y1 + y2
+        if abs(float(denom)) > 1e-18:
+            offset = 0.5 * float(y0 - y2) / float(denom)
+            best = float(freqs[best_idx] + offset * (freqs[1] - freqs[0]))
+            best = float(np.clip(best, low, high))
+    nominal_energy = target_mode_energy(q_win, v_win, t_win, base_hz * target, float(omega[2]))
+    fitted_energy = target_mode_energy(q_win, v_win, t_win, base_hz * best, float(omega[2]))
+    return best, fitted_energy, nominal_energy
+
+
+def bridge_emergent_phase_lock_at(config: BridgeAmpConfig,
+                                  sim: Dict[str, object],
+                                  target_frequency: float,
+                                  start_fraction: float = 0.50,
+                                  end_fraction: float = 1.0,
+                                  base_hz: float = 0.045) -> Tuple[float, float, float]:
+    times = sim["times"]  # type: ignore[assignment]
+    qs = sim["qs"]  # type: ignore[assignment]
+    drive_until = float(sim["drive_until"])
+    if len(times) < 12:
+        return 0.0, float("nan"), 0.0
+    mask = (times >= start_fraction * drive_until) & (times <= end_fraction * drive_until)
+    if int(np.sum(mask)) < 12:
+        mask = times >= 0.50 * times[-1]
+    if int(np.sum(mask)) < 12:
+        return 0.0, float("nan"), 0.0
+    lock, lock_std = bridge_phase_lock(
+        times[mask],
+        qs[mask],
+        base_hz,
+        config.mode_freqs[0],
+        config.target_6,
+        target_frequency,
+        0,
+        1,
+        2,
+        float(sim["dt_sample"]),
+    )
+    amp = abs(complex_projection(qs[mask, 2], times[mask], base_hz * target_frequency))
+    return lock, lock_std, float(amp)
+
+
+def bridge_emergent_lock_diagnostics(config: BridgeAmpConfig,
+                                     sim: Dict[str, object],
+                                     direct_sim: Dict[str, object] | None,
+                                     start_fraction: float = 0.50,
+                                     end_fraction: float = 1.0,
+                                     base_hz: float = 0.045
+                                     ) -> Tuple[List[Dict[str, float | str]], Dict[str, float | str]]:
+    times = sim["times"]  # type: ignore[assignment]
+    qs = sim["qs"]  # type: ignore[assignment]
+    vs = sim["vs"]  # type: ignore[assignment]
+    energy = sim["energy"]  # type: ignore[assignment]
+    omega = sim["omega"]  # type: ignore[assignment]
+    drive_until = float(sim["drive_until"])
+    if len(times) < 40:
+        return [], {
+            "fitted_effective_target_frequency": config.target_9,
+            "detuning_delta": 0.0,
+            "normalized_detuning_delta": 0.0,
+            "detuning_drift_rate": 0.0,
+            "emergent_phase_lock_target": 0.0,
+            "nominal_phase_lock_target": 0.0,
+            "spectral_purity_target": 0.0,
+            "nominal_spectral_purity_target": 0.0,
+            "bridge_ratio": 0.0,
+        }
+
+    fitted, fitted_energy, nominal_energy = bridge_emergent_lock_peak_frequency(config, sim, start_fraction, end_fraction)
+    emergent_lock, emergent_std, _ = bridge_emergent_phase_lock_at(config, sim, fitted, start_fraction, end_fraction)
+    nominal_lock, nominal_std, _ = bridge_emergent_phase_lock_at(config, sim, config.target_9, start_fraction, end_fraction)
+    mask = (times >= start_fraction * drive_until) & (times <= end_fraction * drive_until)
+    if int(np.sum(mask)) < 12:
+        mask = times >= 0.50 * times[-1]
+    total_target_energy = float(np.mean(energy[mask, 2]) + 1e-18) if int(np.sum(mask)) else 1e-18
+    direct_energy = 0.0
+    if direct_sim is not None and int(np.sum(mask)) >= 4:
+        direct_times = direct_sim["times"]  # type: ignore[index]
+        direct_qs = direct_sim["qs"]  # type: ignore[index]
+        direct_vs = direct_sim["vs"]  # type: ignore[index]
+        direct_omega = direct_sim["omega"]  # type: ignore[index]
+        dmask = (direct_times >= float(times[mask][0])) & (direct_times <= float(times[mask][-1]))
+        if int(np.sum(dmask)) >= 4:
+            direct_energy = target_mode_energy(
+                direct_qs[dmask, 2],
+                direct_vs[dmask, 2],
+                direct_times[dmask],
+                base_hz * fitted,
+                float(direct_omega[2]),
+            )
+
+    start_idx = int(np.searchsorted(times, start_fraction * drive_until))
+    stop_idx = int(np.searchsorted(times, end_fraction * drive_until))
+    start_idx = max(0, min(start_idx, len(times) - 2))
+    stop_idx = max(start_idx + 2, min(stop_idx, len(times)))
+    window = max(30, int(6.0 / max(float(sim["dt_sample"]), 1e-9)))
+    step = max(8, window // 3)
+    rows: List[Dict[str, float | str]] = []
+    for start in range(start_idx, max(start_idx + 1, stop_idx - window), step):
+        stop = min(start + window, stop_idx)
+        if stop - start < 12:
+            continue
+        local_sim = {
+            "times": times[start:stop],
+            "qs": qs[start:stop],
+            "vs": vs[start:stop],
+            "energy": energy[start:stop],
+            "omega": omega,
+            "drive_until": float(times[stop - 1]),
+            "dt_sample": sim["dt_sample"],
+        }
+        local_fitted, local_energy, local_nominal_energy = bridge_emergent_lock_peak_frequency(config, local_sim, 0.0, 1.0, span_fraction=0.025, n_grid=51)
+        local_lock, _, _ = bridge_emergent_phase_lock_at(config, local_sim, local_fitted, 0.0, 1.0)
+        local_nominal_lock, _, _ = bridge_emergent_phase_lock_at(config, local_sim, config.target_9, 0.0, 1.0)
+        local_total = float(np.mean(energy[start:stop, 2]) + 1e-18)
+        rows.append({
+            "time_mid": float(np.mean(times[start:stop])),
+            "fitted_effective_target_frequency": local_fitted,
+            "detuning_delta": local_fitted - float(config.target_9),
+            "normalized_detuning_delta": (local_fitted - float(config.target_9)) / max(float(config.target_9), 1e-18),
+            "emergent_phase_lock_target": local_lock,
+            "nominal_phase_lock_target": local_nominal_lock,
+            "spectral_purity_target": float(min(1.0, local_energy / local_total)),
+            "nominal_spectral_purity_target": float(min(1.0, local_nominal_energy / local_total)),
+        })
+    if len(rows) >= 2:
+        t_mid = np.asarray([float(r["time_mid"]) for r in rows])
+        detuning = np.asarray([float(r["detuning_delta"]) for r in rows])
+        detuning_drift_rate = float(np.polyfit(t_mid, detuning, 1)[0])
+    else:
+        detuning_drift_rate = 0.0
+
+    detuning_delta = fitted - float(config.target_9)
+    summary = {
+        "fitted_effective_target_frequency": fitted,
+        "detuning_delta": detuning_delta,
+        "normalized_detuning_delta": detuning_delta / max(float(config.target_9), 1e-18),
+        "detuning_drift_rate": detuning_drift_rate,
+        "emergent_phase_lock_target": emergent_lock,
+        "emergent_phase_lock_target_std": emergent_std,
+        "nominal_phase_lock_target": nominal_lock,
+        "nominal_phase_lock_target_std": nominal_std,
+        "spectral_purity_target": float(min(1.0, fitted_energy / total_target_energy)),
+        "nominal_spectral_purity_target": float(min(1.0, nominal_energy / total_target_energy)),
+        "bridge_ratio": metric_ratio(fitted_energy, direct_energy),
+        "energy_at_emergent_target": fitted_energy,
+        "energy_at_nominal_target": nominal_energy,
+        "energy_at_emergent_target_from_direct_reference": direct_energy,
+    }
+    return rows, summary
+
+
+def bridge_emergent_lock_family_templates(quick: bool, include_sweeps: bool) -> List[Tuple[str, str, str, BridgeMinNudgeConfig]]:
+    templates = [
+        ("369", "autolock_seed_s0p9", "369", bridge_phase_servo_template("autolock_seed_s0p9", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.90)),
+        ("369", "magnetic_stageB0p84_lead", "369", bridge_phase_servo_template("magnetic_stageB0p84_lead", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("369", "feedforward_best_magnetic_bias", "369", bridge_phase_servo_template("feedforward_best_magnetic_bias", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=0.84)),
+        ("4812", "non369_4_8_12", "non369", bridge_phase_servo_non369_template(4.0, 12.0)),
+        ("51015", "non369_5_10_15", "non369", bridge_phase_servo_non369_template(5.0, 15.0)),
+        ("61218", "non369_6_12_18", "non369", bridge_phase_servo_non369_template(6.0, 18.0)),
+    ]
+    if include_sweeps:
+        receiver_values = [8.86, 8.90, 8.93] if quick else [8.86, 8.875, 8.90, 8.915, 8.93]
+        phase_values = [15.0, 25.0, 35.0] if quick else [15.0, 20.0, 25.0, 30.0, 35.0]
+        strength_values = [0.80, 0.84, 0.94] if quick else [0.80, 0.84, 0.88, 0.90, 0.94]
+        for receiver in receiver_values:
+            templates.append(("369", f"sweep_receiver_{safe_token(receiver)}", "369", bridge_phase_servo_template(f"sweep_receiver_{safe_token(receiver)}", receiver_tuning=receiver, phase_bias=30.0, stage_b_strength=0.84)))
+        for phase in phase_values:
+            templates.append(("369", f"sweep_phase_{safe_token(phase)}", "369", bridge_phase_servo_template(f"sweep_phase_{safe_token(phase)}", receiver_tuning=8.90, phase_bias=phase, stage_b_strength=0.84)))
+        for strength in strength_values:
+            templates.append(("369", f"sweep_stageB_{safe_token(strength)}", "369", bridge_phase_servo_template(f"sweep_stageB_{safe_token(strength)}", receiver_tuning=8.90, phase_bias=30.0, stage_b_strength=strength)))
+    return templates
+
+
+def bridge_emergent_lock_make_config(target_family: str,
+                                     seed_family: str,
+                                     family: str,
+                                     base_config: BridgeMinNudgeConfig,
+                                     actuator_type: str,
+                                     control_mode: str,
+                                     kp: float,
+                                     ki: float,
+                                     clamp: float,
+                                     smoothing: float,
+                                     update_interval: float,
+                                     runtime_factor: float = 4.0,
+                                     reference_role: str | None = None,
+                                     suffix: str = "") -> BridgePhaseServoConfig:
+    reference = reference_role if reference_role is not None else ("discovery_candidate" if family == "369" else "control")
+    config = bridge_phase_servo_make_config(
+        target_family,
+        seed_family,
+        base_config,
+        actuator_type,
+        kp,
+        ki,
+        clamp,
+        smoothing,
+        update_interval,
+        runtime_factor=runtime_factor,
+        control_mode=control_mode,
+        reference_role=reference,
+        family=family,
+        suffix=suffix,
+    )
+    return replace(
+        config,
+        name=config.name.replace("phase_servo", "emergent_lock", 1),
+        note="emergent pulled-frequency diagnostic; existing discovery gates remain strict",
+    )
+
+
+def bridge_emergent_lock_specs(quick: bool, include_sweeps: bool) -> List[Tuple[str, str, BridgePhaseServoConfig]]:
+    gain_sets = [
+        ("gentle_pi", 0.0015, 0.000020, 0.018, 0.18, 2.0),
+        ("modest_pi", 0.0030, 0.000045, 0.024, 0.22, 1.5),
+    ]
+    if include_sweeps:
+        gain_sets.extend([
+            ("tiny_pi", 0.00075, 0.000008, 0.012, 0.14, 2.5),
+            ("firm_pi", 0.0045, 0.000060, 0.036, 0.25, 1.0),
+        ])
+    runtime_factors = [4.0]
+    if include_sweeps:
+        runtime_factors = [1.0, 2.0, 4.0]
+    specs: List[Tuple[str, str, BridgePhaseServoConfig]] = []
+    for target_family, seed_family, family, base_config in bridge_emergent_lock_family_templates(quick, include_sweeps):
+        is_sweep_seed = seed_family.startswith("sweep_")
+        active_gain_sets = [gain_sets[0]] if is_sweep_seed else gain_sets
+        for runtime_factor in runtime_factors:
+            if include_sweeps and runtime_factor < 4.0 and seed_family != "autolock_seed_s0p9":
+                continue
+            baseline = bridge_emergent_lock_make_config(
+                target_family,
+                seed_family,
+                family,
+                base_config,
+                "receiver_tuning_servo",
+                "no_servo",
+                0.0,
+                0.0,
+                0.0,
+                0.18,
+                2.0,
+                runtime_factor=runtime_factor,
+                suffix="baseline",
+            )
+            specs.append(("no_servo_baseline", seed_family, baseline))
+            for actuator_type in BRIDGE_PHASE_SERVO_ACTUATORS:
+                for label, kp, ki, clamp, smoothing, update_interval in active_gain_sets:
+                    config = bridge_emergent_lock_make_config(
+                        target_family,
+                        seed_family,
+                        family,
+                        base_config,
+                        actuator_type,
+                        "normal",
+                        kp,
+                        ki,
+                        clamp,
+                        smoothing,
+                        update_interval,
+                        runtime_factor=runtime_factor,
+                        suffix=label,
+                    )
+                    specs.append((label, seed_family, config))
+    return specs
+
+
+def bridge_emergent_lock_measure(config: BridgePhaseServoConfig, seed: int, quick: bool,
+                                 dt: float, runtime: float, sample_every: int,
+                                 direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                 ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    sim, ledger = simulate_bridge_phase_servo(config, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    target_key = f"{effective.mode_freqs[0]:g}:{effective.target_6:g}:{effective.target_9:g}"
+    cache_key = (target_key, dt, runtime)
+    if cache_key not in direct_cache:
+        direct_cfg = bridge_min_nudge_direct_reference(effective)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 10400, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 10400, "direct_reference", "direct_source_plus_generated", "reference", 0.35, 1.0)
+        direct_cache[cache_key] = (direct_sim, direct_row)
+    direct_sim, direct_row = direct_cache[cache_key]
+
+    nominal_row = bridge_metrics_window(effective, sim, seed, "emergent_lock", config.control_mode, f"{config.kp:g}:{config.ki:g}", 0.35, 1.0)
+    diagnostic_rows, diagnostic_summary = bridge_emergent_lock_diagnostics(effective, sim, direct_sim, 0.50, 1.0)
+    phase_rows, phase_summary = bridge_phase_diagnostic_series(effective, sim, direct_sim, 0.50, 1.0)
+    row = dict(nominal_row)
+    row.update(diagnostic_summary)
+    row["phase_drift_rate"] = phase_summary.get("phase_drift_rate", 0.0)
+    row["lock_duration"] = phase_summary.get("lock_duration", 0.0)
+    row["time_to_unlock"] = phase_summary.get("time_to_unlock", 0.0)
+    row["experiment"] = "bridge_emergent_lock"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:{config.runtime_factor:g}x"
+    row["target_family"] = config.target_family
+    row["source_frequency"] = effective.mode_freqs[0]
+    row["generated_frequency"] = effective.target_6
+    row["nominal_target"] = effective.target_9
+    row["actuator_type"] = config.actuator_type
+    row["correction_type"] = config.correction_type
+    row["control_mode"] = config.control_mode
+    row["Kp"] = config.kp
+    row["Ki"] = config.ki
+    row["correction_clamp"] = config.correction_clamp
+    row["smoothing"] = config.smoothing
+    row["update_interval"] = config.update_interval
+    row["runtime_factor"] = config.runtime_factor
+    row["seed_family"] = config.seed_family
+    row["reference_role"] = config.reference_role
+    row["family"] = config.family
+    row["nominal_phase_lock_target"] = diagnostic_summary.get("nominal_phase_lock_target", row.get("phase_lock_9", 0.0))
+    row["nominal_spectral_purity_target"] = diagnostic_summary.get("nominal_spectral_purity_target", row.get("spectral_purity_9", 0.0))
+    row["nominal_bridge_ratio"] = metric_ratio(float(row.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0)))
+    row["phase_lock_target"] = row["emergent_phase_lock_target"]
+    row["energy_at_target"] = row["energy_at_emergent_target"]
+    total_input_before = max(float(row.get("total_input_work", 0.0)), 1e-18)
+    total_input_with_servo = total_input_before + float(sim["servo_work"])
+    row["total_input_work_before_servo"] = total_input_before
+    row["total_input_work"] = total_input_with_servo
+    row["servo_work"] = float(sim["servo_work"])
+    row["servo_work_signed"] = float(sim["servo_work_signed"])
+    row["servo_work_fraction"] = metric_ratio(float(sim["servo_work"]), total_input_with_servo)
+    row["correction_work"] = row["servo_work"]
+    row["correction_work_fraction"] = row["servo_work_fraction"]
+    row["correction_rms"] = float(sim["correction_rms"])
+    row["correction_peak"] = float(sim["correction_peak"])
+    row["detuning_reproducibility"] = 0.0
+    row["seed_preserved"] = "False"
+    row["half_dt_preserved"] = "False"
+    row["quarter_dt_preserved"] = "False"
+    row["no_direct_2f_drive"] = str(not any(abs(freq - effective.target_6) < 1e-9 and mode == 1 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_direct_3f_drive"] = str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_target_frequency_injection"] = row["no_direct_3f_drive"]
+    row["note"] = config.note
+    bridge_emergent_lock_update_labels(row)
+
+    for item in ledger:
+        item["experiment"] = "bridge_emergent_lock"
+        item["candidate_id"] = row["candidate_id"]
+        item["target_family"] = config.target_family
+        item["runtime_factor"] = config.runtime_factor
+    for item in diagnostic_rows:
+        item["experiment"] = "bridge_emergent_lock"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["target_family"] = config.target_family
+        item["runtime_factor"] = config.runtime_factor
+        item["diagnostic_type"] = "emergent_frequency_window"
+    for item in phase_rows:
+        item["experiment"] = "bridge_emergent_lock"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["target_family"] = config.target_family
+        item["runtime_factor"] = config.runtime_factor
+        item["diagnostic_type"] = "nominal_phase_window"
+    return row, ledger, diagnostic_rows + phase_rows
+
+
+def bridge_emergent_lock_core_gate(row: Dict[str, float | str]) -> bool:
+    return (
+        float(row.get("runtime_factor", 1.0)) >= 4.0
+        and float(row.get("emergent_phase_lock_target", 0.0)) > 0.90
+        and float(row.get("spectral_purity_target", 0.0)) > 0.60
+        and float(row.get("bridge_ratio", 0.0)) > 0.75
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+        and float(row.get("servo_work_fraction", 0.0)) < 0.05
+        and str(row.get("no_direct_2f_drive", "False")) == "True"
+        and str(row.get("no_direct_3f_drive", "False")) == "True"
+        and str(row.get("no_target_frequency_injection", "False")) == "True"
+    )
+
+
+def bridge_emergent_lock_update_labels(row: Dict[str, float | str]) -> None:
+    core = bridge_emergent_lock_core_gate(row)
+    has_validation = "detuning_reproducibility" in row and float(row.get("detuning_reproducibility", 0.0)) > 0.0
+    dt_seed_ok = (
+        str(row.get("seed_preserved", "False")) == "True"
+        and str(row.get("half_dt_preserved", "False")) == "True"
+        and str(row.get("quarter_dt_preserved", "False")) == "True"
+        and float(row.get("detuning_reproducibility", 0.0)) >= 0.70
+    )
+    harmonic = core and has_validation and dt_seed_ok
+    pulled = (
+        harmonic
+        and float(row.get("nominal_phase_lock_target", 0.0)) <= 0.90
+        and float(row.get("emergent_phase_lock_target", 0.0)) > 0.90
+        and abs(float(row.get("normalized_detuning_delta", 0.0))) > 2.0e-4
+        and abs(float(row.get("detuning_drift_rate", 0.0))) < 5.0e-3
+    )
+    failures = []
+    if float(row.get("runtime_factor", 1.0)) < 4.0:
+        failures.append("not_4x_runtime")
+    if float(row.get("emergent_phase_lock_target", 0.0)) <= 0.90:
+        failures.append("emergent_phase_lock_target")
+    if float(row.get("spectral_purity_target", 0.0)) <= 0.60:
+        failures.append("spectral_purity_target")
+    if float(row.get("bridge_ratio", 0.0)) <= 0.75:
+        failures.append("bridge_ratio")
+    if float(row.get("energy_budget_error", 1.0)) >= 0.005:
+        failures.append("energy_budget")
+    if float(row.get("servo_work_fraction", 0.0)) >= 0.05:
+        failures.append("servo_work_fraction")
+    if str(row.get("no_direct_2f_drive", "False")) != "True" or str(row.get("no_direct_3f_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+    if has_validation and not dt_seed_ok:
+        failures.append("detuning_reproducibility")
+
+    if not failures:
+        failure_mode = "emergent_lock_candidate"
+    elif "emergent_phase_lock_target" in failures:
+        failure_mode = "no_emergent_lock"
+    elif "energy_budget" in failures:
+        failure_mode = "energy_budget_drift"
+    elif "bridge_ratio" in failures:
+        failure_mode = "weak_bridge_ratio"
+    elif "detuning_reproducibility" in failures:
+        failure_mode = "unstable_pulled_frequency"
+    else:
+        failure_mode = failures[0]
+
+    normalized_score = (
+        float(row.get("emergent_phase_lock_target", 0.0))
+        * float(row.get("spectral_purity_target", 0.0))
+        * min(3.0, float(row.get("bridge_ratio", 0.0)))
+        / (
+            1.0
+            + 650.0 * max(0.0, float(row.get("energy_budget_error", 0.0)))
+            + 130.0 * max(0.0, float(row.get("servo_work_fraction", 0.0)))
+            + 6.0 * abs(float(row.get("normalized_detuning_delta", 0.0)))
+            + 12.0 * abs(float(row.get("detuning_drift_rate", 0.0)))
+        )
+    )
+    score = normalized_score if core and str(row.get("reference_role")) == "discovery_candidate" else 0.0
+    row["core_harmonic_bridge_candidate"] = str(core)
+    row["harmonic_bridge_candidate"] = str(harmonic)
+    row["pulled_frequency_discovery"] = str(pulled)
+    row["369_unique_candidate"] = str(False)
+    row["passed"] = str(harmonic and str(row.get("reference_role")) == "discovery_candidate")
+    row["promotion_ready"] = str(pulled and str(row.get("target_family")) == "369")
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+    row["normalized_emergent_score"] = normalized_score
+    row["bridge_emergent_lock_score"] = score
+    row["score"] = score
+
+
+def bridge_emergent_lock_validation(config: BridgePhaseServoConfig, seed: int, quick: bool,
+                                    dt: float, runtime: float, sample_every: int
+                                    ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [("repeat_seed", dt, seed + 101), ("half_dt", dt * 0.5, seed + 211), ("quarter_dt", dt * 0.25, seed + 307)]
+    rows: List[Dict[str, float | str]] = []
+    ledger_rows: List[Dict[str, float | str]] = []
+    diagnostic_rows: List[Dict[str, float | str]] = []
+    for name, test_dt, test_seed in tests:
+        direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+        row, ledger, diag = bridge_emergent_lock_measure(config, test_seed, quick, test_dt, runtime, sample_every, direct_cache)
+        row["validation_test"] = name
+        rows.append(row)
+        ledger_rows.extend(ledger)
+        diagnostic_rows.extend(diag)
+    return rows, ledger_rows, diagnostic_rows
+
+
+def apply_bridge_emergent_lock_validation(candidate: Dict[str, float | str],
+                                          validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    repeat = next((r for r in rows if str(r.get("validation_test")) == "repeat_seed"), {})
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt"), {})
+    base_delta = float(candidate.get("detuning_delta", 0.0))
+    base_lock = float(candidate.get("emergent_phase_lock_target", 0.0))
+
+    def preserved(row: Dict[str, float | str]) -> bool:
+        if not row:
+            return False
+        delta_ok = ratio_stability_score(float(row.get("detuning_delta", 0.0)), base_delta) > 0.55 if abs(base_delta) > 1e-8 else abs(float(row.get("detuning_delta", 0.0))) < 0.01
+        lock_ok = float(row.get("emergent_phase_lock_target", 0.0)) >= 0.90 or ratio_stability_score(float(row.get("emergent_phase_lock_target", 0.0)), base_lock) > 0.85
+        budget_ok = float(row.get("energy_budget_error", 1.0)) < 0.005
+        work_ok = float(row.get("servo_work_fraction", 0.0)) < 0.05
+        return delta_ok and lock_ok and budget_ok and work_ok
+
+    seed_ok = preserved(repeat)
+    half_ok = preserved(half)
+    quarter_ok = preserved(quarter)
+    scores = []
+    for row in [repeat, half, quarter]:
+        if row:
+            delta_score = ratio_stability_score(float(row.get("detuning_delta", 0.0)), base_delta) if abs(base_delta) > 1e-8 else max(0.0, 1.0 - abs(float(row.get("detuning_delta", 0.0))) / 0.01)
+            lock_score = ratio_stability_score(float(row.get("emergent_phase_lock_target", 0.0)), base_lock)
+            scores.append(min(delta_score, lock_score))
+    reproducibility = min(scores) if scores else 0.0
+    candidate["seed_preserved"] = str(seed_ok)
+    candidate["half_dt_preserved"] = str(half_ok)
+    candidate["quarter_dt_preserved"] = str(quarter_ok)
+    candidate["detuning_reproducibility"] = reproducibility
+    candidate["repeat_seed_detuning_delta"] = float(repeat.get("detuning_delta", 0.0))
+    candidate["half_dt_detuning_delta"] = float(half.get("detuning_delta", 0.0))
+    candidate["quarter_dt_detuning_delta"] = float(quarter.get("detuning_delta", 0.0))
+    candidate["repeat_seed_emergent_phase_lock"] = float(repeat.get("emergent_phase_lock_target", 0.0))
+    candidate["half_dt_emergent_phase_lock"] = float(half.get("emergent_phase_lock_target", 0.0))
+    candidate["quarter_dt_emergent_phase_lock"] = float(quarter.get("emergent_phase_lock_target", 0.0))
+    bridge_emergent_lock_update_labels(candidate)
+
+
+def annotate_bridge_emergent_lock_uniqueness(rows: List[Dict[str, float | str]]) -> None:
+    non369_best = max(
+        [float(r.get("normalized_emergent_score", 0.0)) for r in rows if str(r.get("target_family")) != "369"],
+        default=0.0,
+    )
+    for row in rows:
+        unique = (
+            str(row.get("target_family")) == "369"
+            and str(row.get("harmonic_bridge_candidate")) == "True"
+            and float(row.get("normalized_emergent_score", 0.0)) > non369_best * 1.02
+        )
+        row["369_unique_candidate"] = str(unique)
+        if unique and str(row.get("pulled_frequency_discovery")) == "True":
+            row["promotion_ready"] = str(True)
+
+
+def write_bridge_emergent_lock_report(out_dir: Path,
+                                      ranked: List[Dict[str, float | str]],
+                                      validation_rows: List[Dict[str, float | str]]) -> None:
+    discovery = [r for r in ranked if str(r.get("reference_role")) == "discovery_candidate"]
+    best = ranked[0] if ranked else {}
+    best_369 = max([r for r in ranked if str(r.get("target_family")) == "369"], key=lambda r: float(r.get("normalized_emergent_score", 0.0)), default={})
+    by_family: Dict[str, Dict[str, float | str]] = {}
+    for family in ["369", "4812", "51015", "61218"]:
+        rows = [r for r in ranked if str(r.get("target_family")) == family]
+        if rows:
+            by_family[family] = max(rows, key=lambda r: (float(r.get("normalized_emergent_score", 0.0)), float(r.get("emergent_phase_lock_target", 0.0))))
+    harmonic = [r for r in ranked if str(r.get("harmonic_bridge_candidate")) == "True"]
+    pulled = [r for r in ranked if str(r.get("pulled_frequency_discovery")) == "True"]
+    unique = [r for r in ranked if str(r.get("369_unique_candidate")) == "True"]
+    emergent_beats_nominal = float(best.get("emergent_phase_lock_target", 0.0)) > float(best.get("nominal_phase_lock_target", 0.0)) + 0.02
+    if pulled:
+        failure_answer = "yes; at least one row shows stable pulled-frequency lock while nominal lock fails"
+    elif emergent_beats_nominal:
+        failure_answer = "partially; emergent fitting improves phase lock, but not enough for the strict pulled-frequency label"
+    else:
+        failure_answer = "mostly nominal-target drift or broad harmonic behavior; no stable pulled-frequency promotion"
+    non369_score = max([float(r.get("normalized_emergent_score", 0.0)) for r in ranked if str(r.get("target_family")) != "369"], default=0.0)
+    beats = float(best_369.get("normalized_emergent_score", 0.0)) > non369_score * 1.02
+    if unique:
+        next_answer = "geometry/evolve is justified as a follow-up, with normalized non-369 controls retained"
+    elif harmonic:
+        next_answer = "general harmonic-bridge promotion, not 369-specific geometry/evolve"
+    else:
+        next_answer = "passive tuning or active PLL; geometry/evolve should wait"
+    lines = [
+        "# Bridge Emergent Lock Report",
+        "",
+        "This diagnostic track tests whether the bridge is locking to a pulled local target frequency. It does not weaken the existing nominal discovery gates.",
+        "",
+        "## Direct Answers",
+        f"1. Is the 4x phase failure nominal drift or stable emergent-frequency lock? {failure_answer}.",
+        f"2. Does 3 -> 6 -> 9 beat normalized controls? {'yes' if beats else 'no'}; score_369={float(best_369.get('normalized_emergent_score', 0.0)):.6g}, best_non369_score={non369_score:.6g}.",
+        f"3. Cleanest phase/budget/work row: {best.get('candidate_id', 'none')}; family={best.get('target_family', '')}, emergent_lock={float(best.get('emergent_phase_lock_target', 0.0)):.6g}, budget={float(best.get('energy_budget_error', 0.0)):.6g}, work={float(best.get('servo_work_fraction', 0.0)):.6g}.",
+        f"4. Next step: {next_answer}.",
+        f"Promotion labels: harmonic_bridge_candidate={len(harmonic)}, 369_unique_candidate={len(unique)}, pulled_frequency_discovery={len(pulled)}.",
+        "",
+        "## Best By Family",
+    ]
+    for family, row in by_family.items():
+        lines.append(
+            f"- {family}: case={row.get('candidate_id')}, nominal_lock={float(row.get('nominal_phase_lock_target', 0.0)):.6g}, "
+            f"emergent_lock={float(row.get('emergent_phase_lock_target', 0.0)):.6g}, fitted={float(row.get('fitted_effective_target_frequency', 0.0)):.6g}, "
+            f"delta={float(row.get('detuning_delta', 0.0)):.6g}, purity={float(row.get('spectral_purity_target', 0.0)):.6g}, "
+            f"bridge={float(row.get('bridge_ratio', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+            f"work={float(row.get('servo_work_fraction', 0.0)):.6g}, harmonic={row.get('harmonic_bridge_candidate')}, failure={row.get('failure_mode', '')}"
+        )
+    lines.extend(["", "## Top Rows"])
+    for row in ranked[:24]:
+        lines.append(
+            f"- {row.get('candidate_id')}: family={row.get('target_family')}, mode={row.get('control_mode')}, actuator={row.get('actuator_type')}, "
+            f"nominal={float(row.get('nominal_phase_lock_target', 0.0)):.6g}, emergent={float(row.get('emergent_phase_lock_target', 0.0)):.6g}, "
+            f"fitted={float(row.get('fitted_effective_target_frequency', 0.0)):.6g}, norm_delta={float(row.get('normalized_detuning_delta', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, work={float(row.get('servo_work_fraction', 0.0)):.6g}, "
+            f"score={float(row.get('normalized_emergent_score', 0.0)):.6g}, harmonic={row.get('harmonic_bridge_candidate')}, pulled={row.get('pulled_frequency_discovery')}, unique369={row.get('369_unique_candidate')}, failure={row.get('failure_mode', '')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Reproducibility Checks"])
+        for row in validation_rows[:20]:
+            lines.append(
+                f"- {row.get('candidate_id')}: test={row.get('validation_test', '')}, emergent={float(row.get('emergent_phase_lock_target', 0.0)):.6g}, "
+                f"fitted={float(row.get('fitted_effective_target_frequency', 0.0)):.6g}, delta={float(row.get('detuning_delta', 0.0)):.6g}, "
+                f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, work={float(row.get('servo_work_fraction', 0.0)):.6g}"
+            )
+    (out_dir / "README_BRIDGE_EMERGENT_LOCK_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_emergent_lock(out_dir: Path, seed: int, quick: bool = False,
+                                    include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    specs = bridge_emergent_lock_specs(quick, include_sweeps)
+    summary_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    config_by_case: Dict[str, BridgePhaseServoConfig] = {}
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    for idx, (sweep, value, config) in enumerate(specs):
+        runtime = base_tmax * 1.25 * float(config.runtime_factor)
+        row, ledger, diag = bridge_emergent_lock_measure(config, seed + idx * 331, quick, dt, runtime, sample_every, direct_cache)
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        summary_rows.append(row)
+        config_by_case[str(row.get("case"))] = config
+        if include_sweeps or str(config.control_mode) == "no_servo" or abs(float(row.get("correction_peak", 0.0))) >= 0.004:
+            timeseries_rows.extend(diag)
+        if str(config.control_mode) == "no_servo" or (str(config.reference_role) == "control" and str(config.target_family) != "369"):
+            timeseries_rows.extend(ledger)
+
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_emergent_lock_score", 0.0)),
+            float(r.get("normalized_emergent_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            float(r.get("emergent_phase_lock_target", 0.0)),
+            -float(r.get("energy_budget_error", 1.0)),
+        ),
+        reverse=True,
+    )
+    validation_rows: List[Dict[str, float | str]] = []
+    top_candidates = [r for r in ranked if float(r.get("runtime_factor", 1.0)) >= 4.0][:4 if include_sweeps else 3]
+    for idx, candidate in enumerate(top_candidates):
+        config = config_by_case.get(str(candidate.get("case")))
+        if config is None:
+            continue
+        runtime = base_tmax * 1.25 * float(config.runtime_factor)
+        rows, ledger, diag = bridge_emergent_lock_validation(config, seed + 97000 + idx * 1200, quick, dt, runtime, sample_every)
+        validation_rows.extend(rows)
+        timeseries_rows.extend(diag)
+        if include_sweeps:
+            timeseries_rows.extend(ledger)
+        apply_bridge_emergent_lock_validation(candidate, validation_rows)
+    annotate_bridge_emergent_lock_uniqueness(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_emergent_lock_score", 0.0)),
+            float(r.get("normalized_emergent_score", 0.0)),
+            1.0 if str(r.get("reference_role")) == "discovery_candidate" else 0.0,
+            float(r.get("emergent_phase_lock_target", 0.0)),
+            -float(r.get("energy_budget_error", 1.0)),
+        ),
+        reverse=True,
+    )
+
+    write_csv(out_dir / "bridge_emergent_lock_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "bridge_emergent_lock_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_emergent_lock_timeseries.csv", timeseries_rows)
+    write_bridge_emergent_lock_report(out_dir, ranked, validation_rows)
+    return [
+        {
+            "experiment": "bridge_emergent_lock",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_emergent_lock_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "target_family": row.get("target_family", ""),
+            "nominal_phase_lock_target": row.get("nominal_phase_lock_target", 0.0),
+            "emergent_phase_lock_target": row.get("emergent_phase_lock_target", 0.0),
+            "fitted_effective_target_frequency": row.get("fitted_effective_target_frequency", 0.0),
+            "detuning_delta": row.get("detuning_delta", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "servo_work_fraction": row.get("servo_work_fraction", 0.0),
+            "harmonic_bridge_candidate": row.get("harmonic_bridge_candidate", "False"),
+            "369_unique_candidate": row.get("369_unique_candidate", "False"),
+            "pulled_frequency_discovery": row.get("pulled_frequency_discovery", "False"),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -12235,8 +12956,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -12289,6 +13010,8 @@ def main() -> None:
         rows.extend(experiment_bridge_drift_feedforward(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_phase_servo",):
         rows.extend(experiment_bridge_phase_servo(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_emergent_lock",):
+        rows.extend(experiment_bridge_emergent_lock(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

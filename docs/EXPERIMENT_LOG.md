@@ -161,3 +161,14 @@ Added a PI phase-servo test:
 - Includes no-servo, wrong-sign, and random-servo controls plus half/quarter-dt validation for top rows.
 - Quick smoke did not promote: best 3 -> 6 -> 9 row used `receiver_tuning_servo`, reached phase_lock_target 0.808, and used servo work fraction 0.000492.
 - Non-369 controls reached phase_lock_target 0.994-0.996 but failed energy-budget gates, so no family passed the full 4x promotion gate.
+
+## Bridge Emergent Lock
+
+Added a pulled-frequency diagnostic track:
+
+- Uses the clean staged bridge and existing phase-servo/control-authority infrastructure to ask whether nominal 4x phase failure is actually stable lock to a nearby effective target.
+- Compares 3 -> 6 -> 9, 4 -> 8 -> 12, 5 -> 10 -> 15, and 6 -> 12 -> 18 with no-servo, receiver-tuning servo, Stage B detuning servo, and magnetic-bias servo rows.
+- Reports nominal phase lock, fitted effective target frequency, emergent phase lock at that fitted frequency, detuning delta/drift/reproducibility, bridge ratio, spectral purity, strict budget error, and servo work fraction.
+- Keeps direct 2f/3f drive and target-frequency injection out of generated bridge rows.
+- Quick smoke found a reproducible 3 -> 6 -> 9 fitted target near 9.0225, but emergent phase lock only reached about 0.733, below the 0.90 gate.
+- No `harmonic_bridge_candidate`, `pulled_frequency_discovery`, or `369_unique_candidate` label passed. The current read is a small pulled component plus continuing phase drift, not a stable emergent-frequency lock.

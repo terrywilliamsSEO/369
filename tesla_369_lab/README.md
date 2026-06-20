@@ -116,6 +116,12 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Compares 3->6->9 against 4->8->12 and 5->10->15, plus no-servo, wrong-sign, and random-servo controls.
    - Reports target-family phase lock, target spectral purity, servo work, correction RMS/peak, phase drift, lock duration, and half/quarter-dt preservation.
 
+21. **Bridge emergent lock**
+   - Diagnoses whether long-runtime nominal phase failure is actually stable lock to a pulled local target frequency.
+   - Uses the clean staged bridge, direct-reference cache, phase diagnostics, and the phase-servo/control-authority actuator infrastructure.
+   - Compares 3->6->9 against 4->8->12, 5->10->15, and 6->12->18 under no-servo, receiver-tuning, Stage B detuning, and magnetic-bias servo cases.
+   - Keeps direct 2f/3f drive and target-frequency injection out of discovery rows while reporting nominal lock, fitted effective target, emergent lock, detuning drift, work, budget, and dt/seed reproducibility.
+
 ## Install
 
 ```bash
@@ -198,6 +204,10 @@ python tesla_369_lab.py --mode bridge_phase_servo
 python tesla_369_lab.py --mode bridge_phase_servo --quick
 python tesla_369_lab.py --mode bridge_phase_servo --sweeps
 python tesla_369_lab.py --mode bridge_phase_servo --quick --sweeps
+python tesla_369_lab.py --mode bridge_emergent_lock
+python tesla_369_lab.py --mode bridge_emergent_lock --quick
+python tesla_369_lab.py --mode bridge_emergent_lock --sweeps
+python tesla_369_lab.py --mode bridge_emergent_lock --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -287,6 +297,9 @@ bridge_phase_servo_summary.csv
 bridge_phase_servo_ranked.csv
 bridge_phase_servo_sweeps.csv
 bridge_phase_servo_timeseries.csv
+bridge_emergent_lock_summary.csv
+bridge_emergent_lock_ranked.csv
+bridge_emergent_lock_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -312,6 +325,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In magnetic autolock mode, can open-loop capture, passive hybrid tuning, or tiny counted injection survive 4x without becoming hidden feedback?
 - In bridge minimum nudge mode, can an explicitly accounted tiny tuning correction stabilize 4x lock without overpowering the passive bridge?
 - In bridge lock threshold mode, what is the minimum explicitly accounted correction needed for 4x lock, if any?
+- In bridge emergent lock mode, is nominal 4x phase failure actually a stable pulled-frequency lock, and does 3->6->9 still beat non-369 controls after normalization?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results

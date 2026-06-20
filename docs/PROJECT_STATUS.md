@@ -23,6 +23,7 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Open-loop control-authority tests now quantify whether receiver tuning, magnetic bias, or Stage B detuning can pull 4x phase drift under clean accounting.
 - Precomputed drift feedforward ramps do not currently hold 4x phase lock, even with tiny counted work.
 - PI phase servo improves the 3 -> 6 -> 9 phase lock modestly, but non-369 controls still look stronger on phase lock.
+- Emergent-lock diagnostics find a small pulled local 3 -> 6 -> 9 target near 9.02, but not a stable >0.90 emergent phase lock.
 
 ## Current Blocker
 
@@ -130,13 +131,39 @@ Quick smoke result from `runs/bridge_phase_servo_quick_smoke`:
 - No discovery row passed the 4x gate.
 - Non-369 controls reached phase_lock_target 0.994-0.996, but failed full promotion by energy-budget error.
 
+## Latest Emergent Lock Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode bridge_emergent_lock
+python tesla_369_lab.py --mode bridge_emergent_lock --quick
+python tesla_369_lab.py --mode bridge_emergent_lock --sweeps
+```
+
+What it tests:
+
+- Whether the 4x nominal phase-lock failure is actually lock to a stable pulled target frequency near the nominal target.
+- 3 -> 6 -> 9, 4 -> 8 -> 12, 5 -> 10 -> 15, and 6 -> 12 -> 18 families under no-servo and the physical tuning/bias servo actuators.
+- Nominal phase lock, fitted effective target frequency, emergent phase lock at that fitted frequency, detuning drift, dt/seed reproducibility, strict energy budget, and servo work.
+- Direct 2f/3f drive and target-frequency injection are explicitly reported as forbidden contamination flags.
+
+Quick smoke result from `runs/bridge_emergent_lock_quick_smoke`:
+
+- Best 3 -> 6 -> 9 row: `stage_B_detuning_servo` on `feedforward_best_magnetic_bias`, Kp 0.0015, Ki 0.000020.
+- Metrics: nominal phase lock 0.715, emergent phase lock 0.733, fitted target 9.0226, bridge ratio 3.365, spectral purity 0.929, budget error 0.00106, servo work fraction 0.000198.
+- Repeat-seed, half-dt, and quarter-dt checks preserved the fitted detuning near +0.0225, but phase lock stayed below the 0.90 promotion gate.
+- No `harmonic_bridge_candidate`, `pulled_frequency_discovery`, or `369_unique_candidate` label passed.
+- Non-369 controls reached emergent phase lock around 0.982-0.998, but failed promotion by energy-budget error.
+- Current read: the failure is still mostly nominal-target drift or broad harmonic behavior, not a stable pulled-frequency lock.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run `bridge_phase_servo --sweeps` only if we need a broader PI-control confirmation across gain, clamp, smoothing, tuning, and runtime.
-2. Treat non-369 controls as first-class competitors because they beat 3 -> 6 -> 9 on phase lock in quick servo smoke.
-3. Move to a full PLL only if the goal is active stabilization rather than proving 3 -> 6 -> 9 uniqueness.
+1. Run `bridge_emergent_lock --sweeps` only if we need broader confirmation of the pulled-frequency diagnostic across seeds, dt, and tuning.
+2. Treat non-369 controls as first-class competitors because they still beat 3 -> 6 -> 9 on raw phase lock.
+3. Move to passive tuning or a full PLL only if the goal is active stabilization rather than proving 3 -> 6 -> 9 uniqueness.
 4. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

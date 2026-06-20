@@ -27,11 +27,12 @@ What has not survived yet:
 - Open-loop control-authority tests now measure whether allowed real-world actuators can pull that drift without direct 6/9 drive or target-frequency injection.
 - Precomputed drift feedforward ramps stayed energetically tiny but did not hold 4x lock in quick smoke.
 - PI phase servo improves the 3 -> 6 -> 9 phase lock modestly, but still does not reach the 4x lock gate.
+- Emergent-lock diagnostics find a small pulled local target near 9.02 for the 3 -> 6 -> 9 bridge, but the fitted-frequency phase lock still stays below the 0.90 gate.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Use `bridge_phase_servo --sweeps` only to confirm whether stronger/tighter PI variants can close the gap.
+- Use `bridge_emergent_lock --sweeps` only if we need broader confirmation of the pulled-frequency diagnostic across seeds, dt, and tuning.
 - 3 -> 6 -> 9 is not uniquely special yet; keep non-369 controls central before geometry/evolve.
 
 ## Repo Map
@@ -80,6 +81,8 @@ python tesla_369_lab.py --mode bridge_drift_feedforward --quick
 python tesla_369_lab.py --mode bridge_drift_feedforward --quick --sweeps
 python tesla_369_lab.py --mode bridge_phase_servo --quick
 python tesla_369_lab.py --mode bridge_phase_servo --quick --sweeps
+python tesla_369_lab.py --mode bridge_emergent_lock --quick
+python tesla_369_lab.py --mode bridge_emergent_lock --quick --sweeps
 ```
 
 Key bridge modes:
@@ -94,6 +97,7 @@ python tesla_369_lab.py --mode bridge_lock_threshold --quick --sweeps
 python tesla_369_lab.py --mode bridge_control_authority --quick --sweeps
 python tesla_369_lab.py --mode bridge_drift_feedforward --quick --sweeps
 python tesla_369_lab.py --mode bridge_phase_servo --quick --sweeps
+python tesla_369_lab.py --mode bridge_emergent_lock --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -146,3 +150,14 @@ Quick smoke result:
 - No discovery row passed the 4x phase-lock gate.
 - Non-369 controls reached phase lock 0.994-0.996, but failed full promotion by energy budget.
 - Current recommendation: do not move to geometry/evolve yet; 3 -> 6 -> 9 is not uniquely special under these servo rules.
+
+## Latest Emergent Lock Read
+
+Quick smoke result from `runs/bridge_emergent_lock_quick_smoke`:
+
+- Best 3 -> 6 -> 9 row used `stage_B_detuning_servo` on the `feedforward_best_magnetic_bias` seed.
+- The fitted effective target was 9.0226, about +0.0226 above nominal 9.
+- Emergent phase lock improved only slightly over nominal, 0.733 vs 0.715, with bridge ratio 3.365, spectral purity 0.929, budget error 0.00106, and servo work fraction 0.000198.
+- No `harmonic_bridge_candidate`, `pulled_frequency_discovery`, or `369_unique_candidate` label passed.
+- Non-369 controls had much higher nominal/emergent phase lock, but failed promotion by energy-budget error; after normalized budget/work scoring, the best 369 row scored higher.
+- Current recommendation: treat this as nominal-target drift with a small pulled-frequency component, not a stable emergent-frequency lock. Passive tuning or active PLL remains more justified than geometry/evolve.
