@@ -232,3 +232,17 @@ Added a focused refined-dt basin-map mode:
 - No 369 row promoted: best lock was 0.864, best generated-envelope CV was 0.528, best max phase jump was 2.36 rad, and top rows still had 22-24 near slips.
 - A 5 -> 10 -> 15 control became budget-clean and stronger by normalized score, though it failed promotion by bridge ratio.
 - Current next fix: limiter redesign plus predictive servo timing before full sweeps or geometry/evolve.
+
+## Bridge Limiter Predictive Servo
+
+Added a limiter/predictive-servo mode:
+
+- Starts from the refined Stage A basin lead: Stage A offset `+0.030`, generated damping factor `1.05`, A->B coupling `0.90`, limiter `0.04`.
+- Track A tests passive limiter redesign only: existing limiter, soft/tanh/cubic-quintic/coupling saturation, adaptive generated damping, envelope-derivative damping, and energy-bucket limiting.
+- Track B tests predictive servo timing only with receiver tuning, Stage B detuning, and magnetic bias actuators.
+- Track C combines limiter candidates with predictive servo timing.
+- Tracks generated and target envelope CV, max phase jump, near-slip count, phase-slip count, bridge ratio, purity, strict budget, limiter work, servo work, trigger count, lead time, and no-direct-drive flags.
+- Quick smoke found high-lock, budget-clean 369 damping rows, but no promotion: best 369 CV was 0.274 and best max jump was 1.744 rad.
+- The best high-lock 369 row, passive `adaptive_generated_damping`, reached lock 0.968 at half-dt primary and preserved lock at half/quarter validation, but CV and phase jumps stayed above gate.
+- Predictive servo timing measured lead time before jumps but did not reduce max jump below 1.0 rad.
+- A 5 -> 10 -> 15 control stayed stronger by normalized budget score, so this run argues for a general harmonic-bridge study before geometry/evolve.

@@ -252,6 +252,10 @@ python tesla_369_lab.py --mode bridge_stageA_refined_basin
 python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick
 python tesla_369_lab.py --mode bridge_stageA_refined_basin --sweeps
 python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick --sweeps
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo --sweeps
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -359,6 +363,9 @@ bridge_stageA_budget_forensics_timeseries.csv
 bridge_stageA_refined_basin_summary.csv
 bridge_stageA_refined_basin_ranked.csv
 bridge_stageA_refined_basin_timeseries.csv
+bridge_limiter_predictive_servo_summary.csv
+bridge_limiter_predictive_servo_ranked.csv
+bridge_limiter_predictive_servo_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv

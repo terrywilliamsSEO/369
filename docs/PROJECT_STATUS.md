@@ -294,6 +294,34 @@ Quick smoke result from `runs/bridge_stageA_refined_basin_quick_smoke`:
 - No 369 row became promotion-ready after dt validation.
 - Current next fix: limiter redesign plus predictive servo timing before full sweeps. Geometry/evolve remains premature.
 
+## Latest Limiter Predictive Servo Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo --sweeps
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
+```
+
+What it tests:
+
+- Track A: passive limiter redesign only, including existing, soft/tanh/cubic-quintic/coupling saturation, adaptive generated damping, envelope-derivative damping, and energy-bucket limiting.
+- Track B: predictive servo timing only using generated-envelope derivative, generated/target phase acceleration, energy-ratio derivative, and predicted near-slip score.
+- Track C: combined limiter plus predictive servo rows.
+- It keeps direct 2f drive, direct 3f drive, and target-frequency injection out of discovery rows while tracking limiter loss/work, servo work, predictive trigger count, and lead time before phase jumps.
+
+Quick smoke result from `runs/bridge_limiter_predictive_servo_quick_smoke`:
+
+- No 369 row promoted. The best 369 generated-envelope CV was 0.274, still above the 0.25 gate.
+- Best 369 max phase jump was 1.744 rad, still above the 1.0 rad gate.
+- Passive `adaptive_generated_damping` crossed lock >0.90 while budget-clean: primary lock 0.968, budget 0.00438, bridge ratio 2.152, purity 0.991.
+- That high-lock row preserved lock under dt validation: half-dt lock 0.968 and quarter-dt lock 0.970, but CV stayed about 0.281 and max jump stayed about 1.75-1.77 rad.
+- Predictive servo timing recorded trigger lead times, but it did not reduce max jump below gate.
+- A 5 -> 10 -> 15 control remained much stronger by normalized budget score, so 369 did not beat the controls.
+- Current next fix: general harmonic-bridge study before geometry/evolve; if continuing the 369 branch, try a true active PLL or a more physical limiter redesign.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
@@ -301,6 +329,6 @@ Do not promote to `geometry369` yet.
 Next options:
 
 1. Keep the refined-dt accounting path and continue monitoring absolute/relative budget convergence.
-2. Redesign limiter behavior and predictive servo timing around the budget-clean refined basin, because refined dt preserved budget cleanliness but not lock/jump/envelope gates.
-3. Treat non-369 controls as first-class competitors because they still beat 3 -> 6 -> 9 on raw phase lock, while failing budget.
+2. Treat non-369 controls as first-class competitors because 5 -> 10 -> 15 now beats 3 -> 6 -> 9 under normalized budget scoring.
+3. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 4. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

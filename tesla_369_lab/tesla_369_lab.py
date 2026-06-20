@@ -16752,6 +16752,1046 @@ def experiment_bridge_stageA_refined_basin(out_dir: Path, seed: int, quick: bool
 
 
 # ----------------------------
+# Experiment 27: bridge limiter + predictive servo
+# ----------------------------
+
+BRIDGE_LIMITER_TYPES = [
+    "existing_limiter",
+    "soft_saturation",
+    "tanh_limiter",
+    "cubic_quintic_limiter",
+    "coupling_saturation",
+    "adaptive_generated_damping",
+    "envelope_derivative_damping",
+    "energy_bucket_limiter",
+]
+
+BRIDGE_PREDICTIVE_INDICATORS = [
+    "generated_envelope_derivative",
+    "generated_phase_acceleration",
+    "target_phase_acceleration",
+    "generated_to_target_energy_ratio_derivative",
+    "predicted_near_slip_score",
+]
+
+BRIDGE_PREDICTIVE_ACTUATORS = {
+    "receiver_tuning_predictive_servo": "receiver_tuning_nudge",
+    "stage_B_detuning_predictive_servo": "stage_B_detuning_nudge",
+    "magnetic_bias_predictive_servo": "magnetic_bias_nudge",
+}
+
+
+@dataclass
+class BridgeLimiterPredictiveServoConfig:
+    name: str
+    stage_config: BridgeStageABudgetAuditConfig
+    servo_config: BridgePhaseServoConfig
+    track: str
+    limiter_type: str
+    predictive_indicator: str = "none"
+    predictive_gain: float = 0.0
+    predictive_threshold: float = 0.18
+    limiter_dynamic_strength: float = 0.04
+    runtime_factor: float = 4.0
+    target_family: str = "369"
+    reference_role: str = "discovery_candidate"
+    family: str = "369"
+    note: str = ""
+
+
+def bridge_limiter_predictive_limiter_params(limiter_type: str) -> Dict[str, float]:
+    params = {
+        "stage_A_offset": 0.030,
+        "generated_damping_factor": 1.05,
+        "coupling_scale": 0.90,
+        "limiter_strength": 0.04,
+        "stage_B_detuning": 0.0,
+        "dynamic_strength": 0.04,
+    }
+    if limiter_type == "soft_saturation":
+        params.update({"limiter_strength": 0.06, "generated_damping_factor": 1.08, "dynamic_strength": 0.05})
+    elif limiter_type == "tanh_limiter":
+        params.update({"limiter_strength": 0.08, "generated_damping_factor": 1.10, "dynamic_strength": 0.06})
+    elif limiter_type == "cubic_quintic_limiter":
+        params.update({"limiter_strength": 0.10, "generated_damping_factor": 1.12, "dynamic_strength": 0.07})
+    elif limiter_type == "coupling_saturation":
+        params.update({"coupling_scale": 0.82, "limiter_strength": 0.05, "dynamic_strength": 0.05})
+    elif limiter_type == "adaptive_generated_damping":
+        params.update({"generated_damping_factor": 1.12, "limiter_strength": 0.04, "dynamic_strength": 0.08})
+    elif limiter_type == "envelope_derivative_damping":
+        params.update({"generated_damping_factor": 1.10, "limiter_strength": 0.04, "dynamic_strength": 0.07})
+    elif limiter_type == "energy_bucket_limiter":
+        params.update({"coupling_scale": 0.86, "limiter_strength": 0.06, "generated_damping_factor": 1.08, "dynamic_strength": 0.08})
+    return params
+
+
+def bridge_limiter_predictive_stage_config(target_family: str,
+                                           seed_family: str,
+                                           family: str,
+                                           base_config: BridgeMinNudgeConfig,
+                                           limiter_type: str,
+                                           actuator_type: str,
+                                           track: str,
+                                           control_mode: str,
+                                           *,
+                                           predictive_gain: float = 0.0,
+                                           predictive_indicator: str = "none") -> BridgeLimiterPredictiveServoConfig:
+    params = bridge_limiter_predictive_limiter_params(limiter_type)
+    moderate_q = 0.92
+    correction_type = BRIDGE_PREDICTIVE_ACTUATORS.get(actuator_type, "stage_B_detuning_nudge")
+    role = "discovery_candidate" if family == "369" else "control"
+    tuned_base = replace(
+        base_config,
+        correction_type=correction_type,
+        reference_role=role,
+        family=family,
+    )
+    stage = bridge_stageA_forensics_make_audit_config(
+        target_family,
+        seed_family,
+        family,
+        tuned_base,
+        "limiter_predictive_servo",
+        track,
+        f"{limiter_type}_{actuator_type}_{predictive_indicator}",
+        float(params["stage_A_offset"]),
+        generated_damping=moderate_q * float(params["generated_damping_factor"]),
+        coupling_scale=float(params["coupling_scale"]),
+        limiter_strength=float(params["limiter_strength"]),
+        stage_b_static_detuning=float(params["stage_B_detuning"]),
+        no_servo=control_mode == "no_servo",
+        reference_role_override=role,
+    )
+    servo = bridge_phase_servo_make_config(
+        target_family,
+        seed_family,
+        tuned_base,
+        "stage_B_detuning_servo" if actuator_type == "none" else actuator_type.replace("_predictive", ""),
+        0.0012,
+        0.000012,
+        0.016,
+        0.22,
+        1.0,
+        runtime_factor=4.0,
+        control_mode=control_mode,
+        reference_role=role,
+        family=family,
+        suffix=f"{track}_{limiter_type}_{predictive_indicator}",
+    )
+    name = (
+        f"bridge_limiter_predictive_servo_{target_family}_{seed_family}_{track}"
+        f"_{limiter_type}_{actuator_type}_{predictive_indicator}"
+    )
+    stage = replace(
+        stage,
+        name=name,
+        base_config=replace(stage.base_config, correction_type=correction_type, reference_role=role, family=family),
+        servo_config=servo,
+        note="Limiter/predictive-servo Stage A basin row; no direct 2f/3f drive and no target-frequency injection",
+    )
+    return BridgeLimiterPredictiveServoConfig(
+        name=name,
+        stage_config=stage,
+        servo_config=servo,
+        track=track,
+        limiter_type=limiter_type,
+        predictive_indicator=predictive_indicator,
+        predictive_gain=predictive_gain,
+        predictive_threshold=0.16 if predictive_indicator == "predicted_near_slip_score" else 0.20,
+        limiter_dynamic_strength=float(params["dynamic_strength"]),
+        target_family=target_family,
+        reference_role=role,
+        family=family,
+        note=stage.note,
+    )
+
+
+def bridge_limiter_predictive_extra_damping(config: BridgeLimiterPredictiveServoConfig,
+                                            q: np.ndarray,
+                                            v: np.ndarray,
+                                            omega: np.ndarray) -> Tuple[float, float]:
+    strength = max(0.0, config.limiter_dynamic_strength)
+    limiter_type = config.limiter_type
+    if limiter_type in ("existing_limiter", "soft_saturation", "tanh_limiter", "cubic_quintic_limiter", "coupling_saturation"):
+        return 0.0, 0.0
+    generated_energy = 0.5 * (float(v[1] ** 2) + float((omega[1] * q[1]) ** 2))
+    target_energy = 0.5 * (float(v[2] ** 2) + float((omega[2] * q[2]) ** 2))
+    if limiter_type == "adaptive_generated_damping":
+        stage_b_c = 0.11 * strength * (1.0 + min(5.0, 140.0 * abs(float(q[1]))))
+        return stage_b_c, 0.0
+    if limiter_type == "envelope_derivative_damping":
+        stage_b_c = 0.08 * strength * (1.0 + min(6.0, 18.0 * abs(float(v[1]))))
+        coupling_c = 0.018 * strength
+        return stage_b_c, coupling_c
+    if limiter_type == "energy_bucket_limiter":
+        overload = max(0.0, metric_ratio(generated_energy, target_energy + 1e-12) - 1.0)
+        stage_b_c = 0.055 * strength * min(6.0, overload)
+        coupling_c = 0.024 * strength * min(4.0, overload)
+        return stage_b_c, coupling_c
+    return 0.0, 0.0
+
+
+def bridge_limiter_predictive_derivative(y: np.ndarray, t: float, omega: np.ndarray,
+                                         effective: BridgeAmpConfig,
+                                         config: BridgeLimiterPredictiveServoConfig,
+                                         base_hz: float,
+                                         drive_start: float,
+                                         drive_until: float,
+                                         zeta: np.ndarray) -> np.ndarray:
+    dy = bridge_stageA_budget_derivative(y, t, omega, effective, base_hz, drive_start, drive_until, zeta)
+    q = y[:3]
+    v = y[3:]
+    a = dy[3:].copy()
+    stage_b_c, coupling_c = bridge_limiter_predictive_extra_damping(config, q, v, omega)
+    if stage_b_c > 0.0:
+        a[1] += -stage_b_c * v[1]
+    if coupling_c > 0.0:
+        relative_v = v[0] - v[1]
+        a[0] += -coupling_c * relative_v
+        a[1] += coupling_c * relative_v
+    return np.concatenate([dy[:3], a])
+
+
+def bridge_limiter_predictive_loss(config: BridgeLimiterPredictiveServoConfig,
+                                   q: np.ndarray,
+                                   v: np.ndarray,
+                                   omega: np.ndarray) -> float:
+    stage_b_c, coupling_c = bridge_limiter_predictive_extra_damping(config, q, v, omega)
+    return float(stage_b_c * (v[1] ** 2) + coupling_c * ((v[0] - v[1]) ** 2))
+
+
+def bridge_limiter_predictive_signals(indicator: str,
+                                      sample_times: List[float],
+                                      energies: List[np.ndarray],
+                                      phase_errors: List[float],
+                                      generated_phase_errors: List[float]) -> Dict[str, float | str]:
+    if indicator == "none" or len(sample_times) < 8 or len(energies) < 8:
+        return {
+            "predictive_score": 0.0,
+            "predictive_sign": 0.0,
+            "generated_envelope_derivative": 0.0,
+            "generated_phase_acceleration": 0.0,
+            "target_phase_acceleration": 0.0,
+            "generated_to_target_energy_ratio_derivative": 0.0,
+        }
+    n = min(18, len(sample_times), len(energies), len(phase_errors), len(generated_phase_errors))
+    t = np.asarray(sample_times[-n:], dtype=float)
+    e = np.asarray(energies[-n:], dtype=float)
+    gen_amp = np.sqrt(np.maximum(e[:, 1], 0.0))
+    target_amp = np.sqrt(np.maximum(e[:, 2], 0.0))
+    ratio = e[:, 1] / (e[:, 2] + 1e-12)
+    target_phase = np.unwrap(np.asarray(phase_errors[-n:], dtype=float))
+    generated_phase = np.unwrap(np.asarray(generated_phase_errors[-n:], dtype=float))
+    if float(np.max(t) - np.min(t)) <= 1e-12:
+        return {
+            "predictive_score": 0.0,
+            "predictive_sign": 0.0,
+            "generated_envelope_derivative": 0.0,
+            "generated_phase_acceleration": 0.0,
+            "target_phase_acceleration": 0.0,
+            "generated_to_target_energy_ratio_derivative": 0.0,
+        }
+    gen_env_derivative = float(np.polyfit(t, gen_amp, 1)[0])
+    ratio_derivative = float(np.polyfit(t, ratio, 1)[0])
+    generated_velocity = np.gradient(generated_phase, t)
+    target_velocity = np.gradient(target_phase, t)
+    generated_accel = float(np.gradient(generated_velocity, t)[-1]) if len(t) >= 4 else 0.0
+    target_accel = float(np.gradient(target_velocity, t)[-1]) if len(t) >= 4 else 0.0
+    gen_env_scale = abs(gen_env_derivative) / (float(np.mean(np.abs(gen_amp))) + 1e-12)
+    ratio_scale = abs(ratio_derivative) / (float(np.mean(np.abs(ratio))) + 1e-12)
+    generated_accel_scale = abs(generated_accel)
+    target_accel_scale = abs(target_accel)
+    combined = min(2.0, 0.35 * gen_env_scale + 0.25 * ratio_scale + 0.20 * generated_accel_scale + 0.35 * target_accel_scale)
+    if indicator == "generated_envelope_derivative":
+        score = min(1.0, 2.2 * gen_env_scale)
+    elif indicator == "generated_phase_acceleration":
+        score = min(1.0, 0.55 * generated_accel_scale)
+    elif indicator == "target_phase_acceleration":
+        score = min(1.0, 0.65 * target_accel_scale)
+    elif indicator == "generated_to_target_energy_ratio_derivative":
+        score = min(1.0, 1.6 * ratio_scale)
+    else:
+        score = min(1.0, combined)
+    sign_source = float(target_velocity[-1] + 0.25 * target_phase[-1] + 0.10 * generated_velocity[-1])
+    predictive_sign = float(np.sign(sign_source)) if abs(sign_source) > 1e-9 else 0.0
+    return {
+        "predictive_score": score,
+        "predictive_sign": predictive_sign,
+        "generated_envelope_derivative": gen_env_derivative,
+        "generated_phase_acceleration": generated_accel,
+        "target_phase_acceleration": target_accel,
+        "generated_to_target_energy_ratio_derivative": ratio_derivative,
+    }
+
+
+def bridge_limiter_predictive_next_correction(config: BridgeLimiterPredictiveServoConfig,
+                                              rng: np.random.Generator,
+                                              phase_error: float,
+                                              integral_phase_error: float,
+                                              current: float,
+                                              signals: Dict[str, float | str]) -> Tuple[float, bool]:
+    servo = config.servo_config
+    if servo.control_mode == "no_servo":
+        return 0.0, False
+    if servo.control_mode == "random":
+        desired = float(rng.uniform(-servo.correction_clamp, servo.correction_clamp))
+        return float(np.clip(current + servo.smoothing * (desired - current), -servo.correction_clamp, servo.correction_clamp)), True
+    predictive_score = float(signals.get("predictive_score", 0.0))
+    predictive_sign = float(signals.get("predictive_sign", 0.0))
+    triggered = predictive_score >= config.predictive_threshold
+    base_desired = -servo.kp * phase_error - servo.ki * integral_phase_error
+    predictive_term = -config.predictive_gain * predictive_score * predictive_sign if triggered else 0.0
+    desired = base_desired + predictive_term
+    desired = float(np.clip(desired, -servo.correction_clamp, servo.correction_clamp))
+    return float(np.clip(current + servo.smoothing * (desired - current), -servo.correction_clamp, servo.correction_clamp)), triggered
+
+
+def simulate_bridge_limiter_predictive_servo(config: BridgeLimiterPredictiveServoConfig,
+                                             seed: int,
+                                             quick: bool,
+                                             dt: float | None = None,
+                                             t_max: float | None = None,
+                                             base_hz: float = 0.045,
+                                             sample_every: int | None = None
+                                             ) -> Tuple[Dict[str, object], List[Dict[str, float | str]]]:
+    rng = np.random.default_rng(seed)
+    default_dt, default_tmax, default_sample = bridge_amp_timebase(quick)
+    dt = default_dt if dt is None else dt
+    t_max = default_tmax if t_max is None else t_max
+    sample_every = default_sample if sample_every is None else sample_every
+    stage = config.stage_config
+    servo = config.servo_config
+    drive_start = max(0.0, stage.drive_start_delay)
+    drive_until = drive_start + 0.74 * max(t_max - drive_start, 1e-9)
+
+    target_correction = 0.0
+    phase_error = 0.0
+    generated_phase_error = 0.0
+    integral_phase_error = 0.0
+    current_offset = bridge_stageA_budget_offset(stage, 0.0, drive_start, drive_until)
+    current_base = bridge_stageA_budget_static_base(stage, current_offset)
+    current_base = replace(current_base, correction_type=servo.correction_type, reference_role=config.reference_role, family=config.family)
+    effective = bridge_min_nudge_effective_bridge(current_base, target_correction)
+    omega = 2.0 * np.pi * base_hz * np.asarray(effective.mode_freqs, dtype=float)
+    zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+    y = np.zeros(6)
+    y[:3] = 1e-4 * rng.normal(size=3)
+    y[3:] = 1e-4 * rng.normal(size=3)
+    initial_potentials = bridge_amp_potentials(y[:3], y[3:], omega, effective)
+    initial_total = float(initial_potentials["total"])
+    drive_work = 0.0
+    positive_input_work = 0.0
+    damping_loss = 0.0
+    limiter_loss = 0.0
+    magnetic_loss = 0.0
+    spark_loss = 0.0
+    servo_work_signed = 0.0
+    servo_work_abs = 0.0
+    predictive_trigger_count = 0
+    trigger_times: List[float] = []
+    last_signals: Dict[str, float | str] = bridge_limiter_predictive_signals("none", [], [], [], [])
+    last_trigger = False
+
+    update_steps = max(1, int(servo.update_interval / max(dt, 1e-12)))
+    update_dt = update_steps * dt
+    sample_dt = dt * sample_every
+    times: List[float] = []
+    qs: List[np.ndarray] = []
+    vs: List[np.ndarray] = []
+    energies: List[np.ndarray] = []
+    corrections: List[float] = []
+    phase_errors: List[float] = []
+    generated_phase_errors: List[float] = []
+    ledger: List[Dict[str, float | str]] = []
+
+    n_steps = int(t_max / dt)
+    for step in range(n_steps):
+        t = step * dt
+        q = y[:3]
+        v = y[3:]
+
+        if step > 0 and step % update_steps == 0:
+            phase_error = bridge_min_nudge_phase_error(effective, times, qs, sample_dt)
+            generated_phase_error = bridge_generated_stage_phase_error(effective, times, qs, sample_dt)
+            if servo.control_mode == "no_servo":
+                integral_phase_error = 0.0
+                next_correction = 0.0
+                last_trigger = False
+                last_signals = bridge_limiter_predictive_signals("none", times, energies, phase_errors, generated_phase_errors)
+            else:
+                integral_phase_error = float(np.clip(
+                    integral_phase_error + phase_error * update_dt,
+                    -servo.integral_clamp,
+                    servo.integral_clamp,
+                ))
+                last_signals = bridge_limiter_predictive_signals(config.predictive_indicator, times, energies, phase_errors, generated_phase_errors)
+                next_correction, last_trigger = bridge_limiter_predictive_next_correction(
+                    config,
+                    rng,
+                    phase_error,
+                    integral_phase_error,
+                    target_correction,
+                    last_signals,
+                )
+                if last_trigger:
+                    predictive_trigger_count += 1
+                    trigger_times.append(float(t))
+            if abs(next_correction - target_correction) > 1e-15:
+                before = bridge_amp_potentials(q, v, omega, effective)
+                next_effective = bridge_min_nudge_effective_bridge(current_base, next_correction)
+                next_omega = 2.0 * np.pi * base_hz * np.asarray(next_effective.mode_freqs, dtype=float)
+                after_param = bridge_amp_potentials(q, v, next_omega, next_effective)
+                delta_work = float(after_param["total"] - before["total"])
+                servo_work_signed += delta_work
+                servo_work_abs += abs(delta_work)
+                target_correction = next_correction
+                effective = next_effective
+                omega = next_omega
+                zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+        drive_forces = bridge_stageA_budget_drive_forces(effective, t, base_hz, drive_start, drive_until, 3)
+        drive_power = float(np.dot(drive_forces, v))
+        drive_work += drive_power * dt
+        positive_input_work += max(0.0, drive_power) * dt
+        damping_loss += float(np.sum(2.0 * zeta * omega * (v ** 2))) * dt
+        limiter_loss += bridge_limiter_predictive_loss(config, q, v, omega) * dt
+        magnetic_loss_damping = bridge_stageA_budget_magnetic_loss_damping(current_base.magnetic_config)
+        if magnetic_loss_damping > 0.0:
+            magnetic_loss += float(
+                2.0 * 0.012 * magnetic_loss_damping * omega[1] * (v[1] ** 2)
+                + 2.0 * 0.008 * magnetic_loss_damping * omega[2] * (v[2] ** 2)
+            ) * dt
+        if effective.spark_strength:
+            for i, j in ((0, 1), (1, 2)):
+                gate = float(spark_gate(q[i] - q[j], threshold=effective.spark_threshold))
+                c = 0.030 * effective.spark_strength * gate
+                spark_loss += float(c * ((v[i] - v[j]) ** 2)) * dt
+
+        y_next = rk4_step(y, t, dt, bridge_limiter_predictive_derivative, omega, effective, config, base_hz, drive_start, drive_until, zeta)
+        qn = y_next[:3].copy()
+        vn = y_next[3:].copy()
+        after = bridge_amp_potentials(qn, vn, omega, effective)
+        y = np.concatenate([qn, vn])
+        if not np.all(np.isfinite(y)) or np.max(np.abs(y)) > 1e6:
+            break
+
+        if step % sample_every == 0:
+            modal = clean_modal_energy(qn, vn, omega)
+            total_accounted = initial_total + drive_work + servo_work_signed - damping_loss - spark_loss - limiter_loss
+            error_abs = float(after["total"]) - total_accounted
+            error_rel = abs(error_abs) / (abs(float(after["total"])) + abs(total_accounted) + 1e-18)
+            now = float(t + dt)
+            if now < drive_start:
+                budget_phase = "before_drive"
+            elif now < drive_until:
+                budget_phase = "during_drive"
+            else:
+                budget_phase = "after_drive"
+            times.append(now)
+            qs.append(qn.copy())
+            vs.append(vn.copy())
+            energies.append(modal)
+            corrections.append(target_correction)
+            phase_errors.append(phase_error)
+            generated_phase_errors.append(generated_phase_error)
+            ledger.append({
+                "case": config.name,
+                "time": now,
+                "target_family": config.target_family,
+                "track": config.track,
+                "limiter_type": config.limiter_type,
+                "predictive_indicator": config.predictive_indicator,
+                "actuator_type": config.servo_config.actuator_type,
+                "budget_phase": budget_phase,
+                "phase_error_9": phase_error,
+                "phase_error_generated_2f": generated_phase_error,
+                "correction_value": target_correction,
+                "predictive_score": float(last_signals.get("predictive_score", 0.0)),
+                "predictive_sign": float(last_signals.get("predictive_sign", 0.0)),
+                "predictive_trigger": str(last_trigger),
+                "generated_envelope_derivative": float(last_signals.get("generated_envelope_derivative", 0.0)),
+                "generated_phase_acceleration": float(last_signals.get("generated_phase_acceleration", 0.0)),
+                "target_phase_acceleration": float(last_signals.get("target_phase_acceleration", 0.0)),
+                "generated_to_target_energy_ratio_derivative": float(last_signals.get("generated_to_target_energy_ratio_derivative", 0.0)),
+                "receiver_tuning": float(effective.mode_freqs[2]),
+                "stage_B_tuning": float(effective.mode_freqs[1]),
+                "energy_at_source_mode": float(modal[0]),
+                "energy_at_generated_mode": float(modal[1]),
+                "energy_at_target_mode": float(modal[2]),
+                "total_stored_energy": float(after["total"]),
+                "drive_input_work": drive_work,
+                "positive_input_work": positive_input_work,
+                "damping_loss": damping_loss,
+                "limiter_loss": limiter_loss,
+                "magnetic_loss": magnetic_loss,
+                "spark_loss": spark_loss,
+                "servo_parameter_work_signed": servo_work_signed,
+                "servo_parameter_work_abs": servo_work_abs,
+                "total_accounted_energy": total_accounted,
+                "energy_budget_error_abs": error_abs,
+                "energy_budget_error_rel": error_rel,
+            })
+
+    correction_arr = np.asarray(corrections)
+    final_potentials = bridge_amp_potentials(y[:3], y[3:], omega, effective)
+    sim: Dict[str, object] = {
+        "times": np.asarray(times),
+        "qs": np.asarray(qs),
+        "vs": np.asarray(vs),
+        "energy": np.asarray(energies),
+        "omega": omega,
+        "drive_start": drive_start,
+        "drive_until": drive_until,
+        "dt_sample": sample_dt,
+        "positive_input_work": positive_input_work,
+        "net_input_work": drive_work,
+        "damping_loss": damping_loss,
+        "limiter_loss": limiter_loss,
+        "magnetic_loss": magnetic_loss,
+        "spark_loss": spark_loss,
+        "servo_work_signed": servo_work_signed,
+        "servo_work": servo_work_abs,
+        "stabilizer_work_signed": servo_work_signed,
+        "stabilizer_work": servo_work_abs,
+        "correction_work_signed": servo_work_signed,
+        "correction_work": servo_work_abs,
+        "correction_rms": float(np.sqrt(np.mean(correction_arr ** 2))) if len(correction_arr) else 0.0,
+        "correction_peak": float(np.max(np.abs(correction_arr))) if len(correction_arr) else 0.0,
+        "predictive_trigger_count": predictive_trigger_count,
+        "predictive_trigger_times": trigger_times,
+        "initial_stored_energy": initial_total,
+        "final_stored_energy": float(final_potentials["total"]),
+        "stored_energy_delta": float(final_potentials["total"]) - initial_total,
+        "energy_budget_error_rel": float(ledger[-1]["energy_budget_error_rel"]) if ledger else 1.0,
+        "max_energy_budget_error_rel": max((float(r["energy_budget_error_rel"]) for r in ledger), default=1.0),
+        "effective_config": effective,
+    }
+    return sim, ledger
+
+
+def bridge_limiter_prediction_lead_time(series: List[Dict[str, float | str]],
+                                        trigger_times: List[float]) -> float:
+    rows = [r for r in series if "phase_error_target_3f" in r and "time_mid" in r]
+    if not rows or not trigger_times:
+        return 0.0
+    t = np.asarray([float(r.get("time_mid", 0.0)) for r in rows])
+    if "unwrapped_phase_error_target" in rows[0]:
+        phase = np.asarray([float(r.get("unwrapped_phase_error_target", 0.0)) for r in rows])
+    else:
+        phase = np.unwrap(np.asarray([float(r.get("phase_error_target_3f", 0.0)) for r in rows]))
+    phase_step = np.abs(np.diff(phase)) if len(phase) >= 2 else np.asarray([])
+    jump_indices = bridge_phase_slip_coalesced_indices(np.where(phase_step > 1.0)[0] + 1)
+    leads: List[float] = []
+    sorted_triggers = sorted(trigger_times)
+    for idx in jump_indices:
+        jump_time = float(t[idx])
+        prior = [tt for tt in sorted_triggers if tt <= jump_time]
+        if prior:
+            leads.append(jump_time - prior[-1])
+    return float(np.mean(leads)) if leads else 0.0
+
+
+def bridge_limiter_predictive_measure(config: BridgeLimiterPredictiveServoConfig,
+                                      seed: int,
+                                      quick: bool,
+                                      dt: float,
+                                      runtime: float,
+                                      sample_every: int,
+                                      direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                      ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]]]:
+    sim, ledger = simulate_bridge_limiter_predictive_servo(config, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    target_key = f"{effective.mode_freqs[0]:g}:{effective.target_6:g}:{effective.target_9:g}:{effective.mode_freqs[1]:g}:{effective.mode_freqs[2]:g}"
+    cache_key = (target_key, dt, runtime)
+    if cache_key not in direct_cache:
+        direct_cfg = bridge_min_nudge_direct_reference(effective)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 13100, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 13100, "direct_reference", "direct_source_plus_generated", "reference", 0.35, 1.0)
+        direct_cache[cache_key] = (direct_sim, direct_row)
+    direct_sim, direct_row = direct_cache[cache_key]
+
+    nominal_row = bridge_metrics_window(effective, sim, seed, "bridge_limiter_predictive_servo", config.track, config.limiter_type, 0.35, 1.0)
+    diagnostic_rows, emergent_summary = bridge_emergent_lock_diagnostics(effective, sim, direct_sim, 0.50, 1.0)
+    timeseries_rows, slip_summary = bridge_phase_slip_audit_timeseries(effective, sim, direct_sim, ledger, 0.50, 1.0)
+    series_metrics = bridge_generated_stage_series_metrics(timeseries_rows)
+    refined_metrics = bridge_stageA_refined_timeseries_metrics(timeseries_rows)
+    ledger_rows = [r for r in ledger if "energy_budget_error_rel" in r and "time" in r]
+    final_ledger = ledger_rows[-1] if ledger_rows else {}
+    total_input = float(sim.get("positive_input_work", 0.0)) + float(sim.get("servo_work", 0.0)) + float(sim.get("limiter_loss", 0.0))
+
+    row = dict(nominal_row)
+    row.update(emergent_summary)
+    row.update(slip_summary)
+    row.update(series_metrics)
+    row.update(refined_metrics)
+    row["experiment"] = "bridge_limiter_predictive_servo"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:4.0x:half_dt_primary"
+    row["track"] = config.track
+    row["limiter_type"] = config.limiter_type
+    row["predictive_indicator"] = config.predictive_indicator
+    row["actuator_type"] = config.servo_config.actuator_type
+    row["correction_type"] = config.servo_config.correction_type
+    row["Kp"] = config.servo_config.kp
+    row["Ki"] = config.servo_config.ki
+    row["correction_clamp"] = config.servo_config.correction_clamp
+    row["smoothing"] = config.servo_config.smoothing
+    row["update_interval"] = config.servo_config.update_interval
+    row["target_family"] = config.target_family
+    row["reference_role"] = config.reference_role
+    row["family"] = config.family
+    row["runtime_factor"] = config.runtime_factor
+    row["phase_lock_target"] = row.get("emergent_phase_lock_target", row.get("phase_lock_9", 0.0))
+    row["target_phase_lock"] = row["phase_lock_target"]
+    row["spectral_purity_target"] = row.get("spectral_purity_target", row.get("spectral_purity_9", 0.0))
+    row["phase_slip_count"] = row.get("phase_slip_count", row.get("target_phase_slip_count", 0))
+    row["target_phase_slip_count"] = row["phase_slip_count"]
+    row["max_phase_jump"] = max(float(row.get("max_phase_jump", 0.0)), float(refined_metrics.get("max_near_slip_jump", 0.0)))
+    row["max_target_phase_jump"] = row["max_phase_jump"]
+    row["energy_budget_error"] = float(row.get("energy_budget_error", sim.get("energy_budget_error_rel", 1.0)))
+    row["absolute_budget_error"] = abs(float(final_ledger.get("energy_budget_error_abs", 0.0)))
+    row["max_energy_budget_error"] = float(sim.get("max_energy_budget_error_rel", row.get("energy_budget_error", 1.0)))
+    row["limiter_work_fraction"] = metric_ratio(float(sim.get("limiter_loss", 0.0)), total_input)
+    row["servo_work_fraction"] = metric_ratio(float(sim.get("servo_work", 0.0)), total_input)
+    row["limiter_loss"] = float(sim.get("limiter_loss", 0.0))
+    row["servo_work"] = float(sim.get("servo_work", 0.0))
+    row["correction_rms"] = float(sim.get("correction_rms", 0.0))
+    row["correction_peak"] = float(sim.get("correction_peak", 0.0))
+    row["predictive_trigger_count"] = int(sim.get("predictive_trigger_count", 0))
+    row["prediction_lead_time_before_jump"] = bridge_limiter_prediction_lead_time(timeseries_rows, list(sim.get("predictive_trigger_times", [])))
+    row["nominal_bridge_ratio"] = metric_ratio(float(row.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0)))
+    row["no_direct_2f_drive"] = str(not any(abs(freq - effective.target_6) < 1e-9 and mode == 1 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_direct_3f_drive"] = str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_target_frequency_injection"] = row["no_direct_3f_drive"]
+    row["half_dt_preserved"] = "False"
+    row["quarter_dt_preserved"] = "False"
+    row["non369_controls_do_not_beat"] = "False"
+    row["passed"] = "False"
+    row["promotion_ready"] = "False"
+    row["note"] = config.note
+    bridge_limiter_predictive_update_score(row)
+
+    for item in timeseries_rows + diagnostic_rows + ledger:
+        item["experiment"] = "bridge_limiter_predictive_servo"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["track"] = config.track
+        item["limiter_type"] = config.limiter_type
+        item["predictive_indicator"] = config.predictive_indicator
+        item["actuator_type"] = config.servo_config.actuator_type
+        item["target_family"] = config.target_family
+        item["runtime_factor"] = config.runtime_factor
+    return row, timeseries_rows + diagnostic_rows + ledger
+
+
+def bridge_limiter_predictive_core_pass(row: Dict[str, float | str],
+                                        require_validation: bool = False,
+                                        require_non369: bool = False) -> bool:
+    base = (
+        str(row.get("target_family")) == "369"
+        and str(row.get("reference_role")) == "discovery_candidate"
+        and float(row.get("phase_lock_target", 0.0)) > 0.90
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.25
+        and float(row.get("max_phase_jump", 99.0)) < 1.0
+        and float(row.get("near_slip_count", 99.0)) == 0.0
+        and float(row.get("bridge_ratio", 0.0)) > 1.5
+        and float(row.get("spectral_purity_target", 0.0)) > 0.80
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+        and str(row.get("no_direct_2f_drive", "False")) == "True"
+        and str(row.get("no_direct_3f_drive", "False")) == "True"
+        and str(row.get("no_target_frequency_injection", "False")) == "True"
+    )
+    if require_validation:
+        base = base and str(row.get("half_dt_preserved", "False")) == "True" and str(row.get("quarter_dt_preserved", "False")) == "True"
+    if require_non369:
+        base = base and str(row.get("non369_controls_do_not_beat", "False")) == "True"
+    return base
+
+
+def bridge_limiter_predictive_update_score(row: Dict[str, float | str]) -> None:
+    lock = float(row.get("phase_lock_target", 0.0))
+    gen_cv = float(row.get("generated_envelope_cv", 99.0))
+    target_cv = float(row.get("target_envelope_cv", 99.0))
+    jump = float(row.get("max_phase_jump", 99.0))
+    near_slips = float(row.get("near_slip_count", 99.0))
+    slips = float(row.get("phase_slip_count", 99.0))
+    bridge_ratio = float(row.get("bridge_ratio", 0.0))
+    purity = float(row.get("spectral_purity_target", 0.0))
+    budget = float(row.get("energy_budget_error", 1.0))
+    limiter_work = float(row.get("limiter_work_fraction", 1.0))
+    servo_work = float(row.get("servo_work_fraction", 1.0))
+    trigger_count = float(row.get("predictive_trigger_count", 0.0))
+    score = (
+        max(0.0, lock)
+        * max(0.0, purity)
+        * min(4.0, max(0.0, bridge_ratio))
+        / (
+            1.0
+            + 8.0 * max(0.0, gen_cv)
+            + 1.5 * max(0.0, target_cv)
+            + 2.8 * max(0.0, jump)
+            + 7.0 * max(0.0, near_slips)
+            + 2.0 * max(0.0, slips)
+            + 650.0 * max(0.0, budget)
+            + 350.0 * max(0.0, limiter_work)
+            + 1200.0 * max(0.0, servo_work)
+            + 0.002 * max(0.0, trigger_count)
+        )
+    )
+    failures = []
+    if lock <= 0.90:
+        failures.append("phase_lock_target")
+    if gen_cv >= 0.25:
+        failures.append("generated_envelope_CV")
+    if jump >= 1.0:
+        failures.append("max_phase_jump")
+    if near_slips != 0.0:
+        failures.append("near_slip_count")
+    if bridge_ratio <= 1.5:
+        failures.append("bridge_ratio")
+    if purity <= 0.80:
+        failures.append("spectral_purity_target")
+    if budget >= 0.005:
+        failures.append("energy_budget")
+    if str(row.get("no_direct_2f_drive", "False")) != "True" or str(row.get("no_direct_3f_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+    if str(row.get("reference_role")) != "discovery_candidate":
+        failures.append("reference_or_control")
+    core_no_validation = bridge_limiter_predictive_core_pass(row, require_validation=False, require_non369=False)
+    if core_no_validation and str(row.get("half_dt_preserved", "False")) != "True":
+        failures.append("half_dt_validation")
+    if core_no_validation and str(row.get("quarter_dt_preserved", "False")) != "True":
+        failures.append("quarter_dt_validation")
+    if core_no_validation and str(row.get("non369_controls_do_not_beat", "False")) != "True":
+        failures.append("non369_control")
+
+    if "energy_budget" in failures:
+        failure_mode = "budget_artifact"
+    elif "generated_envelope_CV" in failures:
+        failure_mode = "generated_stage_instability"
+    elif "max_phase_jump" in failures or "near_slip_count" in failures:
+        failure_mode = "phase_jump_or_near_slip"
+    elif "phase_lock_target" in failures:
+        failure_mode = "weak_target_lock"
+    elif "non369_control" in failures:
+        failure_mode = "non369_control_stronger"
+    elif failures:
+        failure_mode = failures[0]
+    else:
+        failure_mode = "promotion_ready"
+
+    passed = bridge_limiter_predictive_core_pass(row, require_validation=True, require_non369=True)
+    row["budget_normalized_score"] = score
+    row["bridge_limiter_predictive_servo_score"] = score if str(row.get("reference_role")) == "discovery_candidate" and budget < 0.005 else 0.0
+    row["score"] = row["bridge_limiter_predictive_servo_score"]
+    row["pre_validation_pass"] = str(core_no_validation)
+    row["passed"] = str(passed)
+    row["promotion_ready"] = str(passed)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+
+
+def bridge_limiter_predictive_specs(include_sweeps: bool) -> List[Tuple[str, str, BridgeLimiterPredictiveServoConfig]]:
+    specs: List[Tuple[str, str, BridgeLimiterPredictiveServoConfig]] = []
+    quick_indicators = ["predicted_near_slip_score", "generated_envelope_derivative"]
+    combined_limiters = ["soft_saturation", "envelope_derivative_damping", "energy_bucket_limiter"]
+    combined_actuators = ["stage_B_detuning_predictive_servo", "receiver_tuning_predictive_servo"]
+    indicators = BRIDGE_PREDICTIVE_INDICATORS if include_sweeps else quick_indicators
+    for target_family, seed_family, family, base_config in bridge_stageA_budget_audit_base_templates():
+        for limiter_type in BRIDGE_LIMITER_TYPES:
+            cfg = bridge_limiter_predictive_stage_config(
+                target_family,
+                seed_family,
+                family,
+                base_config,
+                limiter_type,
+                "none",
+                "passive_limiter_only",
+                "no_servo",
+            )
+            specs.append(("passive_limiter_only", limiter_type, cfg))
+        for indicator in indicators:
+            for actuator in BRIDGE_PREDICTIVE_ACTUATORS:
+                cfg = bridge_limiter_predictive_stage_config(
+                    target_family,
+                    seed_family,
+                    family,
+                    base_config,
+                    "existing_limiter",
+                    actuator,
+                    "predictive_servo_only",
+                    "normal",
+                    predictive_gain=0.0065,
+                    predictive_indicator=indicator,
+                )
+                specs.append(("predictive_servo_only", f"{indicator}_{actuator}", cfg))
+        active_combined_limiters = BRIDGE_LIMITER_TYPES if include_sweeps else combined_limiters
+        active_combined_indicators = BRIDGE_PREDICTIVE_INDICATORS if include_sweeps else ["predicted_near_slip_score"]
+        active_combined_actuators = list(BRIDGE_PREDICTIVE_ACTUATORS) if include_sweeps else combined_actuators
+        for limiter_type in active_combined_limiters:
+            for indicator in active_combined_indicators:
+                for actuator in active_combined_actuators:
+                    cfg = bridge_limiter_predictive_stage_config(
+                        target_family,
+                        seed_family,
+                        family,
+                        base_config,
+                        limiter_type,
+                        actuator,
+                        "combined_limiter_predictive_servo",
+                        "normal",
+                        predictive_gain=0.0075,
+                        predictive_indicator=indicator,
+                    )
+                    specs.append(("combined_limiter_predictive_servo", f"{limiter_type}_{indicator}_{actuator}", cfg))
+    return specs
+
+
+def bridge_limiter_predictive_annotate_non369(rows: List[Dict[str, float | str]]) -> None:
+    non369_best = max(
+        [
+            float(r.get("budget_normalized_score", 0.0))
+            for r in rows
+            if str(r.get("target_family")) != "369"
+            and float(r.get("energy_budget_error", 1.0)) < 0.005
+            and str(r.get("no_direct_2f_drive", "False")) == "True"
+            and str(r.get("no_direct_3f_drive", "False")) == "True"
+        ],
+        default=0.0,
+    )
+    for row in rows:
+        row["best_budget_clean_non369_score"] = non369_best
+        if str(row.get("target_family")) == "369":
+            row["non369_controls_do_not_beat"] = str(float(row.get("budget_normalized_score", 0.0)) > non369_best * 1.02)
+        bridge_limiter_predictive_update_score(row)
+
+
+def bridge_limiter_predictive_preserved(row: Dict[str, float | str]) -> bool:
+    return (
+        bool(row)
+        and float(row.get("phase_lock_target", 0.0)) > 0.90
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.25
+        and float(row.get("max_phase_jump", 99.0)) < 1.0
+        and float(row.get("near_slip_count", 99.0)) == 0.0
+        and float(row.get("bridge_ratio", 0.0)) > 1.5
+        and float(row.get("spectral_purity_target", 0.0)) > 0.80
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+    )
+
+
+def bridge_limiter_predictive_apply_validation(candidate: Dict[str, float | str],
+                                               validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt"), {})
+    candidate["half_dt_preserved"] = str(bridge_limiter_predictive_preserved(half))
+    candidate["quarter_dt_preserved"] = str(bridge_limiter_predictive_preserved(quarter))
+    for label, row in (("half_dt", half), ("quarter_dt", quarter)):
+        candidate[f"{label}_phase_lock_target"] = float(row.get("phase_lock_target", 0.0))
+        candidate[f"{label}_generated_envelope_cv"] = float(row.get("generated_envelope_cv", 0.0))
+        candidate[f"{label}_max_phase_jump"] = float(row.get("max_phase_jump", 0.0))
+        candidate[f"{label}_near_slip_count"] = float(row.get("near_slip_count", 0.0))
+        candidate[f"{label}_energy_budget_error"] = float(row.get("energy_budget_error", 0.0))
+    bridge_limiter_predictive_update_score(candidate)
+
+
+def bridge_limiter_predictive_validation(config: BridgeLimiterPredictiveServoConfig,
+                                         seed: int,
+                                         quick: bool,
+                                         base_dt: float,
+                                         runtime: float,
+                                         sample_every: int
+                                         ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [("half_dt", base_dt * 0.5, seed + 613), ("quarter_dt", base_dt * 0.25, seed + 1013)]
+    rows: List[Dict[str, float | str]] = []
+    series_rows: List[Dict[str, float | str]] = []
+    for validation_name, test_dt, test_seed in tests:
+        direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+        row, series = bridge_limiter_predictive_measure(config, test_seed, quick, test_dt, runtime, sample_every, direct_cache)
+        row["validation_test"] = validation_name
+        row["candidate_id"] = f"{config.name}:4.0x:{validation_name}"
+        rows.append(row)
+        series_rows.extend(series)
+    return rows, series_rows
+
+
+def write_bridge_limiter_predictive_report(out_dir: Path,
+                                           ranked: List[Dict[str, float | str]],
+                                           validation_rows: List[Dict[str, float | str]],
+                                           include_sweeps: bool) -> None:
+    rows_369 = [r for r in ranked if str(r.get("target_family")) == "369"]
+    best_369 = max(rows_369, key=lambda r: float(r.get("bridge_limiter_predictive_servo_score", 0.0)), default={})
+    best_cv = min([float(r.get("generated_envelope_cv", 99.0)) for r in rows_369], default=99.0)
+    best_jump = min([float(r.get("max_phase_jump", 99.0)) for r in rows_369], default=99.0)
+    best_lock_clean = max([r for r in rows_369 if float(r.get("energy_budget_error", 1.0)) < 0.005], key=lambda r: float(r.get("phase_lock_target", 0.0)), default={})
+    non369_best = max(
+        [r for r in ranked if str(r.get("target_family")) != "369" and float(r.get("energy_budget_error", 1.0)) < 0.005],
+        key=lambda r: float(r.get("budget_normalized_score", 0.0)),
+        default={},
+    )
+    by_track: Dict[str, Dict[str, float | str]] = {}
+    for row in rows_369:
+        track = str(row.get("track", ""))
+        if track not in by_track or float(row.get("budget_normalized_score", 0.0)) > float(by_track[track].get("budget_normalized_score", 0.0)):
+            by_track[track] = row
+    best_track = max(by_track.values(), key=lambda r: float(r.get("budget_normalized_score", 0.0)), default={})
+    promoted = any(str(r.get("promotion_ready")) == "True" for r in rows_369)
+    if promoted:
+        next_step = "full sweeps around the promoted limiter/predictive row"
+    elif best_jump < 1.0 and best_cv < 0.25:
+        next_step = "full sweeps before any geometry/evolve step"
+    elif non369_best and float(non369_best.get("budget_normalized_score", 0.0)) > float(best_369.get("budget_normalized_score", 0.0)):
+        next_step = "general harmonic-bridge study before geometry/evolve"
+    else:
+        next_step = "active PLL if limiter/predictive sweeps keep missing jump and envelope gates"
+    lines = [
+        "# Bridge Limiter Predictive Servo Report",
+        "",
+        "This mode tests passive generated-stage limiter redesign, predictive servo timing, and combined rows from the refined Stage A basin.",
+        "",
+        "## Direct Answers",
+        f"1. Did any limiter reduce generated-envelope CV below 0.25? {'yes' if best_cv < 0.25 else 'no'}; best_369_generated_cv={best_cv:.6g}.",
+        f"2. Did predictive timing reduce max phase jump below 1.0 rad? {'yes' if best_jump < 1.0 else 'no'}; best_369_max_jump={best_jump:.6g}.",
+        f"3. Did any row cross lock >0.90 while staying budget-clean? {'yes' if best_lock_clean and float(best_lock_clean.get('phase_lock_target', 0.0)) > 0.90 else 'no'}; best_clean_lock={float(best_lock_clean.get('phase_lock_target', 0.0)):.6g}, row={best_lock_clean.get('candidate_id', 'none')}.",
+        f"4. Did 369 beat 5->10->15 and 4->8->12? {'yes' if best_369 and float(best_369.get('budget_normalized_score', 0.0)) > float(non369_best.get('budget_normalized_score', 0.0)) else 'no'}; best_369_score={float(best_369.get('budget_normalized_score', 0.0)):.6g}, best_non369_score={float(non369_best.get('budget_normalized_score', 0.0)):.6g}.",
+        f"5. Which track worked best? {best_track.get('track', 'none')} with limiter={best_track.get('limiter_type', '')}, actuator={best_track.get('actuator_type', '')}, score={float(best_track.get('budget_normalized_score', 0.0)):.6g}.",
+        f"6. Next step: {next_step}.",
+        "",
+        "## Run Shape",
+        f"- Grid mode: {'expanded predictive/combined sweep' if include_sweeps else 'quick focused smoke'}",
+        "- Primary timestep: half-dt.",
+        "- Validation: half-dt repeat and quarter-dt for top 369 rows.",
+        "",
+        "## Ranked Rows",
+    ]
+    for row in ranked[:36]:
+        lines.append(
+            f"- {row.get('candidate_id')}: family={row.get('target_family')}, track={row.get('track')}, limiter={row.get('limiter_type')}, "
+            f"indicator={row.get('predictive_indicator')}, actuator={row.get('actuator_type')}, lock={float(row.get('phase_lock_target', 0.0)):.6g}, "
+            f"gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, target_cv={float(row.get('target_envelope_cv', 0.0)):.6g}, "
+            f"jump={float(row.get('max_phase_jump', 0.0)):.6g}, near_slips={float(row.get('near_slip_count', 0.0)):.6g}, "
+            f"bridge={float(row.get('bridge_ratio', 0.0)):.6g}, purity={float(row.get('spectral_purity_target', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, limiter_work={float(row.get('limiter_work_fraction', 0.0)):.6g}, "
+            f"servo_work={float(row.get('servo_work_fraction', 0.0)):.6g}, triggers={float(row.get('predictive_trigger_count', 0.0)):.6g}, "
+            f"lead={float(row.get('prediction_lead_time_before_jump', 0.0)):.6g}, score={float(row.get('budget_normalized_score', 0.0)):.6g}, "
+            f"promoted={row.get('promotion_ready')}, failure={row.get('failure_mode')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Dt Validation Rows"])
+        for row in validation_rows[:18]:
+            lines.append(
+                f"- {row.get('case')} / {row.get('validation_test')}: lock={float(row.get('phase_lock_target', 0.0)):.6g}, "
+                f"gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, jump={float(row.get('max_phase_jump', 0.0)):.6g}, "
+                f"near_slips={float(row.get('near_slip_count', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}"
+            )
+    (out_dir / "README_BRIDGE_LIMITER_PREDICTIVE_SERVO_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_limiter_predictive_servo(out_dir: Path, seed: int, quick: bool = False,
+                                               include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    base_dt = dt
+    half_dt = dt * 0.5
+    runtime = base_tmax * 1.25 * 4.0
+    summary_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    config_by_case: Dict[str, BridgeLimiterPredictiveServoConfig] = {}
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+
+    specs = bridge_limiter_predictive_specs(include_sweeps)
+    for idx, (sweep, value, config) in enumerate(specs):
+        row, series = bridge_limiter_predictive_measure(config, seed + 31000 + idx * 443, quick, half_dt, runtime, sample_every, direct_cache)
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        row["validation_test"] = "half_dt_primary"
+        summary_rows.append(row)
+        timeseries_rows.extend(series)
+        config_by_case[str(row.get("case"))] = config
+
+    bridge_limiter_predictive_annotate_non369(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_limiter_predictive_servo_score", 0.0)),
+            1.0 if float(r.get("energy_budget_error", 1.0)) < 0.005 else 0.0,
+            float(r.get("phase_lock_target", 0.0)),
+            -float(r.get("generated_envelope_cv", 99.0)),
+            -float(r.get("max_phase_jump", 99.0)),
+            -float(r.get("near_slip_count", 99.0)),
+            float(r.get("bridge_ratio", 0.0)),
+        ),
+        reverse=True,
+    )
+
+    validation_rows: List[Dict[str, float | str]] = []
+    ranked_369 = [r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("reference_role")) == "discovery_candidate"]
+    top_369: List[Dict[str, float | str]] = []
+    for candidate in ranked_369[:3 if include_sweeps else 2]:
+        if str(candidate.get("case")) not in {str(r.get("case")) for r in top_369}:
+            top_369.append(candidate)
+    best_clean_lock = max(
+        [r for r in ranked_369 if float(r.get("energy_budget_error", 1.0)) < 0.005],
+        key=lambda r: float(r.get("phase_lock_target", 0.0)),
+        default={},
+    )
+    if best_clean_lock and str(best_clean_lock.get("case")) not in {str(r.get("case")) for r in top_369}:
+        top_369.append(best_clean_lock)
+    for idx, candidate in enumerate(top_369):
+        config = config_by_case.get(str(candidate.get("case")))
+        if config is None:
+            continue
+        rows, series = bridge_limiter_predictive_validation(config, seed + 146000 + idx * 1000, quick, base_dt, runtime, sample_every)
+        validation_rows.extend(rows)
+        timeseries_rows.extend(series)
+        bridge_limiter_predictive_apply_validation(candidate, validation_rows)
+
+    bridge_limiter_predictive_annotate_non369(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_limiter_predictive_servo_score", 0.0)),
+            1.0 if float(r.get("energy_budget_error", 1.0)) < 0.005 else 0.0,
+            float(r.get("phase_lock_target", 0.0)),
+            -float(r.get("generated_envelope_cv", 99.0)),
+            -float(r.get("max_phase_jump", 99.0)),
+            -float(r.get("near_slip_count", 99.0)),
+            float(r.get("bridge_ratio", 0.0)),
+        ),
+        reverse=True,
+    )
+    write_csv(out_dir / "bridge_limiter_predictive_servo_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "bridge_limiter_predictive_servo_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_limiter_predictive_servo_timeseries.csv", timeseries_rows)
+    write_bridge_limiter_predictive_report(out_dir, ranked, validation_rows, include_sweeps)
+    return [
+        {
+            "experiment": "bridge_limiter_predictive_servo",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_limiter_predictive_servo_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "target_family": row.get("target_family", ""),
+            "track": row.get("track", ""),
+            "limiter_type": row.get("limiter_type", ""),
+            "phase_lock_target": row.get("phase_lock_target", 0.0),
+            "generated_envelope_cv": row.get("generated_envelope_cv", 0.0),
+            "max_phase_jump": row.get("max_phase_jump", 0.0),
+            "near_slip_count": row.get("near_slip_count", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "limiter_work_fraction": row.get("limiter_work_fraction", 0.0),
+            "servo_work_fraction": row.get("servo_work_fraction", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -16792,8 +17832,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin/limiter-predictive-servo, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "bridge_limiter_predictive_servo", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -16858,6 +17898,8 @@ def main() -> None:
         rows.extend(experiment_bridge_stageA_budget_forensics(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_stageA_refined_basin",):
         rows.extend(experiment_bridge_stageA_refined_basin(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_limiter_predictive_servo",):
+        rows.extend(experiment_bridge_limiter_predictive_servo(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

@@ -98,6 +98,8 @@ python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick
 python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick
 python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick --sweeps
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
 ```
 
 Key bridge modes:
@@ -118,6 +120,7 @@ python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick --sweep
 python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick --sweeps
+python tesla_369_lab.py --mode bridge_limiter_predictive_servo --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -239,3 +242,15 @@ Quick smoke result from `runs/bridge_stageA_refined_basin_quick_smoke`:
 - Max phase jump did not approach the 1.0 rad gate; best 369 jump was 2.36 rad, and top rows still had 22-24 near slips.
 - A 5 -> 10 -> 15 control was budget-clean and stronger by normalized score, although its bridge ratio stayed below the 1.5 promotion gate.
 - Current recommendation: limiter redesign plus predictive servo timing before full sweeps; geometry/evolve is still not justified.
+
+## Latest Limiter Predictive Servo Read
+
+Quick smoke result from `runs/bridge_limiter_predictive_servo_quick_smoke`:
+
+- Passive/adaptive generated damping and envelope-derivative damping raised 369 lock above 0.96 while staying budget-clean, but they did not pass the generated-envelope or phase-jump gates.
+- Best 369 generated-envelope CV was 0.274, still above the 0.25 gate.
+- Best 369 max phase jump was 1.744 rad, still above the 1.0 rad gate, with near slips remaining.
+- The best budget-clean high-lock 369 row, `adaptive_generated_damping`, preserved high lock at half/quarter dt: half-dt lock 0.968, quarter-dt lock 0.970, but CV stayed about 0.281 and jumps stayed about 1.75-1.77 rad.
+- Predictive servo timing fired early enough to measure lead time, but it did not beat passive damping on the actual jump/CV gates.
+- A 5 -> 10 -> 15 control stayed much stronger by normalized budget score, so 369 is not unique under these rules.
+- Current recommendation: general harmonic-bridge study before geometry/evolve; if continuing 369, focus on an active PLL or more physical limiter redesign.
