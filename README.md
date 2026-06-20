@@ -30,12 +30,13 @@ What has not survived yet:
 - Emergent-lock diagnostics find a small pulled local target near 9.02 for the 3 -> 6 -> 9 bridge, but the fitted-frequency phase lock still stays below the 0.90 gate.
 - Phase-slip audit shows the 3 -> 6 -> 9 bridge loses 4x lock through discrete phase slips, with generated-6 envelope instability before target lock loss.
 - Generated-stage stabilization reduced slips only in a budget-breaking raw Stage A tuning row; the best budget-clean damping row improved lock/purity but did not remove slips.
+- Stage A budget audit shows static `+0.03` tuning can remove target slips, but the final tuned configuration itself breaks the budget gate even with no dynamic retuning.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
 - Stabilize generated 6 before trying geometry/evolve or a stronger target servo.
-- Focus on budget-clean generated-stage damping/tuning, because raw slip fixes can be artifacts if they break energy accounting.
+- Focus on generated-stage damping/tuning compensation that preserves the slip-free basin while reducing budget error below 0.005.
 - 3 -> 6 -> 9 is not uniquely special yet; keep non-369 controls central before geometry/evolve.
 
 ## Repo Map
@@ -90,6 +91,8 @@ python tesla_369_lab.py --mode bridge_phase_slip_audit --quick
 python tesla_369_lab.py --mode bridge_phase_slip_audit --quick --sweeps
 python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick
 python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick --sweeps
+python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick
+python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick --sweeps
 ```
 
 Key bridge modes:
@@ -107,6 +110,7 @@ python tesla_369_lab.py --mode bridge_phase_servo --quick --sweeps
 python tesla_369_lab.py --mode bridge_emergent_lock --quick --sweeps
 python tesla_369_lab.py --mode bridge_phase_slip_audit --quick --sweeps
 python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick --sweeps
+python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -193,3 +197,14 @@ Quick smoke result from `runs/bridge_generated_stage_stabilizer_quick_smoke`:
 - Raw `stage_A_tuning +0.03` removed target slips, but failed budget with error 0.0127, so it is not promotable.
 - Non-369 controls again reached high raw lock but failed budget, leaving no budget-clean non-369 winner.
 - Current recommendation: continue budget-clean generated-6 passive stabilization; geometry/evolve and full predictive PLL are not justified yet.
+
+## Latest Stage A Budget Audit Read
+
+Quick smoke result from `runs/bridge_stageA_budget_audit_quick_smoke`:
+
+- Static `Stage A tune +0.03` removed target slips, but failed the budget gate: target lock 0.857, slips 0, bridge ratio 3.424, spectral purity 0.956, budget error 0.0118.
+- The same static tuning with no servo also failed budget, with error 0.0137 and zero parameter work, so the budget problem is the final tuned configuration itself, not only dynamic retuning.
+- Best near miss was `tune_plus_damping_compensation / moderate_q_damping`: target lock 0.915, slips 0, bridge ratio 3.397, spectral purity 0.969, work fraction 0.000106, but budget error 0.00786.
+- Best budget-clean 369 row was drive-delayed initialization, but it still had 2 slips and generated-envelope CV 0.522.
+- Non-369 controls did not produce a budget-clean winner.
+- Current recommendation: run full generated-stage/passive compensation sweeps before geometry/evolve or predictive PLL.

@@ -195,3 +195,15 @@ Added a generated-2f-first stabilizer mode:
 - Quick smoke did not promote. The best strict-budget row was generated-stage damping: target lock 0.825, slips 2, generated-envelope CV 0.559, bridge ratio 3.166, purity 0.952, budget error 0.000921.
 - Raw Stage A tuning eliminated target slips, but failed the energy budget with error 0.0127, so it is only evidence that generated-stage control is causal.
 - Current next fix: keep searching budget-clean generated-stage damping/tuning before moving to geometry/evolve or full predictive PLL.
+
+## Bridge Stage A Budget Audit
+
+Added a Stage A budget-isolation diagnostic:
+
+- Starts from the best generated-stage stabilizer seed and treats raw `stage_A_tuning / tune_plus_0p03` as a reference/control, not a discovery row.
+- Tests static Stage A tuning from t=0, Stage A offsets from +0.005 to +0.05, the same static tuning with no servo, drive-delayed initialization, pre-drive adiabatic ramps, work-counted in-drive ramps, damping/Q compensation, A->B coupling reduction, passive soft limiting, and a passive auxiliary 2f absorber branch proxy.
+- Keeps direct 2f/3f drive and target-frequency injection out of discovery rows, keeps 4 -> 8 -> 12 and 5 -> 10 -> 15 controls in every ranking, and reports parameter-work plus budget error before/during/after drive.
+- Quick smoke did not promote. Static `+0.03` removed target slips, but failed budget with error 0.0118.
+- Static `+0.03` with no servo also failed budget, with error 0.0137 and zero parameter work, so the budget failure is in the final tuned configuration itself, not just dynamic retuning work.
+- Best near miss was damping/Q compensation: target lock 0.915, slips 0, bridge ratio 3.397, purity 0.969, work fraction 0.000106, but budget error 0.00786.
+- Current next fix: run full generated-stage/passive compensation sweeps around the slip-free Stage A basin before geometry/evolve or predictive PLL.

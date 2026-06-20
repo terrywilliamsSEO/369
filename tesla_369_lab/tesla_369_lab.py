@@ -14494,6 +14494,984 @@ def experiment_bridge_generated_stage_stabilizer(out_dir: Path, seed: int, quick
 
 
 # ----------------------------
+# Experiment 24: bridge Stage A budget audit
+# ----------------------------
+
+@dataclass
+class BridgeStageABudgetAuditConfig:
+    name: str
+    base_config: BridgeMinNudgeConfig
+    servo_config: BridgePhaseServoConfig
+    audit_group: str
+    audit_type: str
+    final_stage_a_offset: float = 0.030
+    initial_stage_a_offset: float = 0.030
+    dynamic_stage_a: bool = False
+    ramp_phase: str = "static"
+    ramp_shape: str = "linear"
+    drive_start_delay: float = 0.0
+    generated_damping: float = 0.0
+    coupling_scale: float = 1.0
+    limiter_strength: float = 0.0
+    absorber_strength: float = 0.0
+    no_servo: bool = False
+    runtime_factor: float = 4.0
+    reference_role: str = "discovery_candidate"
+    family: str = "369"
+    target_family: str = "369"
+    note: str = ""
+
+
+def bridge_stageA_budget_audit_base_templates() -> List[Tuple[str, str, str, BridgeMinNudgeConfig]]:
+    return bridge_generated_stage_base_templates()
+
+
+def bridge_stageA_budget_static_base(config: BridgeStageABudgetAuditConfig,
+                                     stage_a_offset: float) -> BridgeMinNudgeConfig:
+    magnetic = config.base_config.magnetic_config
+    bridge = magnetic.bridge
+    source = bridge.mode_freqs[0]
+    tuned_generated = max(0.5, bridge.target_6 + stage_a_offset)
+    stage_b_damping = bridge.stage_b_damping
+    stage_a_to_stage_b = bridge.stage_a_to_stage_b_coupling
+    stage_b_to_receiver = bridge.stage_b_to_receiver_coupling
+    varactor = bridge.varactor_coefficient
+    spark_strength = bridge.spark_strength
+    note_bits = [bridge.note, f"Stage A generated-2f tuning offset={stage_a_offset:g}"]
+
+    if config.generated_damping > 0.0:
+        stage_b_damping = max(stage_b_damping, config.generated_damping)
+        note_bits.append(f"generated-stage damping/Q compensation={config.generated_damping:g}")
+    if abs(config.coupling_scale - 1.0) > 1e-12:
+        stage_a_to_stage_b = max(0.04, stage_a_to_stage_b * config.coupling_scale)
+        note_bits.append(f"A->B coupling scale={config.coupling_scale:g}")
+    if config.limiter_strength > 0.0:
+        varactor = max(0.0, varactor + config.limiter_strength)
+        stage_b_damping = max(stage_b_damping, bridge.stage_b_damping + 0.10 * config.limiter_strength)
+        spark_strength = max(0.0, spark_strength * (1.0 - 0.18 * min(config.limiter_strength, 1.0)))
+        note_bits.append(f"passive generated-stage soft limiter={config.limiter_strength:g}")
+    if config.absorber_strength > 0.0:
+        # Three-mode physicalized proxy for a passive 2f tank/absorber branch: no drive is added;
+        # only a lossy side loading of the generated stage is represented.
+        stage_b_damping = max(stage_b_damping, bridge.stage_b_damping + 0.35 * config.absorber_strength)
+        stage_a_to_stage_b = max(0.04, stage_a_to_stage_b * (1.0 - 0.20 * min(config.absorber_strength, 1.0)))
+        stage_b_to_receiver = max(0.04, stage_b_to_receiver * (1.0 + 0.06 * min(config.absorber_strength, 1.0)))
+        note_bits.append(f"passive auxiliary 2f absorber branch proxy={config.absorber_strength:g}")
+
+    bridge = replace(
+        bridge,
+        mode_freqs=(source, tuned_generated, bridge.mode_freqs[2]),
+        stage_b_damping=stage_b_damping,
+        stage_a_to_stage_b_coupling=stage_a_to_stage_b,
+        stage_b_to_receiver_coupling=stage_b_to_receiver,
+        varactor_coefficient=varactor,
+        spark_strength=spark_strength,
+        reference_role=config.reference_role,
+        family=config.family,
+        note="; ".join(bit for bit in note_bits if bit),
+    )
+    magnetic = replace(magnetic, bridge=bridge, reference_role=config.reference_role, family=config.family)
+    return replace(
+        config.base_config,
+        magnetic_config=magnetic,
+        reference_role=config.reference_role,
+        family=config.family,
+    )
+
+
+def bridge_stageA_budget_drive_forces(config: BridgeAmpConfig, t: float, base_hz: float,
+                                      drive_start: float, drive_until: float,
+                                      n_modes: int) -> np.ndarray:
+    forces = np.zeros(n_modes)
+    if t < drive_start or t >= drive_until:
+        return forces
+    tau = t - drive_start
+    ramp_in = min(1.0, tau / 10.0)
+    ramp_out = min(1.0, max(0.0, (drive_until - t) / 10.0))
+    envelope = ramp_in * ramp_out
+    norm = math.sqrt(max(1, len(config.drive_freqs)))
+    phases = list(config.drive_phases) + [0.0] * max(0, len(config.drive_freqs) - len(config.drive_phases))
+    for freq, mode_idx, phase in zip(config.drive_freqs, config.drive_modes, phases):
+        forces[mode_idx] += envelope * config.drive_amp * math.sin(2.0 * np.pi * base_hz * freq * tau + phase) / norm
+    return forces
+
+
+def bridge_stageA_budget_derivative(y: np.ndarray, t: float, omega: np.ndarray,
+                                    config: BridgeAmpConfig, base_hz: float,
+                                    drive_start: float, drive_until: float,
+                                    zeta: np.ndarray) -> np.ndarray:
+    q = y[:3]
+    v = y[3:]
+    a = -(omega ** 2) * q
+
+    k01 = 0.0035 * config.stage_a_to_stage_b_coupling * omega[0] * omega[1]
+    k12 = 0.0035 * config.stage_b_to_receiver_coupling * omega[1] * omega[2]
+    d01 = q[0] - q[1]
+    d12 = q[1] - q[2]
+    a[0] += -k01 * d01
+    a[1] += k01 * d01 - k12 * d12
+    a[2] += k12 * d12
+
+    if config.varactor_coefficient:
+        a += -config.varactor_coefficient * q ** 3
+
+    gamma_a, gamma_b = bridge_amp_route_strengths(config)
+    if gamma_a:
+        a[0] += gamma_a * q[0] * q[1]
+        a[1] += 0.5 * gamma_a * q[0] * q[0]
+    if gamma_b:
+        a[0] += gamma_b * q[1] * q[2]
+        a[1] += gamma_b * q[0] * q[2]
+        a[2] += gamma_b * q[0] * q[1]
+
+    if config.spark_strength:
+        for i, j in ((0, 1), (1, 2)):
+            gate = float(spark_gate(q[i] - q[j], threshold=config.spark_threshold))
+            c = 0.030 * config.spark_strength * gate
+            spark_force = c * (v[i] - v[j])
+            a[i] += -spark_force
+            a[j] += spark_force
+
+    a += -2.0 * zeta * omega * v
+    a += bridge_stageA_budget_drive_forces(config, t, base_hz, drive_start, drive_until, 3)
+    return np.concatenate([v, a])
+
+
+def bridge_stageA_budget_offset(config: BridgeStageABudgetAuditConfig,
+                                t: float,
+                                drive_start: float,
+                                drive_until: float) -> float:
+    if not config.dynamic_stage_a:
+        return config.final_stage_a_offset
+    if config.ramp_phase == "pre_drive":
+        start = 0.0
+        end = max(start + 1e-9, drive_start)
+    elif config.ramp_phase == "in_drive":
+        span = max(drive_until - drive_start, 1e-9)
+        start = drive_start + 0.08 * span
+        end = drive_start + 0.42 * span
+    else:
+        return config.final_stage_a_offset
+    if t <= start:
+        return config.initial_stage_a_offset
+    if t >= end:
+        return config.final_stage_a_offset
+    x = float(np.clip((t - start) / max(end - start, 1e-9), 0.0, 1.0))
+    if config.ramp_shape == "s_curve":
+        x = x * x * (3.0 - 2.0 * x)
+    return config.initial_stage_a_offset + (config.final_stage_a_offset - config.initial_stage_a_offset) * x
+
+
+def bridge_stageA_budget_make_config(target_family: str,
+                                     seed_family: str,
+                                     family: str,
+                                     base_config: BridgeMinNudgeConfig,
+                                     audit_group: str,
+                                     audit_type: str,
+                                     offset: float,
+                                     *,
+                                     dynamic_stage_a: bool = False,
+                                     initial_offset: float | None = None,
+                                     ramp_phase: str = "static",
+                                     ramp_shape: str = "linear",
+                                     drive_start_delay: float = 0.0,
+                                     no_servo: bool = False,
+                                     generated_damping: float = 0.0,
+                                     coupling_scale: float = 1.0,
+                                     limiter_strength: float = 0.0,
+                                     absorber_strength: float = 0.0,
+                                     reference_role_override: str | None = None) -> BridgeStageABudgetAuditConfig:
+    reference_role = reference_role_override or ("discovery_candidate" if family == "369" else "control")
+    name = (
+        f"stageA_budget_audit_{target_family}_{seed_family}_{audit_group}"
+        f"_{audit_type}_{safe_token(offset)}"
+    )
+    placeholder = BridgeStageABudgetAuditConfig(
+        name=name,
+        base_config=replace(base_config, reference_role=reference_role, family=family),
+        servo_config=bridge_phase_servo_make_config(
+            target_family,
+            seed_family,
+            replace(base_config, reference_role=reference_role, family=family),
+            "stage_B_detuning_servo",
+            0.0015,
+            0.000020,
+            0.018,
+            0.18,
+            2.0,
+            runtime_factor=4.0,
+            control_mode="no_servo" if no_servo else "normal",
+            reference_role=reference_role,
+            family=family,
+            suffix=audit_type,
+        ),
+        audit_group=audit_group,
+        audit_type=audit_type,
+        final_stage_a_offset=offset,
+        initial_stage_a_offset=offset if initial_offset is None else initial_offset,
+        dynamic_stage_a=dynamic_stage_a,
+        ramp_phase=ramp_phase,
+        ramp_shape=ramp_shape,
+        drive_start_delay=drive_start_delay,
+        generated_damping=generated_damping,
+        coupling_scale=coupling_scale,
+        limiter_strength=limiter_strength,
+        absorber_strength=absorber_strength,
+        no_servo=no_servo,
+        reference_role=reference_role,
+        family=family,
+        target_family=target_family,
+        note="Stage A budget audit; no direct generated/target drive",
+    )
+    initial_base = bridge_stageA_budget_static_base(placeholder, placeholder.initial_stage_a_offset)
+    servo = replace(
+        placeholder.servo_config,
+        name=name,
+        base_config=initial_base,
+        control_mode="no_servo" if no_servo else "normal",
+        kp=0.0 if no_servo else placeholder.servo_config.kp,
+        ki=0.0 if no_servo else placeholder.servo_config.ki,
+        correction_clamp=0.0 if no_servo else placeholder.servo_config.correction_clamp,
+        note="stage_B_detuning_servo unless no-servo audit row; no direct 2f/3f drive",
+    )
+    return replace(placeholder, base_config=replace(base_config, reference_role=reference_role, family=family), servo_config=servo)
+
+
+def bridge_stageA_budget_audit_specs(include_sweeps: bool) -> List[Tuple[str, str, BridgeStageABudgetAuditConfig]]:
+    default_specs = [
+        ("static_stage_A_tune", "static_tune_plus_0p03", 0.030, {}),
+        ("stage_A_tuning_sweep", "tune_plus_0p005", 0.005, {}),
+        ("stage_A_tuning_sweep", "tune_plus_0p020", 0.020, {}),
+        ("stage_A_tuning_sweep", "tune_plus_0p040", 0.040, {}),
+        ("static_stage_A_no_servo", "tune_plus_0p03_no_servo", 0.030, {"no_servo": True}),
+        ("drive_delayed_initialization", "settle_before_drive", 0.030, {"drive_start_delay": 14.0}),
+        ("pre_drive_adiabatic_ramp", "s_curve_before_drive", 0.030, {"dynamic_stage_a": True, "initial_offset": 0.0, "ramp_phase": "pre_drive", "ramp_shape": "s_curve", "drive_start_delay": 18.0}),
+        ("in_drive_stage_A_ramp", "work_counted_linear", 0.030, {"dynamic_stage_a": True, "initial_offset": 0.0, "ramp_phase": "in_drive", "ramp_shape": "linear"}),
+        ("tune_plus_damping_compensation", "moderate_q_damping", 0.030, {"generated_damping": 0.92}),
+        ("tune_plus_coupling_reduction", "A_to_B_0p72", 0.030, {"coupling_scale": 0.72}),
+        ("tune_plus_passive_limiter", "soft_limiter", 0.030, {"limiter_strength": 0.20}),
+        ("auxiliary_2f_absorber", "passive_absorber", 0.030, {"absorber_strength": 0.42}),
+        ("raw_stage_A_tuning_reference", "raw_tune_plus_0p03_reference", 0.030, {"reference_role_override": "reference_control"}),
+    ]
+    sweep_specs = [
+        ("stage_A_tuning_sweep", "tune_plus_0p010", 0.010, {}),
+        ("stage_A_tuning_sweep", "tune_plus_0p015", 0.015, {}),
+        ("stage_A_tuning_sweep", "tune_plus_0p025", 0.025, {}),
+        ("stage_A_tuning_sweep", "tune_plus_0p035", 0.035, {}),
+        ("stage_A_tuning_sweep", "tune_plus_0p050", 0.050, {}),
+        ("tune_plus_damping_compensation", "light_q_damping", 0.030, {"generated_damping": 0.82}),
+        ("tune_plus_damping_compensation", "heavy_q_damping", 0.030, {"generated_damping": 1.08}),
+        ("tune_plus_coupling_reduction", "A_to_B_0p58", 0.030, {"coupling_scale": 0.58}),
+        ("tune_plus_coupling_reduction", "A_to_B_0p86", 0.030, {"coupling_scale": 0.86}),
+        ("tune_plus_passive_limiter", "light_limiter", 0.030, {"limiter_strength": 0.12}),
+        ("tune_plus_passive_limiter", "firm_limiter", 0.030, {"limiter_strength": 0.32}),
+        ("auxiliary_2f_absorber", "light_absorber", 0.030, {"absorber_strength": 0.24}),
+        ("auxiliary_2f_absorber", "firm_absorber", 0.030, {"absorber_strength": 0.64}),
+        ("pre_drive_adiabatic_ramp", "linear_before_drive", 0.030, {"dynamic_stage_a": True, "initial_offset": 0.0, "ramp_phase": "pre_drive", "ramp_shape": "linear", "drive_start_delay": 18.0}),
+        ("in_drive_stage_A_ramp", "work_counted_s_curve", 0.030, {"dynamic_stage_a": True, "initial_offset": 0.0, "ramp_phase": "in_drive", "ramp_shape": "s_curve"}),
+    ]
+    active_specs = default_specs + (sweep_specs if include_sweeps else [])
+    specs: List[Tuple[str, str, BridgeStageABudgetAuditConfig]] = []
+    for target_family, seed_family, family, base_config in bridge_stageA_budget_audit_base_templates():
+        for group, audit_type, offset, kwargs in active_specs:
+            specs.append((
+                group,
+                audit_type,
+                bridge_stageA_budget_make_config(
+                    target_family,
+                    seed_family,
+                    family,
+                    base_config,
+                    group,
+                    audit_type,
+                    offset,
+                    **kwargs,
+                ),
+            ))
+    return specs
+
+
+def simulate_bridge_stageA_budget_audit(config: BridgeStageABudgetAuditConfig,
+                                        seed: int,
+                                        quick: bool,
+                                        dt: float | None = None,
+                                        t_max: float | None = None,
+                                        base_hz: float = 0.045,
+                                        sample_every: int | None = None
+                                        ) -> Tuple[Dict[str, object], List[Dict[str, float | str]]]:
+    rng = np.random.default_rng(seed)
+    default_dt, default_tmax, default_sample = bridge_amp_timebase(quick)
+    dt = default_dt if dt is None else dt
+    t_max = default_tmax if t_max is None else t_max
+    sample_every = default_sample if sample_every is None else sample_every
+    drive_start = max(0.0, config.drive_start_delay)
+    drive_until = drive_start + 0.74 * max(t_max - drive_start, 1e-9)
+
+    servo = config.servo_config
+    target_correction = 0.0
+    phase_error = 0.0
+    generated_phase_error = 0.0
+    integral_phase_error = 0.0
+    current_offset = bridge_stageA_budget_offset(config, 0.0, drive_start, drive_until)
+    current_base = bridge_stageA_budget_static_base(config, current_offset)
+    effective = bridge_min_nudge_effective_bridge(current_base, target_correction)
+    omega = 2.0 * np.pi * base_hz * np.asarray(effective.mode_freqs, dtype=float)
+    zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+    y = np.zeros(6)
+    y[:3] = 1e-4 * rng.normal(size=3)
+    y[3:] = 1e-4 * rng.normal(size=3)
+    initial_total = float(bridge_amp_potentials(y[:3], y[3:], omega, effective)["total"])
+    drive_work = 0.0
+    positive_input_work = 0.0
+    damping_loss = 0.0
+    spark_loss = 0.0
+    servo_work_signed = 0.0
+    servo_work_abs = 0.0
+    parameter_work_signed = 0.0
+    parameter_work_abs = 0.0
+    parameter_energy_in = 0.0
+    parameter_energy_out = 0.0
+
+    update_steps = max(1, int(servo.update_interval / max(dt, 1e-12)))
+    update_dt = update_steps * dt
+    sample_dt = dt * sample_every
+    times: List[float] = []
+    qs: List[np.ndarray] = []
+    vs: List[np.ndarray] = []
+    energies: List[np.ndarray] = []
+    corrections: List[float] = []
+    phase_errors: List[float] = []
+    generated_phase_errors: List[float] = []
+    stage_offsets: List[float] = []
+    ledger: List[Dict[str, float | str]] = []
+
+    n_steps = int(t_max / dt)
+    for step in range(n_steps):
+        t = step * dt
+        q = y[:3]
+        v = y[3:]
+
+        scheduled_offset = bridge_stageA_budget_offset(config, t, drive_start, drive_until)
+        if abs(scheduled_offset - current_offset) > 1e-13:
+            before = bridge_amp_potentials(q, v, omega, effective)
+            next_base = bridge_stageA_budget_static_base(config, scheduled_offset)
+            next_effective = bridge_min_nudge_effective_bridge(next_base, target_correction)
+            next_omega = 2.0 * np.pi * base_hz * np.asarray(next_effective.mode_freqs, dtype=float)
+            after_param = bridge_amp_potentials(q, v, next_omega, next_effective)
+            delta_work = float(after_param["total"] - before["total"])
+            parameter_work_signed += delta_work
+            parameter_work_abs += abs(delta_work)
+            parameter_energy_in += max(0.0, delta_work)
+            parameter_energy_out += max(0.0, -delta_work)
+            current_offset = scheduled_offset
+            current_base = next_base
+            effective = next_effective
+            omega = next_omega
+            zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+        if step > 0 and step % update_steps == 0:
+            phase_error = bridge_min_nudge_phase_error(effective, times, qs, sample_dt)
+            generated_phase_error = bridge_generated_stage_phase_error(effective, times, qs, sample_dt)
+            if servo.control_mode == "no_servo":
+                integral_phase_error = 0.0
+                next_correction = 0.0
+            else:
+                integral_phase_error = float(np.clip(
+                    integral_phase_error + phase_error * update_dt,
+                    -servo.integral_clamp,
+                    servo.integral_clamp,
+                ))
+                next_correction = bridge_phase_servo_next_correction(servo, rng, phase_error, integral_phase_error, target_correction)
+            if abs(next_correction - target_correction) > 1e-15:
+                before = bridge_amp_potentials(q, v, omega, effective)
+                next_effective = bridge_min_nudge_effective_bridge(current_base, next_correction)
+                next_omega = 2.0 * np.pi * base_hz * np.asarray(next_effective.mode_freqs, dtype=float)
+                after_param = bridge_amp_potentials(q, v, next_omega, next_effective)
+                delta_work = float(after_param["total"] - before["total"])
+                servo_work_signed += delta_work
+                servo_work_abs += abs(delta_work)
+                target_correction = next_correction
+                effective = next_effective
+                omega = next_omega
+                zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+        drive_forces = bridge_stageA_budget_drive_forces(effective, t, base_hz, drive_start, drive_until, 3)
+        drive_power = float(np.dot(drive_forces, v))
+        drive_work += drive_power * dt
+        positive_input_work += max(0.0, drive_power) * dt
+        damping_loss += float(np.sum(2.0 * zeta * omega * (v ** 2))) * dt
+        if effective.spark_strength:
+            for i, j in ((0, 1), (1, 2)):
+                gate = float(spark_gate(q[i] - q[j], threshold=effective.spark_threshold))
+                c = 0.030 * effective.spark_strength * gate
+                spark_loss += float(c * ((v[i] - v[j]) ** 2)) * dt
+
+        y_next = rk4_step(y, t, dt, bridge_stageA_budget_derivative, omega, effective, base_hz, drive_start, drive_until, zeta)
+        qn = y_next[:3].copy()
+        vn = y_next[3:].copy()
+        after = bridge_amp_potentials(qn, vn, omega, effective)
+        y = np.concatenate([qn, vn])
+        if not np.all(np.isfinite(y)) or np.max(np.abs(y)) > 1e6:
+            break
+
+        if step % sample_every == 0:
+            modal = clean_modal_energy(qn, vn, omega)
+            total_parameter_work = servo_work_signed + parameter_work_signed
+            total_accounted = initial_total + drive_work + total_parameter_work - damping_loss - spark_loss
+            error_abs = float(after["total"]) - total_accounted
+            error_rel = abs(error_abs) / (abs(float(after["total"])) + abs(total_accounted) + 1e-18)
+            now = float(t + dt)
+            if now < drive_start:
+                budget_phase = "before_drive"
+            elif now < drive_until:
+                budget_phase = "during_drive"
+            else:
+                budget_phase = "after_drive"
+            times.append(now)
+            qs.append(qn.copy())
+            vs.append(vn.copy())
+            energies.append(modal)
+            corrections.append(target_correction)
+            phase_errors.append(phase_error)
+            generated_phase_errors.append(generated_phase_error)
+            stage_offsets.append(current_offset)
+            ledger.append({
+                "case": config.name,
+                "time": now,
+                "target_family": config.target_family,
+                "audit_group": config.audit_group,
+                "audit_type": config.audit_type,
+                "budget_phase": budget_phase,
+                "phase_error_9": phase_error,
+                "phase_error_generated_2f": generated_phase_error,
+                "correction_value": target_correction,
+                "stage_A_tuning_offset": current_offset,
+                "receiver_tuning": float(effective.mode_freqs[2]),
+                "stage_B_tuning": float(effective.mode_freqs[1]),
+                "energy_at_source_mode": float(modal[0]),
+                "energy_at_generated_mode": float(modal[1]),
+                "energy_at_target_mode": float(modal[2]),
+                "total_stored_energy": float(after["total"]),
+                "drive_input_work": drive_work,
+                "positive_input_work": positive_input_work,
+                "damping_loss": damping_loss,
+                "spark_loss": spark_loss,
+                "parameter_work_signed": parameter_work_signed,
+                "parameter_work_abs": parameter_work_abs,
+                "servo_parameter_work_signed": servo_work_signed,
+                "servo_parameter_work_abs": servo_work_abs,
+                "stabilizer_work_signed": parameter_work_signed + servo_work_signed,
+                "stabilizer_work": parameter_work_abs + servo_work_abs,
+                "total_accounted_energy": total_accounted,
+                "energy_budget_error_abs": error_abs,
+                "energy_budget_error_rel": error_rel,
+            })
+
+    correction_arr = np.asarray(corrections)
+    stage_offset_arr = np.asarray(stage_offsets)
+    stabilizer_work_signed = parameter_work_signed + servo_work_signed
+    stabilizer_work_abs = parameter_work_abs + servo_work_abs
+    sim: Dict[str, object] = {
+        "times": np.asarray(times),
+        "qs": np.asarray(qs),
+        "vs": np.asarray(vs),
+        "energy": np.asarray(energies),
+        "omega": omega,
+        "drive_start": drive_start,
+        "drive_until": drive_until,
+        "dt_sample": sample_dt,
+        "positive_input_work": positive_input_work,
+        "net_input_work": drive_work,
+        "damping_loss": damping_loss,
+        "spark_loss": spark_loss,
+        "parameter_work_signed": parameter_work_signed,
+        "parameter_work_abs": parameter_work_abs,
+        "parameter_energy_in": parameter_energy_in,
+        "parameter_energy_out": parameter_energy_out,
+        "servo_work_signed": stabilizer_work_signed,
+        "servo_work": stabilizer_work_abs,
+        "stage_B_servo_work_signed": servo_work_signed,
+        "stage_B_servo_work_abs": servo_work_abs,
+        "stabilizer_work_signed": stabilizer_work_signed,
+        "stabilizer_work": stabilizer_work_abs,
+        "correction_work_signed": stabilizer_work_signed,
+        "correction_work": stabilizer_work_abs,
+        "correction_rms": float(np.sqrt(np.mean(correction_arr ** 2))) if len(correction_arr) else 0.0,
+        "correction_peak": float(np.max(np.abs(correction_arr))) if len(correction_arr) else 0.0,
+        "stage_A_offset_initial": float(stage_offset_arr[0]) if len(stage_offset_arr) else current_offset,
+        "stage_A_offset_final": float(stage_offset_arr[-1]) if len(stage_offset_arr) else current_offset,
+        "energy_budget_error_rel": float(ledger[-1]["energy_budget_error_rel"]) if ledger else 1.0,
+        "max_energy_budget_error_rel": max((float(r["energy_budget_error_rel"]) for r in ledger), default=1.0),
+        "effective_config": effective,
+    }
+    return sim, ledger
+
+
+def bridge_stageA_budget_phase_errors(ledger: List[Dict[str, float | str]]) -> Tuple[float, float, float]:
+    def phase_max(phase: str) -> float:
+        return max((float(r.get("energy_budget_error_rel", 0.0)) for r in ledger if str(r.get("budget_phase")) == phase), default=0.0)
+    return phase_max("before_drive"), phase_max("during_drive"), phase_max("after_drive")
+
+
+def bridge_stageA_budget_measure(config: BridgeStageABudgetAuditConfig,
+                                 seed: int,
+                                 quick: bool,
+                                 dt: float,
+                                 runtime: float,
+                                 sample_every: int,
+                                 direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                 ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]]]:
+    sim, ledger = simulate_bridge_stageA_budget_audit(config, seed, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    target_key = f"{effective.mode_freqs[0]:g}:{effective.target_6:g}:{effective.target_9:g}:{effective.mode_freqs[1]:g}:{effective.mode_freqs[2]:g}"
+    cache_key = (target_key, dt, runtime)
+    if cache_key not in direct_cache:
+        direct_cfg = bridge_min_nudge_direct_reference(effective)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 13100, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 13100, "direct_reference", "direct_source_plus_generated", "reference", 0.35, 1.0)
+        direct_cache[cache_key] = (direct_sim, direct_row)
+    direct_sim, direct_row = direct_cache[cache_key]
+
+    nominal_row = bridge_metrics_window(effective, sim, seed, "stageA_budget_audit", config.audit_group, config.audit_type, 0.35, 1.0)
+    diagnostic_rows, emergent_summary = bridge_emergent_lock_diagnostics(effective, sim, direct_sim, 0.50, 1.0)
+    timeseries_rows, slip_summary = bridge_phase_slip_audit_timeseries(effective, sim, direct_sim, ledger, 0.50, 1.0)
+    series_metrics = bridge_generated_stage_series_metrics(timeseries_rows)
+    before_budget, during_budget, after_budget = bridge_stageA_budget_phase_errors(ledger)
+
+    row = dict(nominal_row)
+    row.update(emergent_summary)
+    row.update(slip_summary)
+    row.update(series_metrics)
+    total_input_before = max(float(row.get("total_input_work", 0.0)), 1e-18)
+    total_input_with_stabilizer = total_input_before + float(sim["stabilizer_work"])
+    row["experiment"] = "bridge_stageA_budget_audit"
+    row["case"] = config.name
+    row["candidate_id"] = f"{config.name}:{config.runtime_factor:g}x"
+    row["target_family"] = config.target_family
+    row["source_frequency"] = effective.mode_freqs[0]
+    row["generated_frequency"] = effective.target_6
+    row["nominal_target"] = effective.target_9
+    row["audit_group"] = config.audit_group
+    row["audit_type"] = config.audit_type
+    row["stage_A_tuning_offset_final"] = config.final_stage_a_offset
+    row["stage_A_tuning_offset_initial"] = config.initial_stage_a_offset
+    row["dynamic_stage_A_tuning"] = str(config.dynamic_stage_a)
+    row["drive_start_delay"] = config.drive_start_delay
+    row["actuator_type"] = config.servo_config.actuator_type
+    row["correction_type"] = config.servo_config.correction_type
+    row["control_mode"] = config.servo_config.control_mode
+    row["Kp"] = config.servo_config.kp
+    row["Ki"] = config.servo_config.ki
+    row["correction_clamp"] = config.servo_config.correction_clamp
+    row["runtime_factor"] = config.runtime_factor
+    row["reference_role"] = config.reference_role
+    row["family"] = config.family
+    row["target_phase_lock"] = row.get("emergent_phase_lock_target", row.get("phase_lock_9", 0.0))
+    row["emergent_phase_lock"] = row.get("emergent_phase_lock_target", row.get("phase_lock_9", 0.0))
+    row["nominal_phase_lock_target"] = row.get("nominal_phase_lock_target", row.get("phase_lock_9", 0.0))
+    row["fitted_target_frequency"] = row.get("fitted_effective_target_frequency", effective.target_9)
+    row["spectral_purity_target"] = row.get("spectral_purity_target", row.get("spectral_purity_9", 0.0))
+    row["nominal_bridge_ratio"] = metric_ratio(float(row.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0)))
+    row["target_phase_slip_count"] = row.get("phase_slip_count", 0)
+    row["max_target_phase_jump"] = row.get("max_phase_jump", 0.0)
+    row["pre_slip_generated_instability"] = row.get("generated_2f_instability_before_slip", 0.0)
+    row["pre_slip_amplitude_drop"] = row.get("amplitude_drop_before_slip", 0.0)
+    row["stabilizer_work"] = float(sim["stabilizer_work"])
+    row["stabilizer_work_signed"] = float(sim["stabilizer_work_signed"])
+    row["parameter_work_signed"] = float(sim["parameter_work_signed"])
+    row["parameter_work_abs"] = float(sim["parameter_work_abs"])
+    row["stage_B_servo_work_signed"] = float(sim["stage_B_servo_work_signed"])
+    row["stage_B_servo_work_abs"] = float(sim["stage_B_servo_work_abs"])
+    row["stabilizer_work_fraction"] = metric_ratio(float(sim["stabilizer_work"]), total_input_with_stabilizer)
+    row["parameter_work_fraction"] = metric_ratio(float(sim["parameter_work_abs"]), total_input_with_stabilizer)
+    row["servo_work_fraction"] = row["stabilizer_work_fraction"]
+    row["correction_rms"] = float(sim["correction_rms"])
+    row["correction_peak"] = float(sim["correction_peak"])
+    row["energy_budget_error"] = float(row.get("energy_budget_error", sim.get("energy_budget_error_rel", 1.0)))
+    row["max_energy_budget_error"] = float(sim["max_energy_budget_error_rel"])
+    row["budget_error_before_drive"] = before_budget
+    row["budget_error_during_drive"] = during_budget
+    row["budget_error_after_drive"] = after_budget
+    row["damping_loss"] = float(sim["damping_loss"])
+    row["spark_loss"] = float(sim["spark_loss"])
+    row["no_direct_2f_drive"] = str(not any(abs(freq - effective.target_6) < 1e-9 and mode == 1 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_direct_3f_drive"] = str(not any(abs(freq - effective.target_9) < 1e-9 and mode == 2 for freq, mode in zip(effective.drive_freqs, effective.drive_modes)))
+    row["no_target_frequency_injection"] = row["no_direct_3f_drive"]
+    row["half_dt_preserved"] = "False"
+    row["quarter_dt_preserved"] = "False"
+    row["non369_controls_do_not_beat"] = "False"
+    row["promotion_ready"] = "False"
+    row["passed"] = "False"
+    row["note"] = config.note
+    bridge_stageA_budget_update_score(row)
+
+    for item in timeseries_rows + diagnostic_rows:
+        item["experiment"] = "bridge_stageA_budget_audit"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["target_family"] = config.target_family
+        item["audit_group"] = config.audit_group
+        item["audit_type"] = config.audit_type
+        item["runtime_factor"] = config.runtime_factor
+    for item in ledger:
+        item["experiment"] = "bridge_stageA_budget_audit"
+        item["candidate_id"] = row["candidate_id"]
+        item["runtime_factor"] = config.runtime_factor
+    return row, timeseries_rows + diagnostic_rows + ledger
+
+
+def bridge_stageA_budget_core_pass(row: Dict[str, float | str],
+                                   require_validation: bool = False,
+                                   require_non369: bool = False) -> bool:
+    base = (
+        str(row.get("target_family")) == "369"
+        and str(row.get("reference_role")) == "discovery_candidate"
+        and float(row.get("runtime_factor", 1.0)) >= 4.0
+        and float(row.get("target_phase_lock", 0.0)) > 0.90
+        and float(row.get("target_phase_slip_count", 99.0)) <= 1.0
+        and float(row.get("max_target_phase_jump", 99.0)) < 1.0
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.30
+        and float(row.get("pre_slip_generated_instability", 99.0)) < 0.12
+        and float(row.get("bridge_ratio", 0.0)) > 2.0
+        and float(row.get("spectral_purity_target", 0.0)) > 0.80
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+        and float(row.get("stabilizer_work_fraction", 1.0)) < 0.002
+        and str(row.get("no_direct_2f_drive", "False")) == "True"
+        and str(row.get("no_direct_3f_drive", "False")) == "True"
+        and str(row.get("no_target_frequency_injection", "False")) == "True"
+    )
+    if require_validation:
+        base = base and str(row.get("half_dt_preserved", "False")) == "True" and str(row.get("quarter_dt_preserved", "False")) == "True"
+    if require_non369:
+        base = base and str(row.get("non369_controls_do_not_beat", "False")) == "True"
+    return base
+
+
+def bridge_stageA_budget_update_score(row: Dict[str, float | str]) -> None:
+    lock = float(row.get("target_phase_lock", 0.0))
+    purity = float(row.get("spectral_purity_target", 0.0))
+    bridge_ratio = float(row.get("bridge_ratio", 0.0))
+    slips = float(row.get("target_phase_slip_count", 99.0))
+    jump = float(row.get("max_target_phase_jump", 99.0))
+    generated_cv = float(row.get("generated_envelope_cv", 99.0))
+    pre_slip = float(row.get("pre_slip_generated_instability", 99.0))
+    budget = float(row.get("energy_budget_error", 1.0))
+    work = float(row.get("stabilizer_work_fraction", 1.0))
+    parameter_work = float(row.get("parameter_work_abs", 0.0))
+    normalized = (
+        lock
+        * purity
+        * min(4.0, bridge_ratio)
+        / (
+            1.0
+            + 2.8 * max(0.0, slips)
+            + 1.4 * max(0.0, jump)
+            + 6.0 * max(0.0, generated_cv)
+            + 9.0 * max(0.0, pre_slip)
+            + 750.0 * max(0.0, budget)
+            + 1500.0 * max(0.0, work)
+            + 4.0 * math.log1p(max(0.0, parameter_work))
+        )
+    )
+    failures = []
+    if float(row.get("runtime_factor", 1.0)) < 4.0:
+        failures.append("not_4x_runtime")
+    if lock <= 0.90:
+        failures.append("target_phase_lock")
+    if slips > 1.0:
+        failures.append("target_phase_slip_count")
+    if jump >= 1.0:
+        failures.append("max_target_phase_jump")
+    if generated_cv >= 0.30:
+        failures.append("generated_envelope_cv")
+    if pre_slip >= 0.12:
+        failures.append("pre_slip_generated_instability")
+    if bridge_ratio <= 2.0:
+        failures.append("bridge_ratio")
+    if purity <= 0.80:
+        failures.append("spectral_purity_target")
+    if budget >= 0.005:
+        failures.append("energy_budget")
+    if work >= 0.002:
+        failures.append("stabilizer_work_fraction")
+    if str(row.get("no_direct_2f_drive", "False")) != "True" or str(row.get("no_direct_3f_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+    if str(row.get("reference_role")) != "discovery_candidate":
+        failures.append("reference_or_control")
+    core_no_validation = bridge_stageA_budget_core_pass(row, require_validation=False, require_non369=False)
+    if core_no_validation and str(row.get("half_dt_preserved", "False")) != "True":
+        failures.append("half_dt_validation")
+    if core_no_validation and str(row.get("quarter_dt_preserved", "False")) != "True":
+        failures.append("quarter_dt_validation")
+    if core_no_validation and str(row.get("non369_controls_do_not_beat", "False")) != "True":
+        failures.append("non369_control")
+
+    if "energy_budget" in failures:
+        failure_mode = "budget_artifact"
+    elif "stabilizer_work_fraction" in failures:
+        failure_mode = "active_work_too_large"
+    elif "generated_envelope_cv" in failures or "pre_slip_generated_instability" in failures:
+        failure_mode = "generated_stage_instability"
+    elif "target_phase_slip_count" in failures or "max_target_phase_jump" in failures:
+        failure_mode = "target_phase_slips"
+    elif "target_phase_lock" in failures:
+        failure_mode = "weak_target_lock"
+    elif "non369_control" in failures:
+        failure_mode = "non369_control_stronger"
+    elif failures:
+        failure_mode = failures[0]
+    else:
+        failure_mode = "stageA_budget_clean_slip_free"
+
+    budget_clean = budget < 0.005 and work < 0.002
+    passed = bridge_stageA_budget_core_pass(row, require_validation=True, require_non369=True)
+    row["budget_normalized_score"] = normalized
+    row["bridge_stageA_budget_audit_score"] = normalized if str(row.get("reference_role")) == "discovery_candidate" and budget_clean else 0.0
+    row["score"] = row["bridge_stageA_budget_audit_score"]
+    row["pre_validation_pass"] = str(core_no_validation)
+    row["passed"] = str(passed)
+    row["promotion_ready"] = str(passed)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+
+
+def bridge_stageA_budget_annotate_non369(rows: List[Dict[str, float | str]]) -> None:
+    non369_best = max(
+        [
+            float(r.get("budget_normalized_score", 0.0))
+            for r in rows
+            if str(r.get("target_family")) != "369"
+            and float(r.get("energy_budget_error", 1.0)) < 0.005
+            and float(r.get("stabilizer_work_fraction", 1.0)) < 0.002
+        ],
+        default=0.0,
+    )
+    for row in rows:
+        row["best_budget_clean_non369_score"] = non369_best
+        if str(row.get("target_family")) == "369":
+            row["non369_controls_do_not_beat"] = str(float(row.get("budget_normalized_score", 0.0)) > non369_best * 1.02)
+        bridge_stageA_budget_update_score(row)
+
+
+def bridge_stageA_budget_apply_validation(candidate: Dict[str, float | str],
+                                          validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt"), {})
+
+    def preserved(row: Dict[str, float | str]) -> bool:
+        if not row:
+            return False
+        return (
+            float(row.get("target_phase_lock", 0.0)) > 0.90
+            and float(row.get("target_phase_slip_count", 99.0)) <= 1.0
+            and float(row.get("max_target_phase_jump", 99.0)) < 1.0
+            and float(row.get("generated_envelope_cv", 99.0)) < 0.30
+            and float(row.get("pre_slip_generated_instability", 99.0)) < 0.12
+            and float(row.get("energy_budget_error", 1.0)) < 0.005
+            and float(row.get("stabilizer_work_fraction", 1.0)) < 0.002
+        )
+
+    candidate["half_dt_preserved"] = str(preserved(half))
+    candidate["quarter_dt_preserved"] = str(preserved(quarter))
+    candidate["half_dt_target_phase_lock"] = float(half.get("target_phase_lock", 0.0))
+    candidate["quarter_dt_target_phase_lock"] = float(quarter.get("target_phase_lock", 0.0))
+    candidate["half_dt_target_phase_slip_count"] = float(half.get("target_phase_slip_count", 0.0))
+    candidate["quarter_dt_target_phase_slip_count"] = float(quarter.get("target_phase_slip_count", 0.0))
+    candidate["half_dt_generated_envelope_cv"] = float(half.get("generated_envelope_cv", 0.0))
+    candidate["quarter_dt_generated_envelope_cv"] = float(quarter.get("generated_envelope_cv", 0.0))
+    bridge_stageA_budget_update_score(candidate)
+
+
+def bridge_stageA_budget_validation(config: BridgeStageABudgetAuditConfig,
+                                    seed: int,
+                                    quick: bool,
+                                    dt: float,
+                                    runtime: float,
+                                    sample_every: int
+                                    ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [("half_dt", dt * 0.5, seed + 503), ("quarter_dt", dt * 0.25, seed + 907)]
+    rows: List[Dict[str, float | str]] = []
+    series_rows: List[Dict[str, float | str]] = []
+    for name, test_dt, test_seed in tests:
+        direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+        row, series = bridge_stageA_budget_measure(config, test_seed, quick, test_dt, runtime, sample_every, direct_cache)
+        row["validation_test"] = name
+        rows.append(row)
+        series_rows.extend(series)
+    return rows, series_rows
+
+
+def write_bridge_stageA_budget_audit_report(out_dir: Path,
+                                            ranked: List[Dict[str, float | str]],
+                                            validation_rows: List[Dict[str, float | str]]) -> None:
+    best_369 = max([r for r in ranked if str(r.get("target_family")) == "369"], key=lambda r: (float(r.get("bridge_stageA_budget_audit_score", 0.0)), float(r.get("budget_normalized_score", 0.0))), default={})
+    static_369 = max([r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("audit_group")) == "static_stage_A_tune"], key=lambda r: float(r.get("budget_normalized_score", 0.0)), default={})
+    no_servo_369 = max([r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("audit_group")) == "static_stage_A_no_servo"], key=lambda r: float(r.get("budget_normalized_score", 0.0)), default={})
+    raw_ref = max([r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("audit_group")) == "raw_stage_A_tuning_reference"], key=lambda r: float(r.get("target_phase_lock", 0.0)), default={})
+    best_comp = max([r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("audit_group")) in {"tune_plus_damping_compensation", "tune_plus_coupling_reduction", "tune_plus_passive_limiter"}], key=lambda r: float(r.get("budget_normalized_score", 0.0)), default={})
+    best_absorber = max([r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("audit_group")) == "auxiliary_2f_absorber"], key=lambda r: float(r.get("budget_normalized_score", 0.0)), default={})
+    non369_budget_best = max([float(r.get("budget_normalized_score", 0.0)) for r in ranked if str(r.get("target_family")) != "369" and float(r.get("energy_budget_error", 1.0)) < 0.005 and float(r.get("stabilizer_work_fraction", 1.0)) < 0.002], default=0.0)
+    static_slip_free = float(static_369.get("target_phase_slip_count", 99.0)) <= 1.0 and float(static_369.get("energy_budget_error", 1.0)) < 0.005
+    final_config_budget_breaks = float(no_servo_369.get("energy_budget_error", 1.0)) >= 0.005 and float(no_servo_369.get("parameter_work_abs", 0.0)) <= 1e-12
+    dynamic_budget_breaks = float(raw_ref.get("energy_budget_error", 1.0)) >= 0.005 and float(raw_ref.get("parameter_work_abs", 0.0)) > 1e-12
+    if str(best_369.get("promotion_ready")) == "True":
+        next_step = "full generated-stage sweeps"
+    elif float(best_369.get("correction_lag_before_slip", 0.0)) > 1.4:
+        next_step = "predictive servo timing"
+    elif (
+        float(best_comp.get("target_phase_lock", 0.0)) > 0.90
+        and float(best_comp.get("target_phase_slip_count", 99.0)) <= 1.0
+        and float(best_comp.get("energy_budget_error", 1.0)) < 0.012
+        and float(best_comp.get("stabilizer_work_fraction", 1.0)) < 0.002
+    ):
+        next_step = "full generated-stage sweeps"
+    elif float(best_369.get("generated_envelope_cv", 1.0)) < 0.35 and float(best_369.get("target_phase_slip_count", 99.0)) <= 1.0:
+        next_step = "full generated-stage sweeps"
+    else:
+        next_step = "geometry/evolve after one broader passive Stage A sweep"
+
+    best_by_group: Dict[str, Dict[str, float | str]] = {}
+    for row in ranked:
+        group = str(row.get("audit_group", ""))
+        if not group:
+            continue
+        if group not in best_by_group or float(row.get("budget_normalized_score", 0.0)) > float(best_by_group[group].get("budget_normalized_score", 0.0)):
+            best_by_group[group] = row
+
+    lines = [
+        "# Bridge Stage A Budget Audit Report",
+        "",
+        "This diagnostic asks whether the slip-free Stage A tuning basin can be made static, passive, and budget-clean. Promotion gates are unchanged.",
+        "",
+        "## Direct Answers",
+        f"1. Does static Stage A tuning remove slips without breaking budget? {'yes' if static_slip_free else 'no'}; static_lock={float(static_369.get('target_phase_lock', 0.0)):.6g}, static_slips={float(static_369.get('target_phase_slip_count', 0.0)):.6g}, static_budget={float(static_369.get('energy_budget_error', 0.0)):.6g}.",
+        f"2. Is the budget failure dynamic retuning or final tuned configuration? {'final tuned configuration also breaks budget' if final_config_budget_breaks else ('dynamic retuning dominates' if dynamic_budget_breaks else 'not isolated as a dynamic-retune-only artifact')}; no_servo_budget={float(no_servo_369.get('energy_budget_error', 0.0)):.6g}, no_servo_parameter_work={float(no_servo_369.get('parameter_work_abs', 0.0)):.6g}.",
+        f"3. Can damping/Q or coupling compensation keep the basin while restoring budget? {'yes' if str(best_comp.get('promotion_ready')) == 'True' else 'not yet'}; best_comp={best_comp.get('audit_group', 'none')} / {best_comp.get('audit_type', '')}, lock={float(best_comp.get('target_phase_lock', 0.0)):.6g}, slips={float(best_comp.get('target_phase_slip_count', 0.0)):.6g}, budget={float(best_comp.get('energy_budget_error', 0.0)):.6g}.",
+        f"4. Does a passive auxiliary 2f branch beat direct Stage A retuning? {'yes' if float(best_absorber.get('budget_normalized_score', 0.0)) > float(static_369.get('budget_normalized_score', 0.0)) else 'no'}; absorber_score={float(best_absorber.get('budget_normalized_score', 0.0)):.6g}, static_score={float(static_369.get('budget_normalized_score', 0.0)):.6g}.",
+        f"5. Next step: {next_step}.",
+        f"Best 369 score={float(best_369.get('budget_normalized_score', 0.0)):.6g}; non369_budget_best={non369_budget_best:.6g}; promotion_ready_rows={sum(1 for r in ranked if str(r.get('promotion_ready')) == 'True')}.",
+        "",
+        "## Best By Audit Group",
+    ]
+    for group, row in sorted(best_by_group.items()):
+        lines.append(
+            f"- {group}: family={row.get('target_family')}, type={row.get('audit_type')}, lock={float(row.get('target_phase_lock', 0.0)):.6g}, "
+            f"slips={float(row.get('target_phase_slip_count', 0.0)):.6g}, jump={float(row.get('max_target_phase_jump', 0.0)):.6g}, "
+            f"gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, pre_slip={float(row.get('pre_slip_generated_instability', 0.0)):.6g}, "
+            f"bridge={float(row.get('bridge_ratio', 0.0)):.6g}, purity={float(row.get('spectral_purity_target', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, work={float(row.get('stabilizer_work_fraction', 0.0)):.6g}, "
+            f"param_abs={float(row.get('parameter_work_abs', 0.0)):.6g}, failure={row.get('failure_mode')}"
+        )
+    lines.extend(["", "## Ranked Rows"])
+    for row in ranked[:32]:
+        lines.append(
+            f"- {row.get('candidate_id')}: family={row.get('target_family')}, group={row.get('audit_group')}, type={row.get('audit_type')}, "
+            f"lock={float(row.get('target_phase_lock', 0.0)):.6g}, slips={float(row.get('target_phase_slip_count', 0.0)):.6g}, "
+            f"jump={float(row.get('max_target_phase_jump', 0.0)):.6g}, gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, "
+            f"pre_slip={float(row.get('pre_slip_generated_instability', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, budget={float(row.get('energy_budget_error', 0.0)):.6g}, "
+            f"work={float(row.get('stabilizer_work_fraction', 0.0)):.6g}, param_abs={float(row.get('parameter_work_abs', 0.0)):.6g}, "
+            f"score={float(row.get('budget_normalized_score', 0.0)):.6g}, failure={row.get('failure_mode')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Dt Validation Rows"])
+        for row in validation_rows[:16]:
+            lines.append(
+                f"- {row.get('candidate_id')}: test={row.get('validation_test')}, lock={float(row.get('target_phase_lock', 0.0)):.6g}, "
+                f"slips={float(row.get('target_phase_slip_count', 0.0)):.6g}, gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, "
+                f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, work={float(row.get('stabilizer_work_fraction', 0.0)):.6g}"
+            )
+    (out_dir / "README_BRIDGE_STAGEA_BUDGET_AUDIT_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_stageA_budget_audit(out_dir: Path, seed: int, quick: bool = False,
+                                          include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    specs = bridge_stageA_budget_audit_specs(include_sweeps)
+    runtime = base_tmax * 1.25 * 4.0
+    summary_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    config_by_case: Dict[str, BridgeStageABudgetAuditConfig] = {}
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    for idx, (sweep, value, config) in enumerate(specs):
+        row, series = bridge_stageA_budget_measure(config, seed + idx * 397, quick, dt, runtime, sample_every, direct_cache)
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        summary_rows.append(row)
+        timeseries_rows.extend(series)
+        config_by_case[str(row.get("case"))] = config
+
+    bridge_stageA_budget_annotate_non369(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_stageA_budget_audit_score", 0.0)),
+            float(r.get("budget_normalized_score", 0.0)),
+            1.0 if str(r.get("target_family")) == "369" else 0.0,
+            -float(r.get("target_phase_slip_count", 99.0)),
+            float(r.get("target_phase_lock", 0.0)),
+        ),
+        reverse=True,
+    )
+
+    validation_rows: List[Dict[str, float | str]] = []
+    top_369 = [r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("reference_role")) == "discovery_candidate"][:3 if include_sweeps else 2]
+    for idx, candidate in enumerate(top_369):
+        config = config_by_case.get(str(candidate.get("case")))
+        if config is None:
+            continue
+        rows, series = bridge_stageA_budget_validation(config, seed + 94000 + idx * 1000, quick, dt, runtime, sample_every)
+        validation_rows.extend(rows)
+        timeseries_rows.extend(series)
+        bridge_stageA_budget_apply_validation(candidate, validation_rows)
+
+    bridge_stageA_budget_annotate_non369(summary_rows)
+    ranked = sorted(
+        summary_rows,
+        key=lambda r: (
+            float(r.get("bridge_stageA_budget_audit_score", 0.0)),
+            float(r.get("budget_normalized_score", 0.0)),
+            1.0 if str(r.get("target_family")) == "369" else 0.0,
+            -float(r.get("target_phase_slip_count", 99.0)),
+            float(r.get("target_phase_lock", 0.0)),
+        ),
+        reverse=True,
+    )
+
+    write_csv(out_dir / "bridge_stageA_budget_audit_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "bridge_stageA_budget_audit_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_stageA_budget_audit_timeseries.csv", timeseries_rows)
+    write_bridge_stageA_budget_audit_report(out_dir, ranked, validation_rows)
+    return [
+        {
+            "experiment": "bridge_stageA_budget_audit",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_stageA_budget_audit_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "target_family": row.get("target_family", ""),
+            "audit_group": row.get("audit_group", ""),
+            "audit_type": row.get("audit_type", ""),
+            "target_phase_lock": row.get("target_phase_lock", 0.0),
+            "target_phase_slip_count": row.get("target_phase_slip_count", 0.0),
+            "generated_envelope_cv": row.get("generated_envelope_cv", 0.0),
+            "pre_slip_generated_instability": row.get("pre_slip_generated_instability", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "stabilizer_work_fraction": row.get("stabilizer_work_fraction", 0.0),
+            "parameter_work_abs": row.get("parameter_work_abs", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -14534,8 +15512,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -14594,6 +15572,8 @@ def main() -> None:
         rows.extend(experiment_bridge_phase_slip_audit(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_generated_stage_stabilizer",):
         rows.extend(experiment_bridge_generated_stage_stabilizer(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_stageA_budget_audit",):
+        rows.extend(experiment_bridge_stageA_budget_audit(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

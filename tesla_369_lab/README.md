@@ -134,6 +134,12 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Keeps direct 2f/3f drive and target-frequency injection out of discovery rows, includes non-369 controls in every ranking, and counts active stabilizer work.
    - Promotes only if 369 passes strict phase-slip, generated-envelope, bridge-ratio, purity, budget/work, half-dt/quarter-dt, and non-369 comparison gates.
 
+24. **Bridge Stage A budget audit**
+   - Tests whether the slip-free `stage_A_tuning / tune_plus_0p03` basin can be made static, passive, and budget-clean.
+   - Compares static Stage A tuning, Stage A tuning sweeps, no-servo static tuning, drive-delayed initialization, pre-drive adiabatic ramps, work-counted in-drive ramps, damping/Q compensation, A->B coupling reduction, passive soft limiting, and a physicalized passive 2f absorber branch.
+   - Keeps direct 2f/3f drive and target-frequency injection out of discovery rows, includes 4->8->12 and 5->10->15 controls in every ranking, and reports parameter work plus budget error before/during/after drive.
+   - Promotes only if 369 is slip-free or nearly slip-free, generated-envelope stable, budget/work clean, dt-preserved, and not beaten by non-369 controls.
+
 ## Install
 
 ```bash
@@ -228,6 +234,10 @@ python tesla_369_lab.py --mode bridge_generated_stage_stabilizer
 python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick
 python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --sweeps
 python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick --sweeps
+python tesla_369_lab.py --mode bridge_stageA_budget_audit
+python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick
+python tesla_369_lab.py --mode bridge_stageA_budget_audit --sweeps
+python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -326,6 +336,9 @@ bridge_phase_slip_audit_timeseries.csv
 bridge_generated_stage_stabilizer_summary.csv
 bridge_generated_stage_stabilizer_ranked.csv
 bridge_generated_stage_stabilizer_timeseries.csv
+bridge_stageA_budget_audit_summary.csv
+bridge_stageA_budget_audit_ranked.csv
+bridge_stageA_budget_audit_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -354,6 +367,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In bridge emergent lock mode, is nominal 4x phase failure actually a stable pulled-frequency lock, and does 3->6->9 still beat non-369 controls after normalization?
 - In bridge phase-slip audit mode, does target lock fail by smooth drift, discrete slips, generated-6 instability, servo lag, amplitude breathing, or budget artifacts?
 - In bridge generated-stage stabilizer mode, can budget-clean generated-2f stabilization remove target phase slips and preserve 4x lock?
+- In bridge Stage A budget audit mode, is the slip-free Stage A tuning basin static/passive/budget-clean, or does the final tuned configuration itself break the budget?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results

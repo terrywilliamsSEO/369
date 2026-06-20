@@ -26,12 +26,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Emergent-lock diagnostics find a small pulled local 3 -> 6 -> 9 target near 9.02, but not a stable >0.90 emergent phase lock.
 - Phase-slip audit points to discrete phase slips driven by generated-6 envelope instability, not a clean stable pulled-frequency lock.
 - Generated-stage stabilization confirms the lead: raw tuning can remove slips, but the current slip-free row breaks energy budget.
+- Stage A budget audit isolates that failure: static `+0.03` tuning removes slips, but the final tuned configuration still breaks budget even with no servo and no dynamic parameter work.
 
 ## Current Blocker
 
 No passive model has passed the strict 4x runtime lock gate.
 
-The main 4x failure is now more specifically phase slips in the 3 -> 6 -> 9 target lock. Some non-369 controls also accumulate unacceptable energy-budget error over long runtime.
+The main 4x failure is now more specifically generated-stage instability and budget cleanliness in the slip-free Stage A tuning basin. Some non-369 controls also accumulate unacceptable energy-budget error over long runtime.
 
 ## Latest Magnetic Autolock Summary
 
@@ -212,13 +213,39 @@ Quick smoke result from `runs/bridge_generated_stage_stabilizer_quick_smoke`:
 - No row passed promotion. Dt validation did not preserve a slip-free, budget-clean result.
 - Current read: generated-envelope instability is likely causal, but the budget-clean stabilizer is not strong enough yet.
 
+## Latest Stage A Budget Audit Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode bridge_stageA_budget_audit
+python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick
+python tesla_369_lab.py --mode bridge_stageA_budget_audit --sweeps
+```
+
+What it tests:
+
+- Whether the raw slip-free `stage_A_tuning / tune_plus_0p03` basin can be made static, passive, and budget-clean.
+- Static Stage A tuning, Stage A tuning sweep, no-servo static tuning, drive-delayed initialization, pre-drive adiabatic ramp, work-counted in-drive ramp, damping/Q compensation, A->B coupling reduction, passive soft limiter, and a physicalized passive 2f absorber branch.
+- 3 -> 6 -> 9 discovery rows plus 4 -> 8 -> 12 and 5 -> 10 -> 15 controls in every ranking.
+- Explicit parameter-work accounting, budget error before/during/after drive, no-direct-drive flags, half-dt and quarter-dt validation for top 369 rows.
+
+Quick smoke result from `runs/bridge_stageA_budget_audit_quick_smoke`:
+
+- Static `Stage A tune +0.03` removed slips but failed budget: target lock 0.857, slips 0, max target jump 2.38 rad, generated-envelope CV 0.515, bridge ratio 3.424, purity 0.956, budget error 0.0118.
+- Static `+0.03` with no servo also failed budget, with error 0.0137 and zero parameter work. This points to the final tuned configuration, not dynamic retuning alone.
+- Best compensation near-miss was `tune_plus_damping_compensation / moderate_q_damping`: lock 0.915, slips 0, bridge ratio 3.397, purity 0.969, work fraction 0.000106, but budget error 0.00786.
+- Best budget-clean 369 row was drive-delayed initialization: budget error 0.00293 and work 0.000129, but it still had 2 slips and generated-envelope CV 0.522.
+- No row passed promotion, and non-369 controls did not produce a budget-clean winner.
+- Current read: the slip-free basin is real but budget-sensitive. The next move should be full generated-stage/passive compensation sweeps.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Continue budget-clean generated-6 stabilization first: tune damping/Q and Stage A detuning without exceeding the 0.005 budget gate.
+1. Run full generated-stage/passive compensation sweeps around the Stage A `+0.03` slip-free basin, targeting budget error below 0.005.
 2. Then revisit servo timing, because current corrections arrive late relative to the slips.
 3. Treat non-369 controls as first-class competitors because they still beat 3 -> 6 -> 9 on raw phase lock, while failing budget.
 4. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.
