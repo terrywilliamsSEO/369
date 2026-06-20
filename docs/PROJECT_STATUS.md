@@ -266,13 +266,41 @@ Quick smoke result from `runs/bridge_stageA_budget_forensics_quick_smoke`:
 - No 369 row became promotion-ready, and non-369 controls produced no budget-clean winner.
 - Current read: repair/refine the driven nonlinear+damping ledger, then rerun the compensation search at refined dt before full sweeps or predictive servo timing.
 
+## Latest Stage A Refined Basin Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode bridge_stageA_refined_basin
+python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick
+python tesla_369_lab.py --mode bridge_stageA_refined_basin --sweeps
+python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick --sweeps
+```
+
+What it tests:
+
+- A focused refined-dt map around the budget-clean Stage A basin from forensics.
+- Half-dt primary rows by default, with baseline-dt, half-dt, and quarter-dt validation for the top 369 rows.
+- Stage A offset, generated-stage damping factor, A->B coupling, passive limiter strength, and Stage B detuning across 3 -> 6 -> 9, 4 -> 8 -> 12, and 5 -> 10 -> 15.
+- Target lock, bridge ratio, spectral purity, relative/absolute budget error, budget convergence, generated/target envelope CV, max phase jump, near slips over 1 rad, and direct-drive contamination flags.
+
+Quick smoke result from `runs/bridge_stageA_refined_basin_quick_smoke`:
+
+- The Stage A `+0.03` lead remained budget-clean at half-dt: budget error 0.00147, absolute budget error 0.0000724, lock 0.836, bridge ratio 2.555, purity 0.950.
+- No 369 row crossed the lock gate. Best 369 lock was 0.864.
+- No 369 row crossed the generated-envelope gate. Best generated-envelope CV was 0.528, far above 0.25.
+- No 369 row crossed the phase-jump gate. Best max phase jump was 2.36 rad, and top rows still had 22-24 near slips.
+- A 5 -> 10 -> 15 control was budget-clean and stronger by normalized score, though it failed promotion by bridge ratio.
+- No 369 row became promotion-ready after dt validation.
+- Current next fix: limiter redesign plus predictive servo timing before full sweeps. Geometry/evolve remains premature.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Repair or refine driven nonlinear+damping energy accounting, because the budget failure is strongly dt-sensitive.
-2. Rerun the Stage A compensation search at refined dt, then revisit servo timing only if lock/jump/envelope gates remain the blocker.
+1. Keep the refined-dt accounting path and continue monitoring absolute/relative budget convergence.
+2. Redesign limiter behavior and predictive servo timing around the budget-clean refined basin, because refined dt preserved budget cleanliness but not lock/jump/envelope gates.
 3. Treat non-369 controls as first-class competitors because they still beat 3 -> 6 -> 9 on raw phase lock, while failing budget.
 4. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

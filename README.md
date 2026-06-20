@@ -96,6 +96,8 @@ python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick
 python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick
 python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick --sweeps
+python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick
+python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick --sweeps
 ```
 
 Key bridge modes:
@@ -115,6 +117,7 @@ python tesla_369_lab.py --mode bridge_phase_slip_audit --quick --sweeps
 python tesla_369_lab.py --mode bridge_generated_stage_stabilizer --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_budget_audit --quick --sweeps
 python tesla_369_lab.py --mode bridge_stageA_budget_forensics --quick --sweeps
+python tesla_369_lab.py --mode bridge_stageA_refined_basin --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -224,3 +227,15 @@ Quick smoke result from `runs/bridge_stageA_budget_forensics_quick_smoke`:
 - Best budget-clean zero-slip row: Stage A offset `+0.030`, damping factor `1.05`, A->B coupling `0.90`, limiter `0.04`; budget error 0.000422, lock 0.834, bridge ratio 2.549, purity 0.950.
 - Non-369 controls did not produce a budget-clean winner.
 - Current recommendation: repair/refine the driven nonlinear+damping ledger before geometry/evolve, full sweeps, or predictive servo timing.
+
+## Latest Stage A Refined Basin Read
+
+Quick smoke result from `runs/bridge_stageA_refined_basin_quick_smoke`:
+
+- The focused quick subset ran the nearby Stage A basin at half-dt, then validated the top 369 rows at baseline dt, half-dt, and quarter-dt.
+- The starting lead stayed budget-clean at refined dt: Stage A offset `+0.030`, damping factor `1.05`, A->B coupling `0.90`, limiter `0.04` had budget error 0.00147, absolute budget error 0.0000724, lock 0.836, bridge ratio 2.555, and purity 0.950.
+- Best 369 lock in the subset was 0.864, still below the 0.90 gate.
+- Generated-envelope CV did not approach the 0.25 gate; best 369 CV was 0.528.
+- Max phase jump did not approach the 1.0 rad gate; best 369 jump was 2.36 rad, and top rows still had 22-24 near slips.
+- A 5 -> 10 -> 15 control was budget-clean and stronger by normalized score, although its bridge ratio stayed below the 1.5 promotion gate.
+- Current recommendation: limiter redesign plus predictive servo timing before full sweeps; geometry/evolve is still not justified.

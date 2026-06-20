@@ -16208,6 +16208,550 @@ def experiment_bridge_stageA_budget_forensics(out_dir: Path, seed: int, quick: b
 
 
 # ----------------------------
+# Experiment 26: bridge Stage A refined-dt basin map
+# ----------------------------
+
+def bridge_stageA_refined_basin_values(include_sweeps: bool) -> Tuple[List[float], List[float], List[float], List[float], List[float]]:
+    if include_sweeps:
+        return (
+            [0.020, 0.025, 0.030, 0.035, 0.040],
+            [1.00, 1.05, 1.10, 1.15, 1.20],
+            [0.75, 0.82, 0.90, 0.98],
+            [0.02, 0.04, 0.06, 0.08],
+            [-0.015, 0.0, 0.015],
+        )
+    return (
+        [0.030, 0.035],
+        [1.05, 1.10],
+        [0.82, 0.90],
+        [0.04, 0.06],
+        [0.0],
+    )
+
+
+def bridge_stageA_refined_basin_specs(include_sweeps: bool) -> List[Tuple[str, str, BridgeStageABudgetAuditConfig, Dict[str, float | str]]]:
+    offsets, damping_factors, coupling_scales, limiter_strengths, stage_b_detunings = bridge_stageA_refined_basin_values(include_sweeps)
+    specs: List[Tuple[str, str, BridgeStageABudgetAuditConfig, Dict[str, float | str]]] = []
+    moderate_q = 0.92
+    for target_family, seed_family, family, base_config in bridge_stageA_budget_audit_base_templates():
+        for offset in offsets:
+            for damping_factor in damping_factors:
+                for coupling_scale in coupling_scales:
+                    for limiter in limiter_strengths:
+                        for stage_b_detuning in stage_b_detunings:
+                            generated_damping = moderate_q * damping_factor
+                            audit_type = (
+                                f"a{safe_token(offset)}_q{safe_token(damping_factor)}"
+                                f"_c{safe_token(coupling_scale)}_l{safe_token(limiter)}"
+                                f"_b{safe_token(stage_b_detuning)}"
+                            )
+                            config = bridge_stageA_forensics_make_audit_config(
+                                target_family,
+                                seed_family,
+                                family,
+                                base_config,
+                                "stageA_refined_basin",
+                                "refined_dt_basin",
+                                audit_type,
+                                offset,
+                                generated_damping=generated_damping,
+                                coupling_scale=coupling_scale,
+                                limiter_strength=limiter,
+                                stage_b_static_detuning=stage_b_detuning,
+                                no_servo=False,
+                                reference_role_override="discovery_candidate" if family == "369" else "control",
+                            )
+                            config = replace(
+                                config,
+                                note=(
+                                    "Focused refined-dt Stage A basin map; half-dt primary run; "
+                                    "no direct 2f/3f drive and no target-frequency injection"
+                                ),
+                            )
+                            meta: Dict[str, float | str] = {
+                                "analysis_track": "refined_dt_basin",
+                                "forensics_seed": "stageA_refined_basin",
+                                "forensics_case": "focused_refined_dt_grid",
+                                "stage_A_offset": offset,
+                                "generated_damping_factor": damping_factor,
+                                "generated_damping": generated_damping,
+                                "coupling_reduction": coupling_scale,
+                                "A_to_B_coupling": coupling_scale,
+                                "limiter_strength": limiter,
+                                "stage_B_detuning_offset": stage_b_detuning,
+                                "validation_test": "half_dt_primary",
+                                "timestep_role": "half_dt_primary",
+                            }
+                            specs.append(("refined_dt_basin", audit_type, config, meta))
+    return specs
+
+
+def bridge_stageA_refined_timeseries_metrics(series: List[Dict[str, float | str]]) -> Dict[str, float | str]:
+    rows = [r for r in series if "phase_error_target_3f" in r and "target_3f_amplitude_envelope" in r]
+    if not rows:
+        return {
+            "target_envelope_cv": 0.0,
+            "near_slip_count": 0,
+            "near_slip_threshold_rad": 1.0,
+            "max_near_slip_jump": 0.0,
+        }
+    target_amp = np.asarray([float(r.get("target_3f_amplitude_envelope", 0.0)) for r in rows])
+    if "unwrapped_phase_error_target" in rows[0]:
+        unwrapped_target = np.asarray([float(r.get("unwrapped_phase_error_target", 0.0)) for r in rows])
+    else:
+        target_phase = np.asarray([float(r.get("phase_error_target_3f", 0.0)) for r in rows])
+        unwrapped_target = np.unwrap(target_phase)
+    phase_step = np.abs(np.diff(unwrapped_target)) if len(unwrapped_target) >= 2 else np.asarray([])
+    near_slips = bridge_phase_slip_coalesced_indices(np.where(phase_step > 1.0)[0] + 1)
+    return {
+        "target_envelope_cv": bridge_phase_slip_cv(target_amp),
+        "near_slip_count": len(near_slips),
+        "near_slip_threshold_rad": 1.0,
+        "max_near_slip_jump": float(np.max(phase_step)) if len(phase_step) else 0.0,
+    }
+
+
+def bridge_stageA_refined_core_pass(row: Dict[str, float | str],
+                                    require_validation: bool = False,
+                                    require_non369: bool = False) -> bool:
+    base = (
+        str(row.get("analysis_track")) == "refined_dt_basin"
+        and str(row.get("target_family")) == "369"
+        and str(row.get("reference_role")) == "discovery_candidate"
+        and float(row.get("runtime_factor", 1.0)) >= 4.0
+        and float(row.get("phase_lock_target", row.get("target_phase_lock", 0.0))) > 0.90
+        and float(row.get("bridge_ratio", 0.0)) > 1.5
+        and float(row.get("spectral_purity_target", 0.0)) > 0.80
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.25
+        and float(row.get("max_phase_jump", row.get("max_target_phase_jump", 99.0))) < 1.0
+        and float(row.get("near_slip_count", 99.0)) == 0.0
+        and str(row.get("no_direct_2f_drive", "False")) == "True"
+        and str(row.get("no_direct_3f_drive", "False")) == "True"
+        and str(row.get("no_target_frequency_injection", "False")) == "True"
+    )
+    if require_validation:
+        base = base and str(row.get("half_dt_preserved", "False")) == "True" and str(row.get("quarter_dt_preserved", "False")) == "True"
+    if require_non369:
+        base = base and str(row.get("non369_controls_do_not_beat", "False")) == "True"
+    return base
+
+
+def bridge_stageA_refined_update_score(row: Dict[str, float | str]) -> None:
+    lock = float(row.get("phase_lock_target", row.get("target_phase_lock", 0.0)))
+    bridge_ratio = float(row.get("bridge_ratio", 0.0))
+    purity = float(row.get("spectral_purity_target", 0.0))
+    budget = float(row.get("energy_budget_error", 1.0))
+    absolute_budget = float(row.get("absolute_budget_error", row.get("energy_budget_error_abs", abs(budget))))
+    generated_cv = float(row.get("generated_envelope_cv", 99.0))
+    target_cv = float(row.get("target_envelope_cv", 99.0))
+    jump = float(row.get("max_phase_jump", row.get("max_target_phase_jump", 99.0)))
+    near_slips = float(row.get("near_slip_count", 99.0))
+    slips = float(row.get("phase_slip_count", row.get("target_phase_slip_count", 99.0)))
+    work = float(row.get("stabilizer_work_fraction", row.get("servo_work_fraction", 0.0)))
+    convergence = float(row.get("budget_convergence_dt_to_half_to_quarter", 0.0))
+    normalized = (
+        max(0.0, lock)
+        * max(0.0, purity)
+        * min(4.0, max(0.0, bridge_ratio))
+        / (
+            1.0
+            + 2.5 * max(0.0, jump)
+            + 7.0 * max(0.0, near_slips)
+            + 2.0 * max(0.0, slips)
+            + 8.0 * max(0.0, generated_cv)
+            + 1.4 * max(0.0, target_cv)
+            + 650.0 * max(0.0, budget)
+            + 80.0 * max(0.0, absolute_budget)
+            + 1500.0 * max(0.0, work)
+            + 0.7 * max(0.0, convergence)
+        )
+    )
+    failures = []
+    if str(row.get("analysis_track")) != "refined_dt_basin":
+        failures.append("non_refined_basin_row")
+    if float(row.get("runtime_factor", 1.0)) < 4.0:
+        failures.append("not_4x_runtime")
+    if lock <= 0.90:
+        failures.append("phase_lock_target")
+    if bridge_ratio <= 1.5:
+        failures.append("bridge_ratio")
+    if purity <= 0.80:
+        failures.append("spectral_purity_target")
+    if budget >= 0.005:
+        failures.append("energy_budget")
+    if generated_cv >= 0.25:
+        failures.append("generated_envelope_cv")
+    if jump >= 1.0:
+        failures.append("max_phase_jump")
+    if near_slips != 0.0:
+        failures.append("near_slip_count")
+    if str(row.get("no_direct_2f_drive", "False")) != "True" or str(row.get("no_direct_3f_drive", "False")) != "True":
+        failures.append("direct_drive_contamination")
+    if str(row.get("reference_role")) != "discovery_candidate":
+        failures.append("reference_or_control")
+    core_no_validation = bridge_stageA_refined_core_pass(row, require_validation=False, require_non369=False)
+    if core_no_validation and str(row.get("half_dt_preserved", "False")) != "True":
+        failures.append("half_dt_validation")
+    if core_no_validation and str(row.get("quarter_dt_preserved", "False")) != "True":
+        failures.append("quarter_dt_validation")
+    if core_no_validation and str(row.get("non369_controls_do_not_beat", "False")) != "True":
+        failures.append("non369_control")
+
+    if "energy_budget" in failures:
+        failure_mode = "budget_artifact"
+    elif "generated_envelope_cv" in failures:
+        failure_mode = "generated_stage_instability"
+    elif "max_phase_jump" in failures or "near_slip_count" in failures:
+        failure_mode = "phase_jump_or_near_slip"
+    elif "phase_lock_target" in failures:
+        failure_mode = "weak_target_lock"
+    elif "non369_control" in failures:
+        failure_mode = "non369_control_stronger"
+    elif failures:
+        failure_mode = failures[0]
+    else:
+        failure_mode = "promotion_ready"
+
+    budget_clean = budget < 0.005
+    passed = bridge_stageA_refined_core_pass(row, require_validation=True, require_non369=True)
+    row["budget_normalized_score"] = normalized
+    row["bridge_stageA_refined_basin_score"] = normalized if str(row.get("reference_role")) == "discovery_candidate" and budget_clean and str(row.get("analysis_track")) == "refined_dt_basin" else 0.0
+    row["score"] = row["bridge_stageA_refined_basin_score"]
+    row["pre_validation_pass"] = str(core_no_validation)
+    row["passed"] = str(passed)
+    row["promotion_ready"] = str(passed)
+    row["failed_gate_names"] = ";".join(failures)
+    row["failure_mode"] = failure_mode
+
+
+def bridge_stageA_refined_measure(config: BridgeStageABudgetAuditConfig,
+                                  meta: Dict[str, float | str],
+                                  seed: int,
+                                  quick: bool,
+                                  dt: float,
+                                  runtime: float,
+                                  sample_every: int,
+                                  direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                  ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]]]:
+    row, series = bridge_stageA_forensics_measure(config, meta, seed, quick, dt, runtime, sample_every, direct_cache)
+    row["experiment"] = "bridge_stageA_refined_basin"
+    row["analysis_track"] = "refined_dt_basin"
+    row["forensics_seed"] = meta.get("forensics_seed", "stageA_refined_basin")
+    row["forensics_case"] = meta.get("forensics_case", "focused_refined_dt_grid")
+    row["validation_test"] = meta.get("validation_test", "half_dt_primary")
+    row["timestep_role"] = meta.get("timestep_role", "half_dt_primary")
+    row["sim_dt"] = dt
+    row["phase_lock_target"] = row.get("target_phase_lock", row.get("phase_lock_9", 0.0))
+    row["phase_slip_count"] = row.get("target_phase_slip_count", row.get("phase_slip_count", 0.0))
+    row["max_phase_jump"] = row.get("max_target_phase_jump", row.get("max_phase_jump", 0.0))
+    row["absolute_budget_error"] = row.get("energy_budget_error_abs", abs(float(row.get("energy_budget_error", 0.0))))
+    row["budget_convergence_dt_to_half_to_quarter"] = row.get("budget_convergence_dt_to_half_to_quarter", 0.0)
+    row.update(bridge_stageA_refined_timeseries_metrics(series))
+    row["max_phase_jump"] = max(float(row.get("max_phase_jump", 0.0)), float(row.get("max_near_slip_jump", 0.0)))
+    row["max_target_phase_jump"] = row["max_phase_jump"]
+    for key, value in meta.items():
+        row[key] = value
+    row["candidate_id"] = f"{row.get('case')}:{row.get('runtime_factor', config.runtime_factor)}x:{row.get('validation_test')}"
+    row["half_dt_preserved"] = "False"
+    row["quarter_dt_preserved"] = "False"
+    row["non369_controls_do_not_beat"] = "False"
+    row["promotion_ready"] = "False"
+    row["passed"] = "False"
+    bridge_stageA_refined_update_score(row)
+    for item in series:
+        item["experiment"] = "bridge_stageA_refined_basin"
+        item["case"] = config.name
+        item["candidate_id"] = row["candidate_id"]
+        item["analysis_track"] = row["analysis_track"]
+        item["forensics_case"] = row["forensics_case"]
+        item["forensics_seed"] = row["forensics_seed"]
+        item["validation_test"] = row["validation_test"]
+        item["timestep_role"] = row["timestep_role"]
+        item["target_family"] = row.get("target_family", config.target_family)
+    return row, series
+
+
+def bridge_stageA_refined_annotate_non369(rows: List[Dict[str, float | str]]) -> None:
+    non369_best = max(
+        [
+            float(r.get("budget_normalized_score", 0.0))
+            for r in rows
+            if str(r.get("analysis_track")) == "refined_dt_basin"
+            and str(r.get("target_family")) != "369"
+            and float(r.get("energy_budget_error", 1.0)) < 0.005
+            and str(r.get("no_direct_2f_drive", "False")) == "True"
+            and str(r.get("no_direct_3f_drive", "False")) == "True"
+            and str(r.get("no_target_frequency_injection", "False")) == "True"
+        ],
+        default=0.0,
+    )
+    for row in rows:
+        row["best_budget_clean_non369_score"] = non369_best
+        if str(row.get("target_family")) == "369":
+            row["non369_controls_do_not_beat"] = str(float(row.get("budget_normalized_score", 0.0)) > non369_best * 1.02)
+        bridge_stageA_refined_update_score(row)
+
+
+def bridge_stageA_refined_preserved(row: Dict[str, float | str]) -> bool:
+    return (
+        bool(row)
+        and float(row.get("phase_lock_target", row.get("target_phase_lock", 0.0))) > 0.90
+        and float(row.get("bridge_ratio", 0.0)) > 1.5
+        and float(row.get("spectral_purity_target", 0.0)) > 0.80
+        and float(row.get("energy_budget_error", 1.0)) < 0.005
+        and float(row.get("generated_envelope_cv", 99.0)) < 0.25
+        and float(row.get("max_phase_jump", row.get("max_target_phase_jump", 99.0))) < 1.0
+        and float(row.get("near_slip_count", 99.0)) == 0.0
+    )
+
+
+def bridge_stageA_refined_apply_validation(candidate: Dict[str, float | str],
+                                           validation_rows: List[Dict[str, float | str]]) -> None:
+    rows = [r for r in validation_rows if str(r.get("case")) == str(candidate.get("case"))]
+    baseline = next((r for r in rows if str(r.get("validation_test")) == "baseline_dt"), {})
+    half = next((r for r in rows if str(r.get("validation_test")) == "half_dt"), {})
+    quarter = next((r for r in rows if str(r.get("validation_test")) == "quarter_dt"), {})
+
+    candidate["baseline_dt_preserved"] = str(bridge_stageA_refined_preserved(baseline))
+    candidate["half_dt_preserved"] = str(bridge_stageA_refined_preserved(half))
+    candidate["quarter_dt_preserved"] = str(bridge_stageA_refined_preserved(quarter))
+    for label, row in (("baseline_dt", baseline), ("half_dt", half), ("quarter_dt", quarter)):
+        candidate[f"{label}_energy_budget_error"] = float(row.get("energy_budget_error", 0.0))
+        candidate[f"{label}_phase_lock_target"] = float(row.get("phase_lock_target", row.get("target_phase_lock", 0.0)))
+        candidate[f"{label}_generated_envelope_cv"] = float(row.get("generated_envelope_cv", 0.0))
+        candidate[f"{label}_max_phase_jump"] = float(row.get("max_phase_jump", row.get("max_target_phase_jump", 0.0)))
+        candidate[f"{label}_near_slip_count"] = float(row.get("near_slip_count", 0.0))
+    budgets = [
+        abs(float(baseline.get("energy_budget_error", 0.0))),
+        abs(float(half.get("energy_budget_error", 0.0))),
+        abs(float(quarter.get("energy_budget_error", 0.0))),
+    ]
+    if baseline and half and quarter:
+        baseline_to_half = abs(budgets[0] - budgets[1]) / max(budgets[0], budgets[1], 1e-12)
+        half_to_quarter = abs(budgets[1] - budgets[2]) / max(budgets[1], budgets[2], 1e-12)
+        candidate["budget_convergence_dt_to_half_to_quarter"] = max(baseline_to_half, half_to_quarter)
+    else:
+        candidate["budget_convergence_dt_to_half_to_quarter"] = 1.0
+    bridge_stageA_refined_update_score(candidate)
+
+
+def bridge_stageA_refined_validation(config: BridgeStageABudgetAuditConfig,
+                                     seed: int,
+                                     quick: bool,
+                                     base_dt: float,
+                                     half_dt: float,
+                                     runtime: float,
+                                     sample_every: int
+                                     ) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    tests = [
+        ("baseline_dt", base_dt, seed + 313),
+        ("half_dt", half_dt, seed + 613),
+        ("quarter_dt", base_dt * 0.25, seed + 1013),
+    ]
+    rows: List[Dict[str, float | str]] = []
+    series_rows: List[Dict[str, float | str]] = []
+    for validation_name, test_dt, test_seed in tests:
+        direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+        moderate_q = 0.92
+        meta: Dict[str, float | str] = {
+            "analysis_track": "refined_dt_basin",
+            "forensics_seed": "stageA_refined_basin_dt_validation",
+            "forensics_case": "focused_refined_dt_grid",
+            "stage_A_offset": config.final_stage_a_offset,
+            "generated_damping_factor": metric_ratio(config.generated_damping, moderate_q),
+            "generated_damping": config.generated_damping,
+            "coupling_reduction": config.coupling_scale,
+            "A_to_B_coupling": config.coupling_scale,
+            "limiter_strength": config.limiter_strength,
+            "stage_B_detuning_offset": config.stage_b_static_detuning,
+            "validation_test": validation_name,
+            "timestep_role": validation_name,
+        }
+        row, series = bridge_stageA_refined_measure(config, meta, test_seed, quick, test_dt, runtime, sample_every, direct_cache)
+        rows.append(row)
+        series_rows.extend(series)
+    return rows, series_rows
+
+
+def write_bridge_stageA_refined_basin_report(out_dir: Path,
+                                             ranked: List[Dict[str, float | str]],
+                                             validation_rows: List[Dict[str, float | str]],
+                                             include_sweeps: bool) -> None:
+    search_rows = [r for r in ranked if str(r.get("analysis_track")) == "refined_dt_basin"]
+    best_369 = max([r for r in search_rows if str(r.get("target_family")) == "369"], key=lambda r: (float(r.get("bridge_stageA_refined_basin_score", 0.0)), float(r.get("budget_normalized_score", 0.0))), default={})
+    lead_rows = [
+        r for r in search_rows
+        if str(r.get("target_family")) == "369"
+        and abs(float(r.get("stage_A_offset", 0.0)) - 0.030) < 1e-9
+        and abs(float(r.get("generated_damping_factor", 0.0)) - 1.05) < 1e-9
+        and abs(float(r.get("coupling_reduction", 0.0)) - 0.90) < 1e-9
+        and abs(float(r.get("limiter_strength", 0.0)) - 0.04) < 1e-9
+    ]
+    lead = max(lead_rows, key=lambda r: float(r.get("budget_normalized_score", 0.0)), default={})
+    best_cv = min([float(r.get("generated_envelope_cv", 99.0)) for r in search_rows if str(r.get("target_family")) == "369"], default=99.0)
+    best_jump = min([float(r.get("max_phase_jump", 99.0)) for r in search_rows if str(r.get("target_family")) == "369"], default=99.0)
+    best_lock = max([float(r.get("phase_lock_target", 0.0)) for r in search_rows if str(r.get("target_family")) == "369"], default=0.0)
+    non369_best = max(
+        [
+            r for r in search_rows
+            if str(r.get("target_family")) != "369" and float(r.get("energy_budget_error", 1.0)) < 0.005
+        ],
+        key=lambda r: float(r.get("budget_normalized_score", 0.0)),
+        default={},
+    )
+    promotion = any(str(r.get("promotion_ready")) == "True" for r in search_rows if str(r.get("target_family")) == "369")
+    if promotion:
+        next_step = "full sweeps around the promoted refined Stage A basin"
+    elif best_cv > 0.25 and best_jump >= 1.0:
+        next_step = "limiter redesign plus predictive servo timing; the basin remains budget-clean but envelope and jump gates still fail"
+    elif best_cv > 0.25:
+        next_step = "limiter redesign focused on generated-envelope compression"
+    elif best_jump >= 1.0:
+        next_step = "predictive servo timing focused on suppressing late phase jumps"
+    else:
+        next_step = "full sweeps before geometry/evolve"
+
+    lines = [
+        "# Bridge Stage A Refined Basin Report",
+        "",
+        "This focused map reruns the nearby Stage A stabilization basin at half-dt by default, then validates the best 369 rows at baseline dt, half-dt, and quarter-dt.",
+        "",
+        "## Direct Answers",
+        f"1. Does the Stage A +0.03 basin remain budget-clean at refined dt? {'yes' if lead and float(lead.get('energy_budget_error', 1.0)) < 0.005 else 'no'}; lead_budget={float(lead.get('energy_budget_error', 0.0)):.6g}, lead_abs_budget={float(lead.get('absolute_budget_error', 0.0)):.6g}, lead_lock={float(lead.get('phase_lock_target', 0.0)):.6g}.",
+        f"2. Can generated-envelope CV be reduced below 0.25? {'yes' if best_cv < 0.25 else 'no'}; best_369_generated_cv={best_cv:.6g}.",
+        f"3. Can max phase jump be reduced below 1.0 rad? {'yes' if best_jump < 1.0 else 'no'}; best_369_max_jump={best_jump:.6g}.",
+        f"4. Does lock cross 0.90? {'yes' if best_lock > 0.90 else 'no'}; best_369_lock={best_lock:.6g}.",
+        f"5. Does any non-369 control become budget-clean and stronger? {'yes' if non369_best and float(non369_best.get('budget_normalized_score', 0.0)) >= float(best_369.get('budget_normalized_score', 0.0)) else 'no'}; best_non369={non369_best.get('candidate_id', 'none')}, score={float(non369_best.get('budget_normalized_score', 0.0)):.6g}.",
+        f"6. Next step: {next_step}.",
+        "",
+        "## Run Shape",
+        f"- Grid mode: {'full requested narrow grid via --sweeps' if include_sweeps else 'quick lead-centered subset'}",
+        "- Primary timestep: half-dt.",
+        "- Validation: baseline dt, half-dt repeat, quarter-dt for top 369 rows.",
+        "",
+        "## Ranked Rows",
+    ]
+    for row in search_rows[:32]:
+        lines.append(
+            f"- {row.get('candidate_id')}: family={row.get('target_family')}, "
+            f"a={float(row.get('stage_A_offset', 0.0)):.6g}, q={float(row.get('generated_damping_factor', 0.0)):.6g}, "
+            f"coupling={float(row.get('coupling_reduction', 0.0)):.6g}, limiter={float(row.get('limiter_strength', 0.0)):.6g}, "
+            f"stageB={float(row.get('stage_B_detuning_offset', 0.0)):.6g}, lock={float(row.get('phase_lock_target', 0.0)):.6g}, "
+            f"bridge={float(row.get('bridge_ratio', 0.0)):.6g}, purity={float(row.get('spectral_purity_target', 0.0)):.6g}, "
+            f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, abs_budget={float(row.get('absolute_budget_error', 0.0)):.6g}, "
+            f"gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, target_cv={float(row.get('target_envelope_cv', 0.0)):.6g}, "
+            f"jump={float(row.get('max_phase_jump', 0.0)):.6g}, near_slips={float(row.get('near_slip_count', 0.0)):.6g}, "
+            f"score={float(row.get('budget_normalized_score', 0.0)):.6g}, promoted={row.get('promotion_ready')}, failure={row.get('failure_mode')}"
+        )
+    if validation_rows:
+        lines.extend(["", "## Dt Validation Rows"])
+        for row in validation_rows[:24]:
+            lines.append(
+                f"- {row.get('case')} / {row.get('validation_test')}: "
+                f"lock={float(row.get('phase_lock_target', row.get('target_phase_lock', 0.0))):.6g}, "
+                f"bridge={float(row.get('bridge_ratio', 0.0)):.6g}, purity={float(row.get('spectral_purity_target', 0.0)):.6g}, "
+                f"budget={float(row.get('energy_budget_error', 0.0)):.6g}, gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, "
+                f"jump={float(row.get('max_phase_jump', row.get('max_target_phase_jump', 0.0))):.6g}, near_slips={float(row.get('near_slip_count', 0.0)):.6g}"
+            )
+    (out_dir / "README_BRIDGE_STAGEA_REFINED_BASIN_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_bridge_stageA_refined_basin(out_dir: Path, seed: int, quick: bool = False,
+                                           include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    base_dt = dt
+    half_dt = dt * 0.5
+    runtime = base_tmax * 1.25 * 4.0
+    summary_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    config_by_case: Dict[str, BridgeStageABudgetAuditConfig] = {}
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+
+    specs = bridge_stageA_refined_basin_specs(include_sweeps)
+    for idx, (sweep, value, config, meta) in enumerate(specs):
+        row, series = bridge_stageA_refined_measure(config, meta, seed + 26000 + idx * 439, quick, half_dt, runtime, sample_every, direct_cache)
+        row["sweep"] = sweep
+        row["sweep_value"] = value
+        summary_rows.append(row)
+        timeseries_rows.extend(series)
+        config_by_case[str(row.get("case"))] = config
+
+    bridge_stageA_refined_annotate_non369(summary_rows)
+    search_rows = [r for r in summary_rows if str(r.get("analysis_track")) == "refined_dt_basin"]
+    ranked = sorted(
+        search_rows,
+        key=lambda r: (
+            float(r.get("bridge_stageA_refined_basin_score", 0.0)),
+            1.0 if float(r.get("energy_budget_error", 1.0)) < 0.005 else 0.0,
+            1.0 if float(r.get("near_slip_count", 99.0)) == 0.0 else 0.0,
+            float(r.get("phase_lock_target", 0.0)),
+            float(r.get("spectral_purity_target", 0.0)),
+            float(r.get("bridge_ratio", 0.0)),
+            -float(r.get("generated_envelope_cv", 99.0)),
+            -float(r.get("max_phase_jump", 99.0)),
+        ),
+        reverse=True,
+    )
+
+    validation_rows: List[Dict[str, float | str]] = []
+    top_369 = [r for r in ranked if str(r.get("target_family")) == "369" and str(r.get("reference_role")) == "discovery_candidate"][:3 if include_sweeps else 2]
+    for idx, candidate in enumerate(top_369):
+        config = config_by_case.get(str(candidate.get("case")))
+        if config is None:
+            continue
+        rows, series = bridge_stageA_refined_validation(config, seed + 126000 + idx * 1000, quick, base_dt, half_dt, runtime, sample_every)
+        validation_rows.extend(rows)
+        timeseries_rows.extend(series)
+        bridge_stageA_refined_apply_validation(candidate, validation_rows)
+
+    bridge_stageA_refined_annotate_non369(summary_rows)
+    ranked = sorted(
+        search_rows,
+        key=lambda r: (
+            float(r.get("bridge_stageA_refined_basin_score", 0.0)),
+            1.0 if float(r.get("energy_budget_error", 1.0)) < 0.005 else 0.0,
+            1.0 if float(r.get("near_slip_count", 99.0)) == 0.0 else 0.0,
+            float(r.get("phase_lock_target", 0.0)),
+            float(r.get("spectral_purity_target", 0.0)),
+            float(r.get("bridge_ratio", 0.0)),
+            -float(r.get("generated_envelope_cv", 99.0)),
+            -float(r.get("max_phase_jump", 99.0)),
+        ),
+        reverse=True,
+    )
+    write_csv(out_dir / "bridge_stageA_refined_basin_summary.csv", summary_rows + validation_rows)
+    write_csv(out_dir / "bridge_stageA_refined_basin_ranked.csv", ranked)
+    write_csv(out_dir / "bridge_stageA_refined_basin_timeseries.csv", timeseries_rows)
+    write_bridge_stageA_refined_basin_report(out_dir, ranked, validation_rows, include_sweeps)
+    return [
+        {
+            "experiment": "bridge_stageA_refined_basin",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("bridge_stageA_refined_basin_score", 0.0),
+            "passed": row.get("passed", "False"),
+            "promotion_ready": row.get("promotion_ready", "False"),
+            "target_family": row.get("target_family", ""),
+            "phase_lock_target": row.get("phase_lock_target", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "energy_budget_error": row.get("energy_budget_error", 0.0),
+            "absolute_budget_error": row.get("absolute_budget_error", 0.0),
+            "budget_convergence_dt_to_half_to_quarter": row.get("budget_convergence_dt_to_half_to_quarter", 0.0),
+            "generated_envelope_cv": row.get("generated_envelope_cv", 0.0),
+            "target_envelope_cv": row.get("target_envelope_cv", 0.0),
+            "max_phase_jump": row.get("max_phase_jump", 0.0),
+            "phase_slip_count": row.get("phase_slip_count", 0.0),
+            "near_slip_count": row.get("near_slip_count", 0.0),
+            "failure_mode": row.get("failure_mode", ""),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -16248,8 +16792,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -16312,6 +16856,8 @@ def main() -> None:
         rows.extend(experiment_bridge_stageA_budget_audit(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("bridge_stageA_budget_forensics",):
         rows.extend(experiment_bridge_stageA_budget_forensics(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("bridge_stageA_refined_basin",):
+        rows.extend(experiment_bridge_stageA_refined_basin(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

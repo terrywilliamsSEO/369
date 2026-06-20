@@ -219,3 +219,16 @@ Added a forensics-and-narrow-search mode:
 - Gate-relevant budget error appears in driven full-model rows and is strongly dt-sensitive: Stage A `+0.03` full model went from 0.0137 at baseline dt to 0.000092 at half-dt and 0.0000075 at quarter-dt.
 - A budget-clean zero-slip 369 row was found, but it did not promote: lock 0.834, max jump 2.30 rad, generated-envelope CV 0.553, budget 0.000422.
 - Current next fix: repair/refine driven nonlinear+damping ledger accounting, then rerun compensation search at refined dt before full sweeps, predictive servo timing, or geometry/evolve.
+
+## Bridge Stage A Refined Basin
+
+Added a focused refined-dt basin-map mode:
+
+- Starts from the Stage A `+0.03`, generated damping factor `1.05`, A->B coupling `0.90`, limiter `0.04` lead from budget forensics.
+- Runs primary rows at half-dt by default and validates top 369 rows at baseline dt, half-dt, and quarter-dt.
+- Quick mode uses a lead-centered subset; `--quick --sweeps` expands to the full requested 3,600-row narrow grid across 3 -> 6 -> 9, 4 -> 8 -> 12, and 5 -> 10 -> 15.
+- Reports phase lock, bridge ratio, spectral purity, relative/absolute budget error, budget convergence, generated/target envelope CV, max phase jump, near slips over 1 rad, and direct-drive flags.
+- Quick smoke preserved budget cleanliness in the Stage A `+0.03` lead: budget error 0.00147 and absolute budget error 0.0000724 at half-dt.
+- No 369 row promoted: best lock was 0.864, best generated-envelope CV was 0.528, best max phase jump was 2.36 rad, and top rows still had 22-24 near slips.
+- A 5 -> 10 -> 15 control became budget-clean and stronger by normalized score, though it failed promotion by bridge ratio.
+- Current next fix: limiter redesign plus predictive servo timing before full sweeps or geometry/evolve.
