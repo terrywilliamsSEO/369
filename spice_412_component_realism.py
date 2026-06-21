@@ -576,6 +576,25 @@ def python_distance(row: Dict[str, float | str]) -> float:
     return float(total)
 
 
+def behavioral_proxy_distance(row: Dict[str, float | str]) -> float:
+    if str(row.get("execution_status")) != "ran_successfully":
+        return float("inf")
+    total = 0.0
+    for key, target, scale in (
+        ("spice_phase_lock_target", BEHAVIORAL_CALIBRATION["lock"], 0.20),
+        ("spice_bridge_ratio", BEHAVIORAL_CALIBRATION["bridge_ratio"], 1.0),
+        ("spice_spectral_purity_target", BEHAVIORAL_CALIBRATION["purity"], 0.25),
+        ("target_band_growth", BEHAVIORAL_CALIBRATION["target_band_growth"], 1.0),
+        ("spice_generated_envelope_cv", BEHAVIORAL_CALIBRATION["generated_envelope_cv"], 0.50),
+        ("spice_max_phase_jump", BEHAVIORAL_CALIBRATION["max_phase_jump"], 1.0),
+    ):
+        value = row_float(row, key)
+        if not np.isfinite(value):
+            return float("inf")
+        total += abs(value - float(target)) / scale
+    return float(total)
+
+
 def summarize_case(case: ComponentCase, export: base.SpiceExport, result: base.RunResult,
                    metrics: Dict[str, float | str] | None,
                    stress: Dict[str, float | str] | None) -> Dict[str, float | str]:
@@ -628,8 +647,9 @@ def summarize_case(case: ComponentCase, export: base.SpiceExport, result: base.R
             "generated_envelope_CV": row.get("spice_generated_envelope_cv", ""),
             "max_phase_jump": row.get("spice_max_phase_jump", ""),
             "bridge_ratio_vs_direct_4plus8_reference": row.get("spice_bridge_ratio", ""),
-            "python_lc_distance": python_distance(row),
         })
+        row["python_lc_distance"] = python_distance(row)
+        row["behavioral_proxy_distance"] = behavioral_proxy_distance(row)
     if stress:
         row.update(stress)
     return row
@@ -714,7 +734,8 @@ def aggregate(rows: List[Dict[str, float | str]]) -> Dict[str, float | str]:
     near = [r for r in discovery if str(r.get("promotion_category")) == "spice_component_near_miss"]
     bridge_crossers = [r for r in successful if row_float(r, "bridge_ratio_vs_direct_4plus8_reference", 0.0) > 1.5]
     failures = [r for r in rows if str(r.get("execution_status")) == "failed_to_converge"]
-    closest = min(successful, key=python_distance) if successful else {}
+    closest = min(successful, key=behavioral_proxy_distance) if successful else {}
+    closest_python = min(successful, key=python_distance) if successful else {}
     if candidates:
         next_step = "physical parameter refinement around component candidates, then spatial phase-matching model"
     elif near:
@@ -738,6 +759,10 @@ def aggregate(rows: List[Dict[str, float | str]]) -> Dict[str, float | str]:
         "closest_component_lock": closest.get("phase_lock_target", ""),
         "closest_component_purity": closest.get("spectral_purity_target", ""),
         "closest_component_stress": closest.get("component_stress_label", ""),
+        "closest_component_behavioral_proxy_distance": closest.get("behavioral_proxy_distance", ""),
+        "closest_python_lc_case": str(closest_python.get("case_id", "")),
+        "closest_python_lc_variant": str(closest_python.get("nonlinear_variant", "")),
+        "closest_python_lc_distance": closest_python.get("python_lc_distance", ""),
         "successful_or_near_miss_realism": (
             "plausible_or_aggressive" if candidates or near else "none_promoted"
         ),
@@ -780,7 +805,7 @@ def downsample_timeseries(circuit: str, case: ComponentCase, data: Dict[str, np.
 def write_report(out_dir: Path, summary: Dict[str, float | str], rows: List[Dict[str, float | str]]) -> None:
     discovery = [r for r in rows if str(r.get("role")) == "discovery"]
     references = [r for r in rows if str(r.get("role")) == "ceiling_reference"]
-    top = sorted([r for r in discovery if str(r.get("execution_status")) == "ran_successfully"], key=python_distance)[:10]
+    top = sorted([r for r in discovery if str(r.get("execution_status")) == "ran_successfully"], key=behavioral_proxy_distance)[:10]
     failures = [r for r in rows if str(r.get("execution_status")) == "failed_to_converge"]
     lines = [
         "# SPICE 4->8->12 Component Realism",

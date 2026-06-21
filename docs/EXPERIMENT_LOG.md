@@ -430,6 +430,6 @@ Standalone result:
 - Run command tested: `python spice_412_component_realism.py --ngspice-path wsl:ngspice --max-cases 44`.
 - 40 discovery rows were evaluated; 38 ran successfully and 2 failed to converge with ngspice `TRAN: Timestep too small`.
 - Six source-only component rows crossed bridge ratio >1.5: `c008`, `c013`, `c018`, `c023`, `c028`, and `c033`.
-- None promoted because phase lock stayed very low. Closest component row was `c018` (`back_to_back_varactor_stack`): lock `0.016446`, purity `0.986424`, bridge ratio `1.573878`, target-band growth `0.984463`, and plausible stress.
+- None promoted because phase lock stayed very low. Closest behavioral-proxy row was `c008` (`diode_bridge_mixer`): lock `0.017518`, purity `0.989155`, bridge ratio `1.647442`, target-band growth `1.284235`, and plausible stress.
 - Linear and shuffled controls stayed dead, but weak-nonlinearity and detuned controls leaked target-band response under the current criterion; `controls_remained_dead=False`.
 - Current next fix: deeper component sweep and spatial phase-matching modeling before physical parameter refinement.
