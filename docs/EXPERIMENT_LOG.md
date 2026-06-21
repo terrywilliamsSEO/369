@@ -394,3 +394,24 @@ Standalone result:
 - Linear no-nonlinearity controls failed as expected under target-band criteria: lock stayed near `0.014`, purity near `1.7e-6`, and target-node FFT peaks stayed at the source frequency.
 - The nonlinear element remains classified as an aggressive behavioral varactor/mixing proxy: suitable for first ngspice validation, but not yet a physically refined component implementation.
 - Current next fix: refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.
+
+## SPICE 4->8->12 Nonlinearity Refinement
+
+Added `spice_412_refine_nonlinearity.py`:
+
+- Runs a focused normalized-scale ngspice refinement sweep over nonlinear component implementations.
+- Variants: `behavioral_proxy_current`, `voltage_dependent_capacitance_proxy`, `diode_pair_proxy`, `varactor_diode_model_proxy`, `saturable_inductor_proxy`, `hybrid_varactor_plus_saturable_inductor`, and `linear_no_nonlinearity_control`.
+- Encodes the requested axes: nonlinear strength scale, limiter/conductance scale, coupling scale, drive amplitude scale, conservative/default/relaxed solver tolerances, and max timestep scale.
+- Keeps discovery rows source-only: no direct 8 drive, no direct 12 drive, and no target-frequency injection.
+- Uses separated direct 4+8 reference rows only as ceiling denominators for bridge ratio.
+- Outputs go to `runs/spice_412_refine_nonlinearity/spice_412_refine_summary.json`, `spice_412_refine_summary.csv`, `spice_412_refine_timeseries.csv`, and `README_SPICE_412_REFINE_NONLINEARITY.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_refine_nonlinearity.py --ngspice-path wsl:ngspice --max-discovery-cases 56`.
+- 56 discovery rows were run; 36 ran successfully and 20 failed to converge with ngspice `TRAN: Timestep too small`.
+- Bridge ratio >1.5 was reached by two source-only `behavioral_proxy_current` rows, `r038` and `r042`.
+- Closest Python-LC behavior was `r042`: lock `0.996193`, purity `0.981658`, bridge ratio `1.563169`, target-band growth `1.276714`, generated-envelope CV `0.091533`, and max phase jump `0.289970`.
+- Linear no-nonlinearity controls remained dead: maximum leakage score `0.0`, target-band growth `0`, purity near `1.7e-6`, and target FFT at the source frequency.
+- No diode/varactor/saturable/hybrid component-plausible row promoted; successful rows are behavioral-only.
+- Current next fix: component-level refinement to replace behavioral current mixing, then a physical parameter sweep.

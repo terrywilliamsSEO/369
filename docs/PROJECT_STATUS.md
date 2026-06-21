@@ -36,12 +36,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `independent_validate_412.py` script independently reproduces the strict 4 -> 8 -> 12 candidate without importing the main harness: baseline/half/quarter dt all pass, worst lock 0.992, bridge ratio 1.607, purity 0.923, budget 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, near slips 0, and `independent_validation_passed=True`.
 - The standalone `physical_412_lc_bridge.py` script expresses that independent 4 -> 8 -> 12 bridge as three coupled nonlinear LC resonators under audio, low-RF, and normalized scale presets. All scale presets pass baseline/half/quarter dt gates with worst lock 0.992108, bridge ratio 1.606971, purity 0.922789, budget 0.0000510, generated-envelope CV 0.134693, max jump 0.971944 rad, and no direct 8/12 drive or target-frequency injection.
 - The standalone `spice_412_export.py` script now exports and runs ngspice-compatible audio, low-RF, normalized, nonlinear-variant, linear-control, and direct 4+8 reference netlists for the physical LC bridge. WSL ngspice was installed and the latest local run completed 15 of 19 netlists; 4 stiff behavioral/audio/RF rows failed to converge. The normalized behavioral proxy preserved strong lock and purity but not the Python bridge-ratio gain.
+- The standalone `spice_412_refine_nonlinearity.py` script runs a focused normalized-scale ngspice refinement sweep over nonlinear component implementations. It found two source-only behavioral proxy rows above bridge ratio 1.5 with clean linear controls; the closest row had lock 0.996193, purity 0.981658, bridge ratio 1.563169, target-band growth 1.276714, and generated-envelope CV 0.091533. No component-plausible diode/varactor/saturable/hybrid row promoted.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, and first local ngspice execution. The blocker for that branch is nonlinear component realism, parameter sensitivity, and broader family-law replication, not the earlier baseline ledger residual.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, and a behavioral-only SPICE refinement candidate. The blocker for that branch is replacing behavioral mixing with component-plausible nonlinear elements, parameter sensitivity, and broader family-law replication, not the earlier baseline ledger residual.
 
 ## Latest Magnetic Autolock Summary
 
@@ -566,13 +567,43 @@ Standalone result:
 - Nonlinear element assessment: aggressive behavioral varactor/mixing proxy; useful for first circuit validation but not yet a component-level implementation.
 - Current next fix: refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.
 
+## Latest SPICE 4->8->12 Nonlinearity Refinement
+
+Script added:
+
+```bash
+python spice_412_refine_nonlinearity.py --ngspice-path wsl:ngspice
+```
+
+Outputs:
+
+- `runs/spice_412_refine_nonlinearity/spice_412_refine_summary.json`
+- `runs/spice_412_refine_nonlinearity/spice_412_refine_summary.csv`
+- `runs/spice_412_refine_nonlinearity/spice_412_refine_timeseries.csv`
+- `runs/spice_412_refine_nonlinearity/README_SPICE_412_REFINE_NONLINEARITY.md`
+
+What it tests:
+
+- Focused normalized-scale ngspice sweep over `behavioral_proxy_current`, `voltage_dependent_capacitance_proxy`, `diode_pair_proxy`, `varactor_diode_model_proxy`, `saturable_inductor_proxy`, `hybrid_varactor_plus_saturable_inductor`, and `linear_no_nonlinearity_control`.
+- Encodes the requested axes: nonlinear strength scale `0.25, 0.5, 1, 2, 4, 8`; limiter/conductance scale `0.25, 0.5, 1, 2, 4`; coupling scale `0.5, 0.75, 1.0, 1.25, 1.5`; drive amplitude scale `0.5, 1.0, 1.5, 2.0`; conservative/default/relaxed solver profiles; and max timestep scale `0.5, 1.0, 2.0`.
+- Discovery rows remain source-only with no direct 8 drive, no direct 12 drive, and no target-frequency injection. Matching direct 4+8 reference rows are separated as ceiling denominators only.
+
+Standalone result from `--max-discovery-cases 56`:
+
+- 56 discovery rows were run; 36 ran successfully and 20 failed to converge with ngspice `TRAN: Timestep too small`.
+- Bridge ratio >1.5 was reached by `r038` and `r042`, both `behavioral_proxy_current`.
+- Closest Python-LC row was `r042`: nonlinear strength scale `2.0`, limiter scale `2.0`, coupling scale `1.25`, drive scale `1.5`, default solver, maxstep scale `1.0`; lock `0.996193`, purity `0.981658`, bridge ratio `1.563169`, target-band growth `1.276714`, generated-envelope CV `0.091533`, max jump `0.289970`.
+- Linear no-nonlinearity controls remained dead: maximum leakage score `0.0`; target-band growth stayed `0`, purity near `1.7e-6`, and target FFT peaks stayed at source frequency.
+- No component-plausible diode/varactor/saturable/hybrid row promoted. Successful promotion is behavioral-only.
+- Current next fix: component-level refinement to replace behavioral mixing, then a physical parameter sweep.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Refine nonlinear component models and convergence settings, especially the stiff audio/RF behavioral and voltage-dependent capacitance rows.
+1. Refine component-level nonlinear models that can replace behavioral current mixing while keeping the clean linear-control result.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
 3. Refine physical component ranges, nonlinear capacitance/mixing implementation, coupling implementation, and spatial phase matching.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.

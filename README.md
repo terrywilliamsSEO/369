@@ -38,6 +38,7 @@ What has not survived yet:
 - Harmonic substep quadrature independently validates the 4 -> 8 -> 12 near-candidate as trajectory-integration sensitive: trajectory-preserving quadrature does not close baseline budget, but substep-4 re-integration closes baseline/half/quarter/eighth dt while preserving lock, bridge ratio, purity, envelope CV, and phase-jump gates.
 - Independent validation and the first LC physicalization now preserve the strict 4 -> 8 -> 12 result outside the main harness. The LC track keeps audio, low-RF, and normalized scale presets source-only with no direct 8 drive, no direct 12 drive, and no target-frequency injection.
 - The SPICE export track now emits and runs CI-friendly ngspice netlists through WSL ngspice. In the latest run, 15 of 19 netlists ran successfully and 4 stiff behavioral/audio/RF rows failed to converge. The normalized behavioral proxy preserved strong lock and purity, but not the Python bridge-ratio gain.
+- The SPICE nonlinearity-refinement track found two source-only behavioral proxy rows that cross bridge ratio >1.5 with clean linear controls. The closest row is still behavioral-only, not component-plausible: lock 0.996193, purity 0.981658, bridge ratio 1.563169, target-band growth 1.276714.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
@@ -124,6 +125,7 @@ python spice_412_export.py
 python spice_412_export.py --run
 python spice_412_export.py --run --ngspice-path "C:/path/to/ngspice.exe"
 python spice_412_export.py --run --ngspice-path wsl:ngspice
+python spice_412_refine_nonlinearity.py --ngspice-path wsl:ngspice
 ```
 
 Key bridge modes:
@@ -375,3 +377,15 @@ Standalone result from `python spice_412_export.py --run --ngspice-path wsl:ngsp
 - The normalized behavioral proxy was the closest SPICE row: lock `0.997003`, purity `0.971359`, target growth `2.06766`, max jump `0.274669`, and normalized reference bridge ratio `0.788167`. It did not preserve the Python LC bridge ratio `1.606971`.
 - The linear no-nonlinearity controls ran and failed as expected under target-band criteria: lock stayed near `0.014`, purity near `1.7e-6`, and target FFT peaks stayed at the source frequency rather than near 12.
 - Current recommendation: nonlinear component refinement, parameter sweep, then spatial phase-matching modeling.
+
+## Latest SPICE 4->8->12 Nonlinearity Refinement
+
+Standalone result from `python spice_412_refine_nonlinearity.py --ngspice-path wsl:ngspice --max-discovery-cases 56`:
+
+- Added `spice_412_refine_nonlinearity.py` and generated `runs/spice_412_refine_nonlinearity/spice_412_refine_summary.json`, `spice_412_refine_summary.csv`, `spice_412_refine_timeseries.csv`, and `README_SPICE_412_REFINE_NONLINEARITY.md`.
+- Focused normalized-scale sweep covered all requested variant families, nonlinear strength scales, limiter/conductance scales, coupling scales, drive amplitude scales, solver tolerance profiles, and max-timestep scales in a bounded 56-row discovery set with matching direct 4+8 references.
+- Run result: 36 discovery rows ran successfully and 20 failed to converge with ngspice `TRAN: Timestep too small`.
+- Bridge ratio >1.5 was reached by two `behavioral_proxy_current` rows: `r038` and `r042`.
+- Closest Python-LC row was `r042`: nonlinear strength scale `2.0`, limiter scale `2.0`, coupling scale `1.25`, drive scale `1.5`, default solver, maxstep scale `1.0`; lock `0.996193`, purity `0.981658`, bridge ratio `1.563169`, generated-envelope CV `0.091533`, max jump `0.289970`, target-band growth `1.276714`.
+- Linear no-nonlinearity controls remained dead: maximum linear leakage score `0.0`; target-band growth stayed `0`, purity stayed near `1.7e-6`, and target FFT peaks stayed at the source band.
+- No diode/varactor/saturable/hybrid component-plausible row promoted. The successful variants are behavioral-only, so the next step is component-level refinement to replace behavioral mixing, then a physical parameter sweep.
