@@ -294,3 +294,21 @@ Quick smoke result:
 - Midpoint/trapezoid accounting did not make baseline dt clean: it remained 0.04401. Quarter-dt was clean at 0.000850 and eighth-dt dropped to 0.0000116.
 - No single component matched the residual, and subtracting magnetic loss as a missing term made the ledger worse.
 - Current read: classify this as numerical ledger sensitivity, not a promotion and not proven physical non-passive energy creation. Next step is independent corrected/substep quadrature, then a tighter 4 -> 8 -> 12 detuning sweep if validated.
+
+## Harmonic Bridge Substep Quadrature
+
+Added an independent substep audit for the 4 -> 8 -> 12 target-detuned near-candidate:
+
+- Starts from the dt-rescue/budget-ledger primary row: target detuning `-0.08`, Stage A offset `+0.040`, generated damping factor `1.05`, A->B coupling `0.90`, limiter `0.04`.
+- Separates trajectory-preserving auditors from re-integrated smaller-step trajectories.
+- Tests existing ledger, RK-stage-consistent accounting, sampled trapezoid/Simpson/Gauss-Legendre, finite-difference/component checks, 2/4/8/16 trajectory-preserving substep quadrature, and substep-4 re-integration.
+- Keeps direct 2f/3f drive and target-frequency injection forbidden.
+
+Quick sweeps result:
+
+- The primary 4 -> 8 -> 12 row stayed strong: lock 0.991, bridge ratio 1.531, purity 0.925, generated-envelope CV 0.138, max phase jump 0.998 rad, and near slips 0.
+- Same-trajectory quadrature did not close baseline: existing ledger 0.04493, RK-stage-consistent 0.06762, sampled 16-substep quadrature 0.382.
+- Substep-4 re-integration closed the budget at all audited dt levels: baseline 0.0000511, half-dt 0.000000747, quarter-dt 0.0000000298, eighth-dt 0.00000000425.
+- Substep re-integration preserved the bridge: baseline substep-4 lock 0.9917, bridge ratio 1.531, purity 0.925.
+- The run marks `candidate_pending_detuning_refine=True`, `budget_residual_source=trajectory_integration_error`, and `candidate_numerically_fragile=False`.
+- Current next fix: tight 4 -> 8 -> 12 target-detuning sweep plus an independent validation script/solver before any final promotion.

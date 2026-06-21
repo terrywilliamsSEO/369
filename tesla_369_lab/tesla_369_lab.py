@@ -19932,6 +19932,908 @@ def experiment_harmonic_bridge_budget_ledger(out_dir: Path, seed: int, quick: bo
 
 
 # ----------------------------
+# Experiment 31: harmonic bridge substep quadrature
+# ----------------------------
+
+def harmonic_bridge_substep_quadrature_specs(include_sweeps: bool) -> List[HarmonicBridgeBudgetLedgerSpec]:
+    primary = harmonic_bridge_budget_ledger_primary_spec("primary_4812_target_detune_m0p08")
+    specs = [
+        primary,
+        HarmonicBridgeBudgetLedgerSpec(
+            label="comparison_369_best_current",
+            source=3.0,
+            stage_a_offset=0.030,
+            damping_factor=1.12,
+            coupling_scale=0.90,
+            limiter_strength=0.04,
+            receiver_offset=-0.10,
+            stage_b_detuning=0.0,
+            reference_role="control",
+        ),
+        HarmonicBridgeBudgetLedgerSpec(
+            label="comparison_51015_best_current",
+            source=5.0,
+            stage_a_offset=0.050,
+            damping_factor=1.05,
+            coupling_scale=0.90,
+            limiter_strength=0.04,
+            receiver_offset=-0.10,
+            stage_b_detuning=0.0,
+            reference_role="control",
+        ),
+        replace(primary, label="no_drive_no_servo_4812", drive_enabled=False, reference_role="diagnostic_ledger"),
+        replace(primary, label="drive_only_4812", damping_enabled=False, nonlinear_enabled=False, spark_enabled=False, magnetic_enabled=False, limiter_enabled=False, reference_role="diagnostic_ledger"),
+        replace(primary, label="damping_only_4812", nonlinear_enabled=False, spark_enabled=False, magnetic_enabled=False, limiter_enabled=False, reference_role="diagnostic_ledger"),
+        replace(primary, label="limiter_only_4812", damping_enabled=False, nonlinear_enabled=False, spark_enabled=False, magnetic_enabled=False, limiter_enabled=True, reference_role="diagnostic_ledger"),
+        replace(primary, label="full_model_4812_repeat", reference_role="diagnostic_ledger"),
+    ]
+    if include_sweeps:
+        specs.extend([
+            replace(primary, label="target_detune_m0p07", receiver_offset=-0.07),
+            replace(primary, label="target_detune_m0p09", receiver_offset=-0.09),
+        ])
+    return specs
+
+
+def harmonic_bridge_substep_full_audit(spec: HarmonicBridgeBudgetLedgerSpec) -> bool:
+    return str(spec.label) == "primary_4812_target_detune_m0p08"
+
+
+def harmonic_bridge_substep_power_terms(config: BridgeLimiterPredictiveServoConfig,
+                                        current_base: BridgeMinNudgeConfig,
+                                        effective: BridgeAmpConfig,
+                                        omega: np.ndarray,
+                                        zeta: np.ndarray,
+                                        y: np.ndarray,
+                                        t: float,
+                                        base_hz: float,
+                                        drive_start: float,
+                                        drive_until: float
+                                        ) -> Dict[str, float]:
+    q = y[:3]
+    v = y[3:]
+    forces = bridge_stageA_budget_drive_forces(effective, t, base_hz, drive_start, drive_until, 3)
+    drive_power = float(np.dot(forces, v))
+    damping_power = float(np.sum(2.0 * zeta * omega * (v ** 2)))
+    limiter_power = bridge_limiter_predictive_loss(config, q, v, omega)
+    magnetic_loss_damping = bridge_stageA_budget_magnetic_loss_damping(current_base.magnetic_config)
+    magnetic_power = 0.0
+    if magnetic_loss_damping > 0.0:
+        magnetic_power = float(
+            2.0 * 0.012 * magnetic_loss_damping * omega[1] * (v[1] ** 2)
+            + 2.0 * 0.008 * magnetic_loss_damping * omega[2] * (v[2] ** 2)
+        )
+    spark_power = 0.0
+    if effective.spark_strength:
+        for i, j in ((0, 1), (1, 2)):
+            gate = float(spark_gate(q[i] - q[j], threshold=effective.spark_threshold))
+            c = 0.030 * effective.spark_strength * gate
+            spark_power += float(c * ((v[i] - v[j]) ** 2))
+    return {
+        "drive": drive_power,
+        "positive_drive": max(0.0, drive_power),
+        "damping": damping_power,
+        "limiter": limiter_power,
+        "magnetic": magnetic_power,
+        "spark": spark_power,
+    }
+
+
+def harmonic_bridge_substep_add_weighted_terms(accum: Dict[str, float],
+                                               terms: Dict[str, float],
+                                               weight: float) -> None:
+    for key in ("drive", "positive_drive", "damping", "limiter", "magnetic", "spark"):
+        accum[key] = accum.get(key, 0.0) + weight * float(terms.get(key, 0.0))
+
+
+def simulate_harmonic_bridge_substep_quadrature(config: BridgeLimiterPredictiveServoConfig,
+                                                seed: int,
+                                                quick: bool,
+                                                dt: float,
+                                                t_max: float,
+                                                sample_every: int,
+                                                substeps_per_main_step: int = 1,
+                                                base_hz: float = 0.045
+                                                ) -> Tuple[Dict[str, object], List[Dict[str, float | str]]]:
+    rng = np.random.default_rng(seed)
+    substeps_per_main_step = max(1, int(substeps_per_main_step))
+    audit_dt = dt / substeps_per_main_step
+    stage = config.stage_config
+    servo = config.servo_config
+    drive_start = max(0.0, stage.drive_start_delay)
+    drive_until = drive_start + 0.74 * max(t_max - drive_start, 1e-9)
+    current_offset = bridge_stageA_budget_offset(stage, 0.0, drive_start, drive_until)
+    current_base = bridge_stageA_budget_static_base(stage, current_offset)
+    current_base = replace(current_base, correction_type=servo.correction_type, reference_role=config.reference_role, family=config.family)
+    effective = bridge_min_nudge_effective_bridge(current_base, 0.0)
+    omega = 2.0 * np.pi * base_hz * np.asarray(effective.mode_freqs, dtype=float)
+    zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+    y = np.zeros(6)
+    y[:3] = 1e-4 * rng.normal(size=3)
+    y[3:] = 1e-4 * rng.normal(size=3)
+    initial_y = y.copy()
+    initial_potentials = bridge_amp_potentials(y[:3], y[3:], omega, effective)
+    initial_total = float(initial_potentials["total"])
+    accum = {"drive": 0.0, "positive_drive": 0.0, "damping": 0.0, "limiter": 0.0, "magnetic": 0.0, "spark": 0.0}
+    times: List[float] = [0.0]
+    qs: List[np.ndarray] = [y[:3].copy()]
+    vs: List[np.ndarray] = [y[3:].copy()]
+    energies: List[np.ndarray] = [clean_modal_energy(y[:3], y[3:], omega)]
+    ledger: List[Dict[str, float | str]] = []
+    sample_stride = max(1, int(sample_every) * substeps_per_main_step)
+    n_steps = int(t_max / audit_dt)
+    for step in range(n_steps):
+        t = step * audit_dt
+        k1 = bridge_limiter_predictive_derivative(y, t, omega, effective, config, base_hz, drive_start, drive_until, zeta)
+        y2 = y + 0.5 * audit_dt * k1
+        k2 = bridge_limiter_predictive_derivative(y2, t + 0.5 * audit_dt, omega, effective, config, base_hz, drive_start, drive_until, zeta)
+        y3 = y + 0.5 * audit_dt * k2
+        k3 = bridge_limiter_predictive_derivative(y3, t + 0.5 * audit_dt, omega, effective, config, base_hz, drive_start, drive_until, zeta)
+        y4 = y + audit_dt * k3
+        k4 = bridge_limiter_predictive_derivative(y4, t + audit_dt, omega, effective, config, base_hz, drive_start, drive_until, zeta)
+        stage_terms = (
+            harmonic_bridge_substep_power_terms(config, current_base, effective, omega, zeta, y, t, base_hz, drive_start, drive_until),
+            harmonic_bridge_substep_power_terms(config, current_base, effective, omega, zeta, y2, t + 0.5 * audit_dt, base_hz, drive_start, drive_until),
+            harmonic_bridge_substep_power_terms(config, current_base, effective, omega, zeta, y3, t + 0.5 * audit_dt, base_hz, drive_start, drive_until),
+            harmonic_bridge_substep_power_terms(config, current_base, effective, omega, zeta, y4, t + audit_dt, base_hz, drive_start, drive_until),
+        )
+        for terms, weight in zip(stage_terms, (audit_dt / 6.0, audit_dt / 3.0, audit_dt / 3.0, audit_dt / 6.0)):
+            harmonic_bridge_substep_add_weighted_terms(accum, terms, weight)
+        y = y + (audit_dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+        if not np.all(np.isfinite(y)) or np.max(np.abs(y)) > 1e6:
+            break
+        if (step + 1) % sample_stride == 0 or step == n_steps - 1:
+            now = float((step + 1) * audit_dt)
+            qn = y[:3].copy()
+            vn = y[3:].copy()
+            after = bridge_amp_potentials(qn, vn, omega, effective)
+            total_accounted = initial_total + accum["drive"] - accum["damping"] - accum["limiter"] - accum["spark"]
+            error_abs = float(after["total"]) - total_accounted
+            error_rel = abs(error_abs) / (abs(float(after["total"])) + abs(total_accounted) + 1e-18)
+            if now < drive_start:
+                budget_phase = "before_drive"
+            elif now < drive_until:
+                budget_phase = "during_drive"
+            else:
+                budget_phase = "after_drive"
+            times.append(now)
+            qs.append(qn)
+            vs.append(vn)
+            energies.append(clean_modal_energy(qn, vn, omega))
+            ledger.append({
+                "case": config.name,
+                "time": now,
+                "budget_phase": budget_phase,
+                "substeps_per_main_step": substeps_per_main_step,
+                "effective_dt": audit_dt,
+                "drive_input_work": accum["drive"],
+                "positive_input_work": accum["positive_drive"],
+                "damping_loss": accum["damping"],
+                "limiter_loss": accum["limiter"],
+                "adaptive_damping_work": accum["limiter"],
+                "magnetic_loss": accum["magnetic"],
+                "spark_loss": accum["spark"],
+                "total_stored_energy": float(after["total"]),
+                "total_accounted_energy": total_accounted,
+                "energy_budget_error_abs": error_abs,
+                "energy_budget_error_rel": error_rel,
+            })
+    final_potentials = bridge_amp_potentials(y[:3], y[3:], omega, effective)
+    final_ledger = ledger[-1] if ledger else {}
+    sim: Dict[str, object] = {
+        "times": np.asarray(times),
+        "qs": np.asarray(qs),
+        "vs": np.asarray(vs),
+        "energy": np.asarray(energies),
+        "omega": omega,
+        "drive_start": drive_start,
+        "drive_until": drive_until,
+        "dt_sample": dt * sample_every,
+        "effective_dt": audit_dt,
+        "substeps_per_main_step": substeps_per_main_step,
+        "positive_input_work": accum["positive_drive"],
+        "net_input_work": accum["drive"],
+        "damping_loss": accum["damping"],
+        "limiter_loss": accum["limiter"],
+        "magnetic_loss": accum["magnetic"],
+        "spark_loss": accum["spark"],
+        "servo_work_signed": 0.0,
+        "servo_work": 0.0,
+        "initial_stored_energy": initial_total,
+        "final_stored_energy": float(final_potentials["total"]),
+        "stored_energy_delta": float(final_potentials["total"]) - initial_total,
+        "initial_state": initial_y,
+        "final_state": y.copy(),
+        "energy_budget_error_rel": float(final_ledger.get("energy_budget_error_rel", 1.0)),
+        "max_energy_budget_error_rel": max((float(r["energy_budget_error_rel"]) for r in ledger), default=1.0),
+        "effective_config": effective,
+    }
+    return sim, ledger
+
+
+def harmonic_bridge_substep_component_deltas(sim: Dict[str, object]) -> Dict[str, float]:
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    omega = sim["omega"]  # type: ignore[assignment]
+    initial_state = np.asarray(sim.get("initial_state", np.zeros(6)), dtype=float)
+    final_state = np.asarray(sim.get("final_state", np.zeros(6)), dtype=float)
+    first_p = bridge_amp_potentials(initial_state[:3], initial_state[3:], omega, effective)
+    final_p = bridge_amp_potentials(final_state[:3], final_state[3:], omega, effective)
+    return {
+        "nonlinear_potential_delta": float(final_p.get("nonlinear_total", 0.0) - first_p.get("nonlinear_total", 0.0)),
+        "linear_energy_delta": float(final_p.get("linear", 0.0) - first_p.get("linear", 0.0)),
+        "coupling_energy_delta": float(final_p.get("coupling", 0.0) - first_p.get("coupling", 0.0)),
+        "varactor_energy_delta": float(final_p.get("varactor", 0.0) - first_p.get("varactor", 0.0)),
+        "mix_energy_delta": float(final_p.get("mix_a", 0.0) + final_p.get("mix_b", 0.0) - first_p.get("mix_a", 0.0) - first_p.get("mix_b", 0.0)),
+    }
+
+
+def harmonic_bridge_substep_audit_row(base: Dict[str, float | str],
+                                      auditor: str,
+                                      auditor_kind: str,
+                                      sim: Dict[str, object],
+                                      *,
+                                      substeps_per_main_step: int = 1,
+                                      drive_work: float | None = None,
+                                      positive_input_work: float | None = None,
+                                      damping_loss: float | None = None,
+                                      limiter_work: float | None = None,
+                                      magnetic_loss: float | None = None,
+                                      spark_loss: float | None = None,
+                                      note: str = "") -> Dict[str, float | str]:
+    initial = float(sim.get("initial_stored_energy", 0.0))
+    final = float(sim.get("final_stored_energy", 0.0))
+    drive = float(sim.get("net_input_work", 0.0) if drive_work is None else drive_work)
+    positive_drive = float(sim.get("positive_input_work", 0.0) if positive_input_work is None else positive_input_work)
+    damping = float(sim.get("damping_loss", 0.0) if damping_loss is None else damping_loss)
+    limiter = float(sim.get("limiter_loss", 0.0) if limiter_work is None else limiter_work)
+    magnetic = float(sim.get("magnetic_loss", 0.0) if magnetic_loss is None else magnetic_loss)
+    spark = float(sim.get("spark_loss", 0.0) if spark_loss is None else spark_loss)
+    accounted = initial + drive - damping - limiter - spark
+    residual = final - accounted
+    denominator = abs(final) + abs(accounted) + 1e-18
+    deltas = harmonic_bridge_substep_component_deltas(sim)
+    row = dict(base)
+    row.update({
+        "experiment": "harmonic_bridge_substep_quadrature",
+        "auditor": auditor,
+        "accounting_variant": auditor,
+        "auditor_kind": auditor_kind,
+        "trajectory_preserving": str(auditor_kind == "trajectory_preserving"),
+        "reintegrated_trajectory": str(auditor_kind == "reintegrated_substep"),
+        "substeps_per_main_step": substeps_per_main_step,
+        "effective_dt": float(sim.get("effective_dt", base.get("dt_value", 0.0))),
+        "stored_energy_initial": initial,
+        "stored_energy_final": final,
+        "stored_energy_delta": final - initial,
+        "drive_work": drive,
+        "positive_input_work": positive_drive,
+        "damping_loss": damping,
+        "limiter_work": limiter,
+        "limiter_loss": limiter,
+        "adaptive_damping_work": limiter,
+        "magnetic_loss": magnetic,
+        "spark_loss": spark,
+        "total_accounted_energy": accounted,
+        "total_ledger_residual": residual,
+        "absolute_budget_error": abs(residual),
+        "relative_budget_error": abs(residual) / denominator,
+        "residual_per_time": residual / max(float(base.get("runtime", 0.0)), 1e-12),
+        "residual_per_drive_work": metric_ratio(abs(residual), abs(drive)),
+        "auditor_note": note,
+    })
+    row.update(deltas)
+    return row
+
+
+def harmonic_bridge_substep_interpolated_terms(config: BridgeLimiterPredictiveServoConfig,
+                                               current_base: BridgeMinNudgeConfig,
+                                               effective: BridgeAmpConfig,
+                                               omega: np.ndarray,
+                                               zeta: np.ndarray,
+                                               t0: float,
+                                               y0: np.ndarray,
+                                               t1: float,
+                                               y1: np.ndarray,
+                                               frac: float,
+                                               base_hz: float,
+                                               drive_start: float,
+                                               drive_until: float) -> Dict[str, float]:
+    t = t0 + frac * (t1 - t0)
+    y = y0 + frac * (y1 - y0)
+    return harmonic_bridge_substep_power_terms(config, current_base, effective, omega, zeta, y, t, base_hz, drive_start, drive_until)
+
+
+def harmonic_bridge_substep_sampled_quadrature_rows(base: Dict[str, float | str],
+                                                    config: BridgeLimiterPredictiveServoConfig,
+                                                    sim: Dict[str, object],
+                                                    base_hz: float = 0.045
+                                                    ) -> List[Dict[str, float | str]]:
+    times = np.asarray(sim["times"], dtype=float)  # type: ignore[arg-type]
+    qs = np.asarray(sim["qs"], dtype=float)  # type: ignore[arg-type]
+    vs = np.asarray(sim["vs"], dtype=float)  # type: ignore[arg-type]
+    if len(times) < 3:
+        return []
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    omega = sim["omega"]  # type: ignore[assignment]
+    drive_start = float(sim.get("drive_start", 0.0))
+    drive_until = float(sim.get("drive_until", 0.0))
+    stage = config.stage_config
+    current_offset = bridge_stageA_budget_offset(stage, 0.0, drive_start, drive_until)
+    current_base = bridge_stageA_budget_static_base(stage, current_offset)
+    current_base = replace(current_base, correction_type=config.servo_config.correction_type, reference_role=config.reference_role, family=config.family)
+    zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+
+    def empty_accum() -> Dict[str, float]:
+        return {"drive": 0.0, "positive_drive": 0.0, "damping": 0.0, "limiter": 0.0, "magnetic": 0.0, "spark": 0.0}
+
+    trapezoid = empty_accum()
+    simpson = empty_accum()
+    gauss = empty_accum()
+    powers = [
+        harmonic_bridge_substep_power_terms(config, current_base, effective, omega, zeta, np.concatenate([q, v]), float(t), base_hz, drive_start, drive_until)
+        for t, q, v in zip(times, qs, vs)
+    ]
+    for idx in range(len(times) - 1):
+        dt_seg = float(times[idx + 1] - times[idx])
+        if dt_seg <= 0.0:
+            continue
+        for key in trapezoid:
+            trapezoid[key] += 0.5 * dt_seg * (powers[idx][key] + powers[idx + 1][key])
+        y0 = np.concatenate([qs[idx], vs[idx]])
+        y1 = np.concatenate([qs[idx + 1], vs[idx + 1]])
+        mid = harmonic_bridge_substep_interpolated_terms(config, current_base, effective, omega, zeta, float(times[idx]), y0, float(times[idx + 1]), y1, 0.5, base_hz, drive_start, drive_until)
+        g1 = harmonic_bridge_substep_interpolated_terms(config, current_base, effective, omega, zeta, float(times[idx]), y0, float(times[idx + 1]), y1, 0.5 - 0.5 / math.sqrt(3.0), base_hz, drive_start, drive_until)
+        g2 = harmonic_bridge_substep_interpolated_terms(config, current_base, effective, omega, zeta, float(times[idx]), y0, float(times[idx + 1]), y1, 0.5 + 0.5 / math.sqrt(3.0), base_hz, drive_start, drive_until)
+        for key in simpson:
+            simpson[key] += (dt_seg / 6.0) * (powers[idx][key] + 4.0 * mid[key] + powers[idx + 1][key])
+            gauss[key] += 0.5 * dt_seg * (g1[key] + g2[key])
+    return [
+        harmonic_bridge_substep_audit_row(
+            base,
+            "sampled_trapezoid",
+            "trajectory_preserving",
+            sim,
+            drive_work=trapezoid["drive"],
+            positive_input_work=trapezoid["positive_drive"],
+            damping_loss=trapezoid["damping"],
+            limiter_work=trapezoid["limiter"],
+            magnetic_loss=trapezoid["magnetic"],
+            spark_loss=trapezoid["spark"],
+            note="trajectory-preserving trapezoid quadrature on sampled states",
+        ),
+        harmonic_bridge_substep_audit_row(
+            base,
+            "sampled_simpson",
+            "trajectory_preserving",
+            sim,
+            drive_work=simpson["drive"],
+            positive_input_work=simpson["positive_drive"],
+            damping_loss=simpson["damping"],
+            limiter_work=simpson["limiter"],
+            magnetic_loss=simpson["magnetic"],
+            spark_loss=simpson["spark"],
+            note="trajectory-preserving Simpson segment quadrature with linear state interpolation",
+        ),
+        harmonic_bridge_substep_audit_row(
+            base,
+            "sampled_gauss_legendre",
+            "trajectory_preserving",
+            sim,
+            drive_work=gauss["drive"],
+            positive_input_work=gauss["positive_drive"],
+            damping_loss=gauss["damping"],
+            limiter_work=gauss["limiter"],
+            magnetic_loss=gauss["magnetic"],
+            spark_loss=gauss["spark"],
+            note="trajectory-preserving two-point Gauss-Legendre quadrature with linear state interpolation",
+        ),
+    ]
+
+
+def harmonic_bridge_substep_sampled_subdivision_rows(base: Dict[str, float | str],
+                                                     config: BridgeLimiterPredictiveServoConfig,
+                                                     sim: Dict[str, object],
+                                                     subdivisions: Tuple[int, ...] = (2, 4, 8, 16),
+                                                     base_hz: float = 0.045
+                                                     ) -> List[Dict[str, float | str]]:
+    times = np.asarray(sim["times"], dtype=float)  # type: ignore[arg-type]
+    qs = np.asarray(sim["qs"], dtype=float)  # type: ignore[arg-type]
+    vs = np.asarray(sim["vs"], dtype=float)  # type: ignore[arg-type]
+    if len(times) < 3:
+        return []
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    omega = sim["omega"]  # type: ignore[assignment]
+    drive_start = float(sim.get("drive_start", 0.0))
+    drive_until = float(sim.get("drive_until", 0.0))
+    stage = config.stage_config
+    current_offset = bridge_stageA_budget_offset(stage, 0.0, drive_start, drive_until)
+    current_base = bridge_stageA_budget_static_base(stage, current_offset)
+    current_base = replace(current_base, correction_type=config.servo_config.correction_type, reference_role=config.reference_role, family=config.family)
+    zeta = np.asarray([0.018 * effective.stage_a_damping, 0.012 * effective.stage_b_damping, 0.008 * effective.receiver_damping])
+    rows: List[Dict[str, float | str]] = []
+    for n_sub in subdivisions:
+        accum = {"drive": 0.0, "positive_drive": 0.0, "damping": 0.0, "limiter": 0.0, "magnetic": 0.0, "spark": 0.0}
+        for idx in range(len(times) - 1):
+            t0 = float(times[idx])
+            t1 = float(times[idx + 1])
+            dt_seg = t1 - t0
+            if dt_seg <= 0.0:
+                continue
+            y0 = np.concatenate([qs[idx], vs[idx]])
+            y1 = np.concatenate([qs[idx + 1], vs[idx + 1]])
+            for sub_idx in range(n_sub):
+                a = sub_idx / n_sub
+                b = (sub_idx + 1) / n_sub
+                width = dt_seg / n_sub
+                g1_frac = a + (b - a) * (0.5 - 0.5 / math.sqrt(3.0))
+                g2_frac = a + (b - a) * (0.5 + 0.5 / math.sqrt(3.0))
+                g1 = harmonic_bridge_substep_interpolated_terms(config, current_base, effective, omega, zeta, t0, y0, t1, y1, g1_frac, base_hz, drive_start, drive_until)
+                g2 = harmonic_bridge_substep_interpolated_terms(config, current_base, effective, omega, zeta, t0, y0, t1, y1, g2_frac, base_hz, drive_start, drive_until)
+                for key in accum:
+                    accum[key] += 0.5 * width * (g1[key] + g2[key])
+        rows.append(
+            harmonic_bridge_substep_audit_row(
+                base,
+                f"substep_quadrature_{n_sub}",
+                "trajectory_preserving",
+                sim,
+                substeps_per_main_step=n_sub,
+                drive_work=accum["drive"],
+                positive_input_work=accum["positive_drive"],
+                damping_loss=accum["damping"],
+                limiter_work=accum["limiter"],
+                magnetic_loss=accum["magnetic"],
+                spark_loss=accum["spark"],
+                note=f"trajectory-preserving {n_sub}-substep Gauss quadrature over sampled trajectory",
+            )
+        )
+    return rows
+
+
+def harmonic_bridge_substep_direct_row(effective: BridgeAmpConfig,
+                                       seed: int,
+                                       quick: bool,
+                                       dt: float,
+                                       runtime: float,
+                                       sample_every: int,
+                                       cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]]
+                                       ) -> Dict[str, float | str]:
+    target_key = f"{effective.mode_freqs[0]:g}:{effective.target_6:g}:{effective.target_9:g}:{effective.mode_freqs[1]:g}:{effective.mode_freqs[2]:g}"
+    cache_key = (target_key, dt, runtime)
+    if cache_key not in cache:
+        direct_cfg = bridge_min_nudge_direct_reference(effective)
+        direct_sim, _ = simulate_bridge_amp(direct_cfg, seed + 13100, quick, dt=dt, t_max=runtime, sample_every=sample_every)
+        direct_row = bridge_metrics_window(direct_cfg, direct_sim, seed + 13100, "direct_reference", "direct_source_plus_generated", "reference", 0.35, 1.0)
+        cache[cache_key] = (direct_sim, direct_row)
+    return cache[cache_key][1]
+
+
+def harmonic_bridge_substep_metrics_for_sim(config: BridgeLimiterPredictiveServoConfig,
+                                            sim: Dict[str, object],
+                                            direct_row: Dict[str, float | str],
+                                            seed: int,
+                                            label: str,
+                                            dt_level: str) -> Dict[str, float | str]:
+    effective = sim["effective_config"]  # type: ignore[assignment]
+    nominal = bridge_metrics_window(effective, sim, seed, "harmonic_bridge_substep_quadrature", label, dt_level, 0.35, 1.0)
+    rows, slip_summary = bridge_phase_slip_audit_timeseries(effective, sim, sim, [], 0.50, 1.0)
+    series_metrics = bridge_generated_stage_series_metrics(rows)
+    refined_metrics = bridge_stageA_refined_timeseries_metrics(rows)
+    result: Dict[str, float | str] = dict(nominal)
+    result.update(slip_summary)
+    result.update(series_metrics)
+    result.update(refined_metrics)
+    result["phase_lock_target"] = result.get("emergent_phase_lock_target", result.get("phase_lock_9", 0.0))
+    result["spectral_purity_target"] = result.get("spectral_purity_target", result.get("spectral_purity_9", 0.0))
+    result["bridge_ratio"] = metric_ratio(float(result.get("energy_at_9", 0.0)), float(direct_row.get("energy_at_9", 0.0)))
+    result["max_phase_jump"] = max(float(result.get("max_phase_jump", 0.0)), float(refined_metrics.get("max_near_slip_jump", 0.0)))
+    result["near_slip_count"] = float(result.get("near_slip_count", 0.0))
+    return result
+
+
+def harmonic_bridge_substep_prepare_base_row(row: Dict[str, float | str],
+                                             spec: HarmonicBridgeBudgetLedgerSpec,
+                                             config: BridgeLimiterPredictiveServoConfig,
+                                             dt_level: str,
+                                             dt_value: float) -> Dict[str, float | str]:
+    base = dict(row)
+    base.update({
+        "experiment": "harmonic_bridge_substep_quadrature",
+        "case": config.name.replace("harmonic_bridge_budget_ledger", "harmonic_bridge_substep_quadrature"),
+        "candidate_id": f"{spec.label}:{dt_level}",
+        "ledger_label": spec.label,
+        "dt_level": dt_level,
+        "dt_value": dt_value,
+        "family_label": harmonic_bridge_family_label(spec.source),
+        "source_frequency": spec.source,
+        "generated_frequency": spec.source * 2.0,
+        "target_frequency": spec.source * 3.0,
+        "target_detuning": spec.receiver_offset,
+        "stage_A_offset": spec.stage_a_offset,
+        "generated_damping_factor": spec.damping_factor,
+        "A_to_B_coupling_scale": spec.coupling_scale,
+        "limiter_strength": spec.limiter_strength if spec.limiter_enabled else 0.0,
+        "stage_B_detuning": spec.stage_b_detuning,
+        "runtime": float(row.get("runtime", 0.0)),
+        "no_direct_2f_drive": row.get("no_direct_2f_drive", "True"),
+        "no_direct_3f_drive": row.get("no_direct_3f_drive", "True"),
+        "no_target_frequency_injection": row.get("no_target_frequency_injection", "True"),
+        "note": "Substep quadrature audit; no direct 2f/3f drive and no target-frequency injection",
+    })
+    return base
+
+
+def harmonic_bridge_substep_measure(config: BridgeLimiterPredictiveServoConfig,
+                                    spec: HarmonicBridgeBudgetLedgerSpec,
+                                    seed: int,
+                                    quick: bool,
+                                    dt: float,
+                                    runtime: float,
+                                    sample_every: int,
+                                    dt_level: str,
+                                    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]],
+                                    include_full_substeps: bool
+                                    ) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    ledger_row, existing_components, existing_ledger, _phase_series = harmonic_bridge_budget_ledger_measure(
+        config,
+        spec,
+        seed,
+        quick,
+        dt,
+        runtime,
+        sample_every,
+        dt_level,
+        direct_cache,
+    )
+    base = harmonic_bridge_substep_prepare_base_row(ledger_row, spec, config, dt_level, dt)
+    component_rows: List[Dict[str, float | str]] = []
+    for component in existing_components:
+        if str(component.get("accounting_variant")) in ("left_endpoint_existing", "midpoint_trapezoid_sampled", "finite_difference_energy_delta", "component_wise_energy_delta"):
+            row = dict(component)
+            row["experiment"] = "harmonic_bridge_substep_quadrature"
+            row["auditor"] = str(component.get("accounting_variant"))
+            row["auditor_kind"] = "trajectory_preserving"
+            row["trajectory_preserving"] = "True"
+            row["reintegrated_trajectory"] = "False"
+            row["substeps_per_main_step"] = 1
+            row["effective_dt"] = dt
+            row["limiter_work"] = row.get("limiter_loss", 0.0)
+            row["adaptive_damping_work"] = row.get("limiter_loss", 0.0)
+            row["residual_per_time"] = row.get("residual_per_unit_time", 0.0)
+            component_rows.append(row)
+    rk_sim, rk_ledger = simulate_harmonic_bridge_substep_quadrature(config, seed, quick, dt, runtime, sample_every, 1)
+    rk_row = harmonic_bridge_substep_audit_row(
+        base,
+        "rk_stage_consistent",
+        "trajectory_preserving",
+        rk_sim,
+        substeps_per_main_step=1,
+        note="same RK4 trajectory with work/loss evaluated at RK stages",
+    )
+    component_rows.append(rk_row)
+    component_rows.extend(harmonic_bridge_substep_sampled_quadrature_rows(base, config, rk_sim))
+    component_rows.extend(harmonic_bridge_substep_sampled_subdivision_rows(base, config, rk_sim))
+    substep_metrics: List[Dict[str, float | str]] = []
+    if include_full_substeps:
+        for substeps in (4,):
+            sub_sim, _sub_ledger = simulate_harmonic_bridge_substep_quadrature(
+                config,
+                seed,
+                quick,
+                dt,
+                runtime,
+                sample_every,
+                substeps,
+            )
+            effective = sub_sim["effective_config"]  # type: ignore[assignment]
+            direct_row = harmonic_bridge_substep_direct_row(effective, seed, quick, dt / substeps, runtime, max(1, sample_every * substeps), direct_cache)
+            metrics = harmonic_bridge_substep_metrics_for_sim(config, sub_sim, direct_row, seed, spec.label, f"{dt_level}_substep_{substeps}")
+            audit = harmonic_bridge_substep_audit_row(
+                base,
+                f"substep_reintegrated_{substeps}",
+                "reintegrated_substep",
+                sub_sim,
+                substeps_per_main_step=substeps,
+                note=f"trajectory re-integrated with {substeps} substeps per main step",
+            )
+            for key in ("phase_lock_target", "bridge_ratio", "spectral_purity_target", "generated_envelope_cv", "max_phase_jump", "near_slip_count"):
+                audit[key] = metrics.get(key, audit.get(key, 0.0))
+            component_rows.append(audit)
+            substep_metrics.append(metrics)
+    summary = dict(base)
+    summary["summary_role"] = "dt_audit"
+    summary["budget_error_existing"] = next((float(r.get("relative_budget_error", 1.0)) for r in component_rows if str(r.get("auditor")) == "left_endpoint_existing"), float(base.get("energy_budget_error", 1.0)))
+    summary["budget_error_rk_stage"] = float(rk_row.get("relative_budget_error", 1.0))
+    for auditor in ("sampled_simpson", "sampled_gauss_legendre"):
+        summary[f"budget_error_{auditor}"] = next((float(r.get("relative_budget_error", 1.0)) for r in component_rows if str(r.get("auditor")) == auditor), 1.0)
+    for substeps in (2, 4, 8, 16):
+        sub_row = next((r for r in component_rows if str(r.get("auditor")) == f"substep_quadrature_{substeps}"), {})
+        summary[f"budget_error_substep_{substeps}"] = float(sub_row.get("relative_budget_error", 0.0)) if sub_row else ""
+    for substeps in (4,):
+        reintegrated = next((r for r in component_rows if str(r.get("auditor")) == f"substep_reintegrated_{substeps}"), {})
+        summary[f"reintegrated_substep_{substeps}_budget_error"] = float(reintegrated.get("relative_budget_error", 0.0)) if reintegrated else ""
+        summary[f"reintegrated_substep_{substeps}_phase_lock_target"] = float(reintegrated.get("phase_lock_target", 0.0)) if reintegrated else ""
+        summary[f"reintegrated_substep_{substeps}_bridge_ratio"] = float(reintegrated.get("bridge_ratio", 0.0)) if reintegrated else ""
+        summary[f"reintegrated_substep_{substeps}_spectral_purity_target"] = float(reintegrated.get("spectral_purity_target", 0.0)) if reintegrated else ""
+    summary["absolute_budget_error"] = abs(next((float(r.get("absolute_budget_error", 0.0)) for r in component_rows if str(r.get("auditor")) == "rk_stage_consistent"), float(base.get("absolute_budget_error", 0.0))))
+    summary["residual_per_time"] = float(rk_row.get("residual_per_time", 0.0))
+    summary["residual_per_drive_work"] = float(rk_row.get("residual_per_drive_work", 0.0))
+    summary["stored_energy_delta"] = float(rk_row.get("stored_energy_delta", 0.0))
+    summary["drive_work"] = float(rk_row.get("drive_work", 0.0))
+    summary["damping_loss"] = float(rk_row.get("damping_loss", 0.0))
+    summary["limiter_work"] = float(rk_row.get("limiter_work", 0.0))
+    summary["adaptive_damping_work"] = float(rk_row.get("adaptive_damping_work", 0.0))
+    summary["nonlinear_potential_delta"] = float(rk_row.get("nonlinear_potential_delta", 0.0))
+    summary["component_rows_recorded"] = len(component_rows)
+    timeseries_rows = []
+    for item in existing_ledger + rk_ledger:
+        item["experiment"] = "harmonic_bridge_substep_quadrature"
+        item["case"] = base["case"]
+        item["candidate_id"] = base["candidate_id"]
+        item["ledger_label"] = spec.label
+        item["dt_level"] = dt_level
+        item["family_label"] = harmonic_bridge_family_label(spec.source)
+        timeseries_rows.append(item)
+    return summary, component_rows, timeseries_rows
+
+
+def harmonic_bridge_substep_order(rows: List[Dict[str, float | str]], auditor: str) -> Tuple[float, str]:
+    errors: Dict[str, float] = {}
+    for row in rows:
+        value = row.get(f"budget_error_{auditor}", "")
+        if value == "":
+            continue
+        errors[str(row.get("dt_level"))] = float(value)
+    order, _order_hq, classification = harmonic_bridge_budget_ledger_convergence(errors)
+    return order, classification
+
+
+def harmonic_bridge_substep_aggregate(rows: List[Dict[str, float | str]]) -> List[Dict[str, float | str]]:
+    by_label: Dict[str, List[Dict[str, float | str]]] = {}
+    for row in rows:
+        by_label.setdefault(str(row.get("ledger_label", "")), []).append(row)
+    aggregates: List[Dict[str, float | str]] = []
+    for label, label_rows in by_label.items():
+        representative = label_rows[0]
+        aggregate = dict(representative)
+        aggregate["summary_role"] = "aggregate"
+        aggregate["dt_level"] = "aggregate"
+        aggregate["candidate_id"] = f"{representative.get('case')}:aggregate"
+        for auditor in ("existing", "rk_stage", "sampled_simpson", "sampled_gauss_legendre", "substep_2", "substep_4", "substep_8", "substep_16"):
+            key = f"budget_error_{auditor}"
+            values = [float(r.get(key, 1.0)) for r in label_rows if r.get(key, "") != ""]
+            aggregate[key] = max(values) if values else ""
+            order, classification = harmonic_bridge_substep_order(label_rows, auditor)
+            aggregate[f"convergence_order_{auditor}"] = order
+            aggregate[f"classification_{auditor}"] = classification
+        aggregate["phase_lock_target"] = min(float(r.get("phase_lock_target", 0.0)) for r in label_rows)
+        aggregate["bridge_ratio"] = min(float(r.get("bridge_ratio", 0.0)) for r in label_rows)
+        aggregate["spectral_purity_target"] = min(float(r.get("spectral_purity_target", 0.0)) for r in label_rows)
+        aggregate["generated_envelope_cv"] = max(float(r.get("generated_envelope_cv", 99.0)) for r in label_rows)
+        aggregate["max_phase_jump"] = max(float(r.get("max_phase_jump", 99.0)) for r in label_rows)
+        aggregate["near_slip_count"] = max(float(r.get("near_slip_count", 99.0)) for r in label_rows)
+        independent_clean = any(
+            all(float(r.get(key, 1.0)) < 0.005 for r in label_rows if str(r.get("dt_level")) in ("baseline_dt", "half_dt", "quarter_dt"))
+            for key in ("budget_error_rk_stage", "budget_error_sampled_simpson", "budget_error_sampled_gauss_legendre")
+        )
+        reintegrated_clean = all(
+            float(r.get("reintegrated_substep_4_budget_error", 1.0) or 1.0) < 0.005
+            for r in label_rows
+            if str(r.get("dt_level")) in ("baseline_dt", "half_dt", "quarter_dt")
+            and r.get("reintegrated_substep_4_budget_error", "") != ""
+        )
+        reintegrated_count = sum(
+            1 for r in label_rows
+            if str(r.get("dt_level")) in ("baseline_dt", "half_dt", "quarter_dt")
+            and r.get("reintegrated_substep_4_budget_error", "") != ""
+        )
+        reintegrated_clean = reintegrated_clean and reintegrated_count >= 3
+        substep_clean_refined = any(
+            float(r.get("budget_error_substep_16", 1.0) or 1.0) < 0.005
+            or float(r.get("reintegrated_substep_4_budget_error", 1.0) or 1.0) < 0.005
+            for r in label_rows if str(r.get("dt_level")) in ("quarter_dt", "eighth_dt")
+        )
+        strong_nonbudget = (
+            float(aggregate.get("phase_lock_target", 0.0)) > 0.90
+            and float(aggregate.get("bridge_ratio", 0.0)) > 1.5
+            and float(aggregate.get("spectral_purity_target", 0.0)) > 0.80
+            and float(aggregate.get("generated_envelope_cv", 99.0)) < 0.25
+            and float(aggregate.get("max_phase_jump", 99.0)) < 1.05
+            and float(aggregate.get("near_slip_count", 99.0)) <= 0.0
+        )
+        substep_metric_rows = [
+            r for r in label_rows
+            if r.get("reintegrated_substep_4_budget_error", "") != ""
+        ]
+        fragile = False
+        for row in substep_metric_rows:
+            for substeps in (4,):
+                lock = row.get(f"reintegrated_substep_{substeps}_phase_lock_target", "")
+                ratio = row.get(f"reintegrated_substep_{substeps}_bridge_ratio", "")
+                purity = row.get(f"reintegrated_substep_{substeps}_spectral_purity_target", "")
+                if lock != "" and (float(lock) < 0.90 or float(ratio) < 1.5 or float(purity) < 0.80):
+                    fragile = True
+        existing_order, existing_classification = harmonic_bridge_substep_order(label_rows, "existing")
+        possible_nonpassive = (
+            existing_classification == "possible_non_passive_artifact"
+            and not independent_clean
+            and not reintegrated_clean
+            and not substep_clean_refined
+        )
+        aggregate["trajectory_preserving_quadrature_clean_all_dt"] = str(independent_clean)
+        aggregate["reintegrated_substep_clean_all_dt"] = str(reintegrated_clean)
+        if reintegrated_clean and not independent_clean:
+            residual_source = "trajectory_integration_error"
+        elif independent_clean:
+            residual_source = "trajectory_accounting_error_closed"
+        elif substep_clean_refined:
+            residual_source = "refined_dt_only"
+        elif possible_nonpassive:
+            residual_source = "possible_nonpassive_artifact"
+        else:
+            residual_source = "unresolved"
+        aggregate["budget_residual_source"] = residual_source
+        aggregate["candidate_pending_detuning_refine"] = str(str(label) == "primary_4812_target_detune_m0p08" and strong_nonbudget and (independent_clean or reintegrated_clean))
+        aggregate["refined_dt_candidate_only"] = str(str(label) == "primary_4812_target_detune_m0p08" and strong_nonbudget and substep_clean_refined and not independent_clean and not reintegrated_clean)
+        aggregate["possible_nonpassive_artifact"] = str(possible_nonpassive)
+        aggregate["candidate_numerically_fragile"] = str(fragile)
+        aggregate["final_promotion_ready"] = "False"
+        aggregate["score"] = (
+            max(0.0, float(aggregate.get("phase_lock_target", 0.0)))
+            * max(0.0, float(aggregate.get("spectral_purity_target", 0.0)))
+            * min(4.0, max(0.0, float(aggregate.get("bridge_ratio", 0.0))))
+            / (
+                1.0
+                + 6.0 * max(0.0, float(aggregate.get("generated_envelope_cv", 99.0)))
+                + 2.0 * max(0.0, float(aggregate.get("max_phase_jump", 99.0)))
+                + 4.0 * max(0.0, float(aggregate.get("near_slip_count", 99.0)))
+                + 100.0 * max(0.0, float(aggregate.get("budget_error_rk_stage", 1.0) or 1.0))
+            )
+        )
+        aggregates.append(aggregate)
+    return aggregates
+
+
+def write_harmonic_bridge_substep_report(out_dir: Path,
+                                         ranked: List[Dict[str, float | str]],
+                                         component_rows: List[Dict[str, float | str]],
+                                         include_sweeps: bool) -> None:
+    primary = next((r for r in ranked if str(r.get("ledger_label")) == "primary_4812_target_detune_m0p08"), {})
+    primary_components = [r for r in component_rows if str(r.get("ledger_label")) == "primary_4812_target_detune_m0p08"]
+    base_components = [r for r in primary_components if str(r.get("dt_level")) == "baseline_dt"]
+    rk_base = next((r for r in base_components if str(r.get("auditor")) == "rk_stage_consistent"), {})
+    sub16_base = next((r for r in base_components if str(r.get("auditor")) == "substep_quadrature_16"), {})
+    sub16_quarter = next((r for r in primary_components if str(r.get("dt_level")) == "quarter_dt" and str(r.get("auditor")) == "substep_quadrature_16"), {})
+    reint4_base = next((r for r in base_components if str(r.get("auditor")) == "substep_reintegrated_4"), {})
+    pending = str(primary.get("candidate_pending_detuning_refine", "False")) == "True"
+    refined_only = str(primary.get("refined_dt_candidate_only", "False")) == "True"
+    fragile = str(primary.get("candidate_numerically_fragile", "False")) == "True"
+    possible_artifact = str(primary.get("possible_nonpassive_artifact", "False")) == "True"
+    if pending:
+        next_step = "tight 4->8->12 target-detuning sweep plus independent validation script"
+    elif refined_only:
+        next_step = "independent validation script at refined dt before target-detuning sweep"
+    elif possible_artifact or fragile:
+        next_step = "reject or redesign as numerical artifact until an independent solver reproduces it"
+    else:
+        next_step = "independent validation script before deciding on detuning sweep or rejection"
+    lines = [
+        "# Harmonic Bridge Substep Quadrature Report",
+        "",
+        "This mode independently audits the 4->8->12 target-detuned near-candidate with trajectory-preserving and re-integrated substep ledgers.",
+        "",
+        "## Direct Answers",
+        f"1. Does an independent quadrature method close the 4->8->12 budget? candidate_pending_detuning_refine={primary.get('candidate_pending_detuning_refine', 'False')}; baseline rk_stage={float(rk_base.get('relative_budget_error', 0.0)):.6g}, baseline substep16_quadrature={float(sub16_base.get('relative_budget_error', 0.0)):.6g}, quarter substep16_quadrature={float(sub16_quarter.get('relative_budget_error', 0.0)):.6g}.",
+        f"2. Is the budget residual trajectory-accounting error or trajectory-integration error? source={primary.get('budget_residual_source', 'unknown')}; existing_order={float(primary.get('convergence_order_existing', 0.0)):.6g}, rk_order={float(primary.get('convergence_order_rk_stage', 0.0)):.6g}, refined_dt_candidate_only={primary.get('refined_dt_candidate_only', 'False')}.",
+        f"3. Does the candidate remain stable under substep re-integration? {'no, numerically fragile' if fragile else 'yes in audited substep rows'}; reint4_baseline_budget={float(reint4_base.get('relative_budget_error', 0.0)):.6g}, lock={float(primary.get('phase_lock_target', 0.0)):.6g}, bridge={float(primary.get('bridge_ratio', 0.0)):.6g}, purity={float(primary.get('spectral_purity_target', 0.0)):.6g}.",
+        f"4. Can the 4->8->12 row be marked candidate_pending_detuning_refine? {primary.get('candidate_pending_detuning_refine', 'False')}.",
+        f"5. Next step: {next_step}.",
+        "",
+        "## Run Shape",
+        f"- Grid mode: {'baseline/half/quarter/eighth dt' if include_sweeps else 'baseline/half/quarter dt'}",
+        "- Auditors: existing ledger, RK-stage-consistent work/loss, sampled trapezoid/Simpson/Gauss-Legendre, finite-difference/component checks, 2/4/8/16 trajectory-preserving substep quadrature, and substep-4 re-integration for primary rows.",
+        "- Direct 2f/3f drive and target-frequency injection remain forbidden.",
+        "",
+        "## Aggregate Rows",
+    ]
+    for row in ranked:
+        lines.append(
+            f"- {row.get('ledger_label')}: family={row.get('family_label')}, score={float(row.get('score', 0.0)):.6g}, "
+            f"lock={float(row.get('phase_lock_target', 0.0)):.6g}, bridge={float(row.get('bridge_ratio', 0.0)):.6g}, "
+            f"purity={float(row.get('spectral_purity_target', 0.0)):.6g}, gen_cv={float(row.get('generated_envelope_cv', 0.0)):.6g}, "
+            f"jump={float(row.get('max_phase_jump', 0.0)):.6g}, existing={row.get('budget_error_existing')}, "
+            f"rk={row.get('budget_error_rk_stage')}, sub16={row.get('budget_error_substep_16')}, "
+            f"reint4={row.get('reintegrated_substep_4_budget_error')}, "
+            f"source={row.get('budget_residual_source')}, "
+            f"pending={row.get('candidate_pending_detuning_refine')}, refined_only={row.get('refined_dt_candidate_only')}, "
+            f"fragile={row.get('candidate_numerically_fragile')}, artifact={row.get('possible_nonpassive_artifact')}"
+        )
+    lines.extend(["", "## Primary Component Rows"])
+    for row in primary_components[:96]:
+        lines.append(
+            f"- {row.get('dt_level')} / {row.get('auditor')}: kind={row.get('auditor_kind')}, substeps={row.get('substeps_per_main_step')}, "
+            f"rel={float(row.get('relative_budget_error', 0.0)):.6g}, abs={float(row.get('absolute_budget_error', 0.0)):.6g}, "
+            f"residual={float(row.get('total_ledger_residual', 0.0)):.6g}, drive={float(row.get('drive_work', 0.0)):.6g}, "
+            f"damping={float(row.get('damping_loss', 0.0)):.6g}, limiter={float(row.get('limiter_work', row.get('limiter_loss', 0.0))):.6g}, "
+            f"spark={float(row.get('spark_loss', 0.0)):.6g}, nonlinear_delta={float(row.get('nonlinear_potential_delta', 0.0)):.6g}"
+        )
+    (out_dir / "README_HARMONIC_BRIDGE_SUBSTEP_QUADRATURE_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def experiment_harmonic_bridge_substep_quadrature(out_dir: Path, seed: int, quick: bool = False,
+                                                  include_sweeps: bool = False) -> List[Dict[str, float | str]]:
+    dt, base_tmax, sample_every = bridge_amp_timebase(quick)
+    runtime = base_tmax * 1.25 * 4.0
+    dt_levels = [("baseline_dt", dt), ("half_dt", dt * 0.5), ("quarter_dt", dt * 0.25)]
+    if include_sweeps:
+        dt_levels.append(("eighth_dt", dt * 0.125))
+    specs = harmonic_bridge_substep_quadrature_specs(include_sweeps)
+    summary_rows: List[Dict[str, float | str]] = []
+    component_rows: List[Dict[str, float | str]] = []
+    timeseries_rows: List[Dict[str, float | str]] = []
+    direct_cache: Dict[Tuple[str, float, float], Tuple[Dict[str, object], Dict[str, float | str]]] = {}
+    for idx, spec in enumerate(specs):
+        config = harmonic_bridge_budget_ledger_make_config(spec)
+        full_audit = harmonic_bridge_substep_full_audit(spec)
+        active_dt_levels = dt_levels if full_audit else [dt_levels[0]]
+        for dt_idx, (dt_level, dt_value) in enumerate(active_dt_levels):
+            summary, components, series = harmonic_bridge_substep_measure(
+                config,
+                spec,
+                seed + 72000 + idx * 1600 + dt_idx * 313,
+                quick,
+                dt_value,
+                runtime,
+                sample_every,
+                dt_level,
+                direct_cache,
+                full_audit,
+            )
+            summary_rows.append(summary)
+            component_rows.extend(components)
+            timeseries_rows.extend(series)
+    aggregate_rows = harmonic_bridge_substep_aggregate(summary_rows)
+    ranked = sorted(
+        aggregate_rows,
+        key=lambda r: (
+            1.0 if str(r.get("ledger_label")) == "primary_4812_target_detune_m0p08" else 0.0,
+            float(r.get("score", 0.0)),
+        ),
+        reverse=True,
+    )
+    write_csv(out_dir / "harmonic_bridge_substep_quadrature_summary.csv", aggregate_rows + summary_rows)
+    write_csv(out_dir / "harmonic_bridge_substep_quadrature_components.csv", component_rows)
+    write_csv(out_dir / "harmonic_bridge_substep_quadrature_timeseries.csv", timeseries_rows)
+    write_harmonic_bridge_substep_report(out_dir, ranked, component_rows, include_sweeps)
+    return [
+        {
+            "experiment": "harmonic_bridge_substep_quadrature",
+            "case": row.get("case", ""),
+            "freqs": row.get("freqs", ""),
+            "score": row.get("score", 0.0),
+            "passed": row.get("candidate_pending_detuning_refine", "False"),
+            "promotion_ready": "False",
+            "ledger_label": row.get("ledger_label", ""),
+            "family_label": row.get("family_label", ""),
+            "phase_lock_target": row.get("phase_lock_target", 0.0),
+            "bridge_ratio": row.get("bridge_ratio", 0.0),
+            "spectral_purity_target": row.get("spectral_purity_target", 0.0),
+            "generated_envelope_cv": row.get("generated_envelope_cv", 0.0),
+            "max_phase_jump": row.get("max_phase_jump", 0.0),
+            "budget_error_existing": row.get("budget_error_existing", ""),
+            "budget_error_rk_stage": row.get("budget_error_rk_stage", ""),
+            "budget_error_substep_16": row.get("budget_error_substep_16", ""),
+            "candidate_pending_detuning_refine": row.get("candidate_pending_detuning_refine", "False"),
+            "refined_dt_candidate_only": row.get("refined_dt_candidate_only", "False"),
+            "candidate_numerically_fragile": row.get("candidate_numerically_fragile", "False"),
+            "possible_nonpassive_artifact": row.get("possible_nonpassive_artifact", "False"),
+            "note": row.get("note", ""),
+        }
+        for row in ranked[:20]
+    ]
+
+
+# ----------------------------
 # Ranking and orchestration
 # ----------------------------
 
@@ -19972,8 +20874,8 @@ def rank_and_write(out_dir: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin/limiter-predictive-servo/harmonic-bridge-family/dt-rescue/budget-ledger, optimization, and energy-audit simulations.")
-    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "bridge_limiter_predictive_servo", "harmonic_bridge_family", "harmonic_bridge_dt_rescue", "harmonic_bridge_budget_ledger", "energy_audit"], default="all")
+    parser = argparse.ArgumentParser(description="Run Tesla 3-6-9 resonance, wave, receiver-coil, silent-9, atlas, cascade, validation, clean validation, bridge amplification/stability/phase-lock/refinement/magnetic/autolock/min-nudge/lock-threshold/control-authority/drift-feedforward/phase-servo/emergent-lock/phase-slip-audit/generated-stage-stabilizer/stageA-budget-audit/stageA-budget-forensics/stageA-refined-basin/limiter-predictive-servo/harmonic-bridge-family/dt-rescue/budget-ledger/substep-quadrature, optimization, and energy-audit simulations.")
+    parser.add_argument("--mode", choices=["all", "triad", "wave", "receiver", "silent9", "atlas", "cascade", "validate", "clean_validate", "clean_optimize", "bridge_amp", "bridge_stability", "bridge_phase_lock", "bridge_lock_refine", "magnetic_bridge", "magnetic_autolock", "bridge_min_nudge", "bridge_lock_threshold", "bridge_control_authority", "bridge_drift_feedforward", "bridge_phase_servo", "bridge_emergent_lock", "bridge_phase_slip_audit", "bridge_generated_stage_stabilizer", "bridge_stageA_budget_audit", "bridge_stageA_budget_forensics", "bridge_stageA_refined_basin", "bridge_limiter_predictive_servo", "harmonic_bridge_family", "harmonic_bridge_dt_rescue", "harmonic_bridge_budget_ledger", "harmonic_bridge_substep_quadrature", "energy_audit"], default="all")
     parser.add_argument("--seed", type=int, default=369)
     parser.add_argument("--out", type=str, default="")
     parser.add_argument("--quick", action="store_true", help="Faster, lower-resolution wave run.")
@@ -20046,6 +20948,8 @@ def main() -> None:
         rows.extend(experiment_harmonic_bridge_dt_rescue(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("harmonic_bridge_budget_ledger",):
         rows.extend(experiment_harmonic_bridge_budget_ledger(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
+    if args.mode in ("harmonic_bridge_substep_quadrature",):
+        rows.extend(experiment_harmonic_bridge_substep_quadrature(out_dir, args.seed, quick=args.quick, include_sweeps=args.sweeps))
     if args.mode in ("energy_audit",):
         rows.extend(experiment_energy_audit(out_dir, args.seed, quick=args.quick, case_arg=args.case))
 

@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-06-20
+Last updated: 2026-06-21
 
 ## Scientific Status
 
@@ -31,12 +31,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Harmonic-family mapping shows the strongest normalized quick-smoke row is 5 -> 10 -> 15, not 3 -> 6 -> 9; no family passed the harmonic bridge candidate gate yet.
 - Harmonic dt rescue shows the 4 -> 8 -> 12 near miss can satisfy all strict non-budget phase/bridge/envelope gates across dt after target detuning, but baseline-dt budget error still blocks promotion.
 - Harmonic budget-ledger forensics shows the 4 -> 8 -> 12 budget residual collapses with timestep: baseline 0.04490, half-dt 0.00498, quarter-dt 0.000605, eighth-dt 0.000110, with estimated convergence order about 3.11. No single ledger component matches the residual.
+- Harmonic substep quadrature shows the residual is trajectory-integration sensitive: same-trajectory quadrature does not close baseline, but substep-4 re-integration closes baseline/half/quarter/eighth dt and preserves the strong 4 -> 8 -> 12 bridge.
 
 ## Current Blocker
 
 No passive model has passed the strict 4x runtime lock gate.
 
-The main 4x failure is now split between generated-stage lock quality, driven-model budget accounting, and family specificity. The narrow forensics search found budget-clean zero-slip rows, but they still miss lock/jump/envelope gates. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 dt-rescue and budget-ledger smokes now point to numerical ledger sensitivity, not phase instability, as the blocker for that family.
+The main 4x failure is now split between generated-stage lock quality, driven-model budget accounting, and family specificity. The narrow forensics search found budget-clean zero-slip rows, but they still miss lock/jump/envelope gates. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 dt-rescue, budget-ledger, and substep-quadrature smokes now point to trajectory-integration sensitivity, not phase instability, as the blocker for that family.
 
 ## Latest Magnetic Autolock Summary
 
@@ -402,14 +403,39 @@ Quick smoke result from `runs/harmonic_bridge_budget_ledger_quick_smoke`:
 - No single component matched the residual; diagnostic magnetic-loss subtraction made the residual much worse, so the failure is not a simple missing magnetic-loss term.
 - The row remains `candidate_pending_independent_validation=False`. Current next step: independent corrected/substep quadrature before any promotion, then a tighter 4 -> 8 -> 12 target-detuning sweep if the ledger closes.
 
+## Latest Harmonic Bridge Substep Quadrature Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick
+python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick --sweeps
+```
+
+What it tests:
+
+- The primary 4 -> 8 -> 12 target-detuned near-candidate with Stage A offset `+0.040`, generated damping factor `1.05`, A->B coupling `0.90`, limiter `0.04`, and target detuning `-0.08`.
+- Existing ledger, RK-stage-consistent work/loss, sampled trapezoid/Simpson/Gauss-Legendre, finite-difference/component checks, 2/4/8/16 trajectory-preserving substep quadrature, and substep-4 re-integration.
+- Comparison rows for 3 -> 6 -> 9, 5 -> 10 -> 15, no-drive/no-servo, drive-only, damping-only, limiter-only, and full-model 4 -> 8 -> 12.
+- Direct 2f/3f drive and target-frequency injection remain forbidden.
+
+Quick sweeps result from `runs/harmonic_bridge_substep_quadrature_quick_sweeps_smoke`:
+
+- The primary 4 -> 8 -> 12 row stayed non-budget stable: lock 0.991, bridge ratio 1.531, purity 0.925, generated-envelope CV 0.138, max phase jump 0.998 rad, near slips 0.
+- Trajectory-preserving auditors did not close baseline budget: existing ledger 0.04493, RK-stage-consistent 0.06762, and sampled 16-substep quadrature 0.382.
+- Re-integrated substep-4 closed budget at every audited dt: baseline 0.0000511, half-dt 0.000000747, quarter-dt 0.0000000298, eighth-dt 0.00000000425.
+- The re-integrated trajectory preserved the bridge: baseline substep-4 lock 0.9917, bridge ratio 1.531, purity 0.925.
+- Classification: `budget_residual_source=trajectory_integration_error`, `candidate_pending_detuning_refine=True`, `candidate_numerically_fragile=False`.
+- This does not final-promote the row. Current next step: tight 4 -> 8 -> 12 target-detuning sweep plus an independent validation script/solver.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run independent corrected/substep quadrature for the 4 -> 8 -> 12 target-detuned ledger row.
-2. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
-3. If the corrected 4 -> 8 -> 12 ledger closes, run a tighter target-detuning basin sweep before broader family-law mapping.
+1. Run a tight 4 -> 8 -> 12 target-detuning basin sweep using the substep-validated settings.
+2. Build an independent validation script/solver for the 4 -> 8 -> 12 substep result before any final promotion.
+3. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 4. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 5. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

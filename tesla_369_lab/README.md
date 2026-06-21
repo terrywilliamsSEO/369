@@ -174,6 +174,13 @@ Important framing: the famous "3, 6, 9 key to the universe" quote is not treated
    - Reports stored-energy delta, drive work, positive input work, damping loss, limiter/adaptive work, magnetic/spark loss, nonlinear-potential delta, residual scaling, convergence order, and alternative accounting variants.
    - Classifies residuals as numerical ledger sensitivity, component mismatch, or possible non-passive artifact while keeping direct 2f/3f drive and target-frequency injection forbidden.
 
+31. **Harmonic bridge substep quadrature**
+   - Independently audits the 4->8->12 target-detuned near-candidate from budget-ledger mode.
+   - Separates trajectory-preserving accounting auditors from smaller-step re-integrated trajectories.
+   - Tests existing ledger, RK-stage-consistent work/loss, sampled trapezoid/Simpson/Gauss-Legendre, 2/4/8/16 substep quadrature, finite-difference/component checks, and substep-4 re-integration.
+   - Compares 4->8->12 against 3->6->9, 5->10->15, no-drive/no-servo, drive-only, damping-only, limiter-only, and full-model controls.
+   - Marks `candidate_pending_detuning_refine` only as a diagnostic handoff, never final promotion.
+
 ## Install
 
 ```bash
@@ -290,6 +297,8 @@ python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick
 python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick
 python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick
+python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -409,6 +418,9 @@ harmonic_bridge_dt_rescue_timeseries.csv
 harmonic_bridge_budget_ledger_summary.csv
 harmonic_bridge_budget_ledger_components.csv
 harmonic_bridge_budget_ledger_timeseries.csv
+harmonic_bridge_substep_quadrature_summary.csv
+harmonic_bridge_substep_quadrature_components.csv
+harmonic_bridge_substep_quadrature_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -442,6 +454,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In harmonic bridge family mode, does 3->6->9 beat the broader f->2f->3f family after normalized scoring, or is this a generic harmonic bridge behavior?
 - In harmonic bridge dt rescue mode, is the 4->8->12 near miss a phase instability or a dt-sensitive budget/tuning issue?
 - In harmonic bridge budget ledger mode, does the 4->8->12 budget residual converge away with dt, or does a specific ledger term/non-passive artifact explain the failure?
+- In harmonic bridge substep quadrature mode, does independent substep accounting/re-integration close the 4->8->12 budget while preserving the bridge?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results
