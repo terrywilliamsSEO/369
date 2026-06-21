@@ -332,3 +332,20 @@ Quick smoke result:
 - Nearby strict rows also appeared at Stage A `+0.045`, target detuning `-0.075`, and target detuning `-0.070`.
 - 4 -> 8 -> 12 beat 3 -> 6 -> 9 and 5 -> 10 -> 15 under the same substep accounting after bridge-ratio gating.
 - Current next fix: independent validation solver first, then full family-law mapping. Do not promote geometry/evolve from this mode alone.
+
+## Independent 4->8->12 Validation
+
+Added `independent_validate_412.py`:
+
+- Standalone script; it does not import `tesla_369_lab.py` or call any experiment mode.
+- Reimplements the explicit three-mode oscillator equations, fixed effective 4 -> 8 -> 12 candidate constants, RK4 substep integration, energy ledger, phase lock, bridge ratio, purity, envelope CV, phase-jump diagnostics, and JSON/CSV/Markdown writers.
+- Candidate drive remains source-only 4. No direct 8 drive, no direct 12 drive, and no target-frequency injection are used in the discovery candidate.
+- A direct 4+8 row is simulated only as a ceiling denominator for bridge ratio.
+- Outputs go to `runs/independent_validate_412/independent_412_summary.json`, `independent_412_summary.csv`, `independent_412_timeseries.csv`, and `README_INDEPENDENT_412_VALIDATION.md`.
+
+Standalone result:
+
+- `independent_validation_passed=True` and `all_dt_passed=True` across baseline, half-dt, and quarter-dt.
+- Worst all-dt metrics: lock 0.992, bridge ratio 1.607, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max phase jump 0.972 rad, near slips 0.
+- No material differences from the main harness were flagged. The bridge ratio is slightly higher than the harness report because the standalone denominator is candidate-specific.
+- Current next fix: full family-law mapping and broader replication before any geometry/evolve promotion.

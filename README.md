@@ -116,6 +116,7 @@ python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick
 python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick
 python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick --sweeps
+python independent_validate_412.py
 ```
 
 Key bridge modes:
@@ -331,3 +332,14 @@ Quick smoke result from `runs/harmonic_bridge_412_detuning_refine_quick_smoke3`:
 - Nearby rows at Stage A `+0.045`, target detuning `-0.075`, and target detuning `-0.070` also passed strict gates.
 - Under the same substep accounting, 4 -> 8 -> 12 beat 3 -> 6 -> 9 and 5 -> 10 -> 15 after bridge-ratio gating. The 5 -> 10 -> 15 control still had high lock, but its bridge ratio stayed below 1.5.
 - This does not promote geometry/evolve. Current recommendation: independent validation solver first, then full family-law mapping.
+
+## Latest Independent 4->8->12 Validation Read
+
+Standalone result from `python independent_validate_412.py`:
+
+- The script does not import `tesla_369_lab.py` or call any experiment mode. It reimplements the explicit three-mode equations, substep-4 RK4 integration, energy ledger, phase diagnostics, and output writers.
+- Outputs are written to `runs/independent_validate_412/independent_412_summary.json`, `independent_412_summary.csv`, `independent_412_timeseries.csv`, and `README_INDEPENDENT_412_VALIDATION.md`.
+- It reproduced the strict 4 -> 8 -> 12 candidate across baseline, half-dt, and quarter-dt: worst lock 0.992, bridge ratio 1.607, purity 0.923, budget 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, near slips 0.
+- Candidate drive remained source-only 4: no direct 8 drive, no direct 12 drive, and no target-frequency injection. The direct 4+8 row is used only as a ceiling denominator for bridge ratio.
+- Material differences from the main harness: none. The candidate is marked `independent_validation_passed=True`.
+- Current recommendation: full family-law mapping and broader validation before any geometry/evolve promotion.

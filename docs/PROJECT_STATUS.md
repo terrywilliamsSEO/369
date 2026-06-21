@@ -33,12 +33,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Harmonic budget-ledger forensics shows the 4 -> 8 -> 12 budget residual collapses with timestep: baseline 0.04490, half-dt 0.00498, quarter-dt 0.000605, eighth-dt 0.000110, with estimated convergence order about 3.11. No single ledger component matches the residual.
 - Harmonic substep quadrature shows the residual is trajectory-integration sensitive: same-trajectory quadrature does not close baseline, but substep-4 re-integration closes baseline/half/quarter/eighth dt and preserves the strong 4 -> 8 -> 12 bridge.
 - Harmonic 4 -> 8 -> 12 detuning refinement finds strict substep-4 rows: the best quick row uses target detuning `-0.08` and limiter `0.03`, with all-dt lock 0.992, bridge ratio 1.589, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, and near slips 0.
+- The standalone `independent_validate_412.py` script independently reproduces the strict 4 -> 8 -> 12 candidate without importing the main harness: baseline/half/quarter dt all pass, worst lock 0.992, bridge ratio 1.607, purity 0.923, budget 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, near slips 0, and `independent_validation_passed=True`.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, so the blocker for that branch is independent validation and family-law confirmation, not the earlier baseline ledger residual.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows and standalone independent validation, so the blocker for that branch is broader family-law confirmation and replication beyond the quick validator, not the earlier baseline ledger residual.
 
 ## Latest Magnetic Autolock Summary
 
@@ -455,13 +456,44 @@ Quick smoke result from `runs/harmonic_bridge_412_detuning_refine_quick_smoke3`:
 - 4 -> 8 -> 12 beat the 3 -> 6 -> 9 and 5 -> 10 -> 15 comparison rows under the same substep accounting and bridge-ratio gating. The 5 -> 10 -> 15 control kept high lock but failed the bridge-ratio gate.
 - Current next fix: independent validation solver, then full family-law mapping. Do not promote geometry/evolve from this mode alone.
 
+## Latest Independent 4->8->12 Validation Summary
+
+Script added:
+
+```bash
+python independent_validate_412.py
+```
+
+Outputs:
+
+- `runs/independent_validate_412/independent_412_summary.json`
+- `runs/independent_validate_412/independent_412_summary.csv`
+- `runs/independent_validate_412/independent_412_timeseries.csv`
+- `runs/independent_validate_412/README_INDEPENDENT_412_VALIDATION.md`
+
+What it tests:
+
+- The strict 4 -> 8 -> 12 candidate outside the main experiment orchestration.
+- Explicit effective constants for target detuning `-0.08`, Stage A offset `+0.040`, generated damping factor `1.05`, A->B coupling `0.90`, limiter `0.03`.
+- Substep-4 RK4 integration and energy accounting for baseline, half-dt, and quarter-dt.
+- Candidate source-only drive policy: no direct 8 drive, no direct 12 drive, and no target-frequency injection.
+- A direct 4+8 ceiling denominator is simulated only to compute bridge ratio, never as a discovery row.
+
+Standalone result:
+
+- `independent_validation_passed=True` and `all_dt_passed=True`.
+- Worst all-dt metrics: lock 0.992, bridge ratio 1.607, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max phase jump 0.972 rad, near slips 0.
+- Budget residual converged with dt: baseline 0.0000510, half-dt 0.000000749, quarter-dt 0.0000000295.
+- No material differences from the main harness were detected. The bridge ratio is slightly higher because the standalone reference denominator is candidate-specific.
+- Current next fix: full family-law mapping and broader independent replication before any geometry/evolve promotion.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Build an independent validation script/solver for the strict 4 -> 8 -> 12 substep result before any final promotion.
+1. Run full family-law mapping and broader independent replication now that the strict 4 -> 8 -> 12 candidate passed standalone validation.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
 3. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 4. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
