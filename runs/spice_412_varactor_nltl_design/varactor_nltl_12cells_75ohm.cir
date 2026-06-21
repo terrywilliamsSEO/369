@@ -1,0 +1,80 @@
+* varactor_nltl_12cells_75ohm
+* Varactor-loaded NLTL 4->8->12 bench design track.
+* role=discovery; source_only=True; direct_100=False; direct_150=False
+.option method=gear maxord=2 reltol=2e-4 abstol=1e-12 vntol=1e-6 chgtol=1e-16 itl4=200
+.model DVAR D(Is=1e-15 Rs=0.85 Cjo=1.75165625834e-10 Vj=0.75 M=0.5 Bv=18 Ibv=1e-06)
+Vbias vb 0 DC 4
+Vsrc src 0 SIN(0 2 50000000)
+Rsrc src n0 75
+Rload n12 0 75
+Cfixed0 n0 0 1.52788745368e-11
+Dvar0 n0 vb DVAR
+Rbleed0 n0 0 200000
+Rser1 n0 ns1 0.11430952133
+Lser1 ns1 n1 4.77464829276e-07
+Cfixed1 n1 0 1.52788745368e-11
+Dvar1 n1 vb DVAR
+Rbleed1 n1 0 200000
+Rser2 n1 ns2 0.11430952133
+Lser2 ns2 n2 4.77464829276e-07
+Cfixed2 n2 0 1.52788745368e-11
+Dvar2 n2 vb DVAR
+Rbleed2 n2 0 200000
+Rser3 n2 ns3 0.11430952133
+Lser3 ns3 n3 4.77464829276e-07
+Cfixed3 n3 0 1.52788745368e-11
+Dvar3 n3 vb DVAR
+Rbleed3 n3 0 200000
+Rser4 n3 ns4 0.11430952133
+Lser4 ns4 n4 4.77464829276e-07
+Cfixed4 n4 0 1.52788745368e-11
+Dvar4 n4 vb DVAR
+Rbleed4 n4 0 200000
+Rser5 n4 ns5 0.11430952133
+Lser5 ns5 n5 4.77464829276e-07
+Cfixed5 n5 0 1.52788745368e-11
+Dvar5 n5 vb DVAR
+Rbleed5 n5 0 200000
+Rser6 n5 ns6 0.11430952133
+Lser6 ns6 n6 4.77464829276e-07
+Cfixed6 n6 0 1.52788745368e-11
+Dvar6 n6 vb DVAR
+Rbleed6 n6 0 200000
+Rser7 n6 ns7 0.11430952133
+Lser7 ns7 n7 4.77464829276e-07
+Cfixed7 n7 0 1.52788745368e-11
+Dvar7 n7 vb DVAR
+Rbleed7 n7 0 200000
+Rser8 n7 ns8 0.11430952133
+Lser8 ns8 n8 4.77464829276e-07
+Cfixed8 n8 0 1.52788745368e-11
+Dvar8 n8 vb DVAR
+Rbleed8 n8 0 200000
+Rser9 n8 ns9 0.11430952133
+Lser9 ns9 n9 4.77464829276e-07
+Cfixed9 n9 0 1.52788745368e-11
+Dvar9 n9 vb DVAR
+Rbleed9 n9 0 200000
+Rser10 n9 ns10 0.11430952133
+Lser10 ns10 n10 4.77464829276e-07
+Cfixed10 n10 0 1.52788745368e-11
+Dvar10 n10 vb DVAR
+Rbleed10 n10 0 200000
+Rser11 n10 ns11 0.11430952133
+Lser11 ns11 n11 4.77464829276e-07
+Cfixed11 n11 0 1.52788745368e-11
+Dvar11 n11 vb DVAR
+Rbleed11 n11 0 200000
+Rser12 n11 ns12 0.11430952133
+Lser12 ns12 n12 4.77464829276e-07
+Cfixed12 n12 0 1.52788745368e-11
+Dvar12 n12 vb DVAR
+Rbleed12 n12 0 200000
+.control
+set filetype=ascii
+set wr_singlescale
+set wr_vecnames
+tran 5e-10 5.5e-07 0 2e-10
+wrdata varactor_nltl_12cells_75ohm_tran.csv time v(n0) v(n6) v(n12) i(Vsrc) i(Vbias)
+.endc
+.end

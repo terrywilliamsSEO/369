@@ -43,12 +43,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `spice_412_distributed_ladder.py` script exports the distributed topology as normalized ngspice envelope-ladder netlists. The phase-matched source-only ladder promoted with lock 0.915421, bridge ratio 3.718438, purity 0.970030, generated-envelope CV 0.032846, max phase jump 0.003169, and clean coherent controls.
 - The standalone `spice_412_transmission_line_refine.py` script refines that result into explicit normalized LC transmission-line ladders. The phase-matched source-only TL row promoted with lock 0.997206, bridge ratio 8.261740, purity 0.961441, generated-envelope CV 0.070890, max phase jump 0.057316, and behavioral dependency 0.36, lower than the envelope-ladder baseline 0.65.
 - The standalone `physical_waveguide_412.py` script maps the promoted TL row into physical media candidates. It ranks a nonlinear varactor-loaded transmission line as the best first electrical bench analog at 50 MHz with required interaction length 0.382 m; acoustic/phononic and nonlinear magnetic lines are also plausible bench-scale, while plain PCB/microstrip is length/nonlinearity limited.
+- The standalone `spice_412_varactor_nltl_design.py` script builds concrete 50/100/150 MHz varactor-loaded LC ladder netlists. All 22 ngspice rows ran, controls stayed dead, and behavioral dependency fell to 0.08, but no row promoted because 150 MHz spectral purity stayed low. The best row was 48 cells at 75 ohm with lock 0.896172, bridge ratio 1.287941, purity 0.006802, and plausible stress.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, and a physical waveguide interpretation layer. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, and explicit LC transmission-line ladder recover coherent lock with clean controls. The next question is whether a varactor-loaded nonlinear transmission-line SPICE design or acoustic/phononic waveguide simulation can preserve the bridge with component-level nonlinearity, tolerable stress, and real loss.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, and a first concrete varactor NLTL SPICE design. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, and explicit LC transmission-line ladder recover coherent lock with clean controls. The first realistic varactor NLTL design is bench-plausible but does not yet recover target purity. The next question is whether stronger component selection, capacitance swing, phase-velocity shaping, or an acoustic/phononic waveguide can recover the bridge without returning to behavioral mixing.
 
 ## Latest Magnetic Autolock Summary
 
@@ -814,15 +815,52 @@ Standalone result:
 - Controls stayed dead with max leakage score `0.040093`.
 - Current next fix: PCB/transmission-line SPICE design for a varactor-loaded nonlinear transmission line, with acoustic simulation as a parallel low-frequency analog.
 
+## Latest SPICE 4->8->12 Varactor NLTL Design
+
+Script added:
+
+```bash
+python spice_412_varactor_nltl_design.py --run --ngspice-path wsl:ngspice
+```
+
+Outputs:
+
+- `runs/spice_412_varactor_nltl_design/spice_412_varactor_nltl_summary.json`
+- `runs/spice_412_varactor_nltl_design/spice_412_varactor_nltl_summary.csv`
+- `runs/spice_412_varactor_nltl_design/spice_412_varactor_nltl_timeseries.csv`
+- `runs/spice_412_varactor_nltl_design/README_SPICE_412_VARACTOR_NLTL_DESIGN.md`
+
+What it tests:
+
+- A concrete low-RF varactor-loaded nonlinear transmission line at 50/100/150 MHz.
+- Cell-count sweep: 12, 16, 24, 32, and 48 cells.
+- Impedance sweep: 25, 50, and 75 ohm target lines.
+- Reverse-biased varactor diode model with `Cjo`, `Vj`, `M`, `Rs`, `Bv`, and `Ibv`.
+- Phase velocity and impedance are set through per-cell L/C; nonlinear generation comes from voltage-dependent junction capacitance.
+- Discovery rows remain source-only: no direct 100 MHz drive, no direct 150 MHz drive, and no target-frequency injection.
+- Controls include fixed-capacitor linear, weak-varactor, detuned phase velocity, shuffled frequency, too-short, too-lossy, and separated direct 50+100 MHz reference rows.
+
+Standalone result:
+
+- All 22 netlists ran successfully under WSL `ngspice-42`.
+- No row promoted as `spice_varactor_nltl_candidate`, and no `near_miss` promoted because target-band purity stayed far below the `0.80` gate.
+- Best row by feasibility was `d015 varactor_nltl_48cells_75ohm`.
+- Best metrics: lock `0.896172`, bridge ratio `1.287941`, spectral purity near 150 MHz `0.006802`, target coherent growth `1.019062`, generated-envelope CV `0.013623`, max phase jump `0.226855`, plausible component stress.
+- Best per-cell values: 48 cells, 75 ohm, cell length about `0.007958 m`, per-cell L about `119.366 nH`, total per-cell C about `21.221 pF`, and varactor `Cjo` about `43.791 pF`.
+- Behavioral dependency fell to `0.08`, below the previous normalized TL baseline `0.36`.
+- Controls stayed dead with max leakage score `0.099801`.
+- Current interpretation: this is a bench-plausible component design, but the first-pass varactor capacitance swing and phase-velocity shaping do not concentrate enough coherent energy into the 150 MHz target band.
+- Current next fix: component selection/BOM plus stronger varactor sweep before PCB layout; acoustic waveguide simulation remains a useful parallel low-frequency analog.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Build a PCB/transmission-line SPICE design for a varactor-loaded nonlinear transmission line, with acoustic waveguide simulation as a parallel low-frequency analog.
+1. Run a stronger varactor NLTL component sweep over real part families, capacitance ratios, bias, drive, and phase-velocity loading before PCB layout.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
-3. Refine nonlinear magnetic line component realism if the varactor-loaded design fails stress or loss limits.
+3. Start an acoustic/phononic waveguide simulation as a parallel low-frequency analog while the electrical design is refined.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 5. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 6. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

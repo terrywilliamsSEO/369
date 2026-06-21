@@ -45,11 +45,12 @@ What has not survived yet:
 - The distributed-ladder SPICE track exports that topology into normalized ngspice envelope-ladder netlists. The phase-matched source-only ladder ran successfully and promoted with lock 0.915421, bridge ratio 3.718438, purity 0.970030, generated-envelope CV 0.032846, max phase jump 0.003169, and dead linear/detuned/shuffled controls.
 - The transmission-line SPICE refinement replaces envelope-state propagation with explicit normalized LC ladder propagation plus tuned shunt band sections. The phase-matched source-only TL row promoted with lock 0.997206, bridge ratio 8.261740, purity 0.961441, generated-envelope CV 0.070890, max phase jump 0.057316, behavioral dependency 0.36 versus the envelope-ladder baseline 0.65, and dead controls.
 - The physical waveguide interpretation layer maps the promoted TL result onto candidate media. The best first electrical bench analog is a nonlinear varactor-loaded transmission line near 50 MHz with estimated interaction length 0.382 m; acoustic/phononic rows look easiest for compact length, while plain PCB/microstrip is mostly length/nonlinearity limited.
+- The bench-oriented varactor NLTL SPICE design exports concrete 50/100/150 MHz varactor-diode loaded LC ladders. All 22 ngspice rows ran successfully, but no row promoted: the best 48-cell/75-ohm line reached lock 0.896172 and bridge ratio 1.287941 with plausible stress and low behavioral dependency 0.08, but 150 MHz spectral purity stayed only 0.006802.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Build a PCB/transmission-line SPICE design for a varactor-loaded nonlinear line, with acoustic waveguide simulation as a parallel low-frequency analog.
+- Strengthen the varactor NLTL component design through component selection/BOM and capacitance-swing/phase-velocity sweeps, while starting an acoustic waveguide simulation as a parallel low-frequency analog.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -138,6 +139,7 @@ python spatial_phase_matching_412.py
 python spice_412_distributed_ladder.py --run --ngspice-path wsl:ngspice
 python spice_412_transmission_line_refine.py --run --ngspice-path wsl:ngspice
 python physical_waveguide_412.py
+python spice_412_varactor_nltl_design.py --run --ngspice-path wsl:ngspice
 ```
 
 Key bridge modes:
@@ -479,3 +481,16 @@ Standalone result from `python physical_waveguide_412.py`:
 - Plain PCB/microstrip or coax is classified as aggressive but testable: length `6.875494 m`; the blocker is length/nonlinearity more than raw loss.
 - Controls stayed dead: phase-mismatched, too-lossy, too-short, weak-nonlinearity, and linear/no-nonlinearity mappings had max leakage score `0.040093`.
 - Current next fix: PCB/transmission-line SPICE design for a varactor-loaded nonlinear transmission line, with acoustic simulation as a parallel low-frequency analog.
+
+## Latest SPICE 4->8->12 Varactor NLTL Design
+
+Standalone result from `python spice_412_varactor_nltl_design.py --run --ngspice-path wsl:ngspice`:
+
+- Added `spice_412_varactor_nltl_design.py` and generated concrete low-RF varactor-loaded LC ladder netlists for 50/100/150 MHz operation.
+- Outputs are written to `runs/spice_412_varactor_nltl_design/spice_412_varactor_nltl_summary.json`, `spice_412_varactor_nltl_summary.csv`, `spice_412_varactor_nltl_timeseries.csv`, and `README_SPICE_412_VARACTOR_NLTL_DESIGN.md`.
+- Sweep coverage: 12, 16, 24, 32, and 48 cells crossed with 25, 50, and 75 ohm target impedances, plus linear, weak-varactor, detuned, shuffled, too-short, too-lossy, and direct 50+100 MHz reference controls.
+- All 22 netlists ran successfully under WSL `ngspice-42`.
+- No `spice_varactor_nltl_candidate` or `near_miss` promoted. The best row was `d015 varactor_nltl_48cells_75ohm`: lock `0.896172`, bridge ratio `1.287941`, purity `0.006802`, target coherent growth `1.019062`, generated-envelope CV `0.013623`, max phase jump `0.226855`, and plausible stress.
+- Behavioral dependency dropped to `0.08`, well below the previous TL baseline `0.36`, because generation comes from the varactor diode capacitance model rather than explicit behavioral current mixing.
+- Controls stayed dead with max leakage score `0.099801`.
+- Current read: the bench NLTL is component-plausible and stable, but the first capacitance-swing/phase-velocity design spreads too much energy outside the 150 MHz target band. Next fix is component selection/BOM plus stronger varactor and phase-velocity sweeps before PCB layout.

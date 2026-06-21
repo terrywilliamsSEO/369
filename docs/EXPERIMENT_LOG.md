@@ -541,3 +541,28 @@ Standalone result:
 - Mechanical/metamaterial lattice is aggressive but testable; optical/nonlinear waveguide is conceptual only.
 - Controls stayed dead with max leakage score `0.040093`.
 - Current next fix: PCB/transmission-line SPICE design for a varactor-loaded nonlinear transmission line, with acoustic waveguide simulation as a parallel low-frequency analog.
+
+## SPICE 4->8->12 Varactor NLTL Design
+
+Added `spice_412_varactor_nltl_design.py`:
+
+- Builds concrete low-RF varactor-loaded nonlinear transmission-line SPICE netlists for the 4 -> 8 -> 12 bridge at 50/100/150 MHz.
+- Sweeps cell count `12, 16, 24, 32, 48` and characteristic impedance `25, 50, 75 ohm`.
+- Uses per-cell L/C from target phase velocity and impedance, source/load terminations, reverse-biased varactor diode models, DC bias, and optional source-only/direct-reference drives.
+- Varactor model exports `Cjo`, `Vj`, `M`, `Rs`, `Bv`, and `Ibv`; nonlinear generation comes from voltage-dependent junction capacitance, not explicit behavioral current injection.
+- Keeps discovery rows source-only: no direct 100 MHz drive, no direct 150 MHz drive, and no target-frequency injection.
+- Controls include linear fixed-capacitor, weak-varactor, detuned phase velocity, shuffled frequency, too-short, too-lossy, and separated direct 50+100 MHz reference rows.
+- Outputs go to `runs/spice_412_varactor_nltl_design/spice_412_varactor_nltl_summary.json`, `spice_412_varactor_nltl_summary.csv`, `spice_412_varactor_nltl_timeseries.csv`, and `README_SPICE_412_VARACTOR_NLTL_DESIGN.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_varactor_nltl_design.py --run --ngspice-path wsl:ngspice`.
+- All 22 netlists ran successfully under WSL `ngspice-42`.
+- No `spice_varactor_nltl_candidate` or `near_miss` promoted.
+- Best row: `d015 varactor_nltl_48cells_75ohm`.
+- Best metrics: lock `0.896172`, bridge ratio `1.287941`, spectral purity near 150 MHz `0.006802`, target coherent growth `1.019062`, generated-envelope CV `0.013623`, max phase jump `0.226855`, and plausible component stress.
+- Best component scale: 48 cells, 75 ohm, total length `0.381972 m`, cell pitch `0.007958 m`, per-cell L `119.366 nH`, per-cell total C `21.221 pF`, varactor `Cjo` `43.791 pF`.
+- Behavioral dependency fell to `0.08`, lower than the prior normalized TL baseline `0.36`.
+- Controls stayed dead with max leakage score `0.099801`.
+- Current interpretation: the realistic varactor line is stable and bench-plausible, but the first component-level design does not concentrate coherent energy into the 150 MHz target band. The likely blockers are varactor capacitance swing and phase-velocity/harmonic loading, not raw component stress.
+- Current next fix: stronger varactor component sweep and part-family selection before PCB layout; keep acoustic waveguide simulation as a parallel low-frequency analog.
