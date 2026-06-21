@@ -35,13 +35,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Harmonic 4 -> 8 -> 12 detuning refinement finds strict substep-4 rows: the best quick row uses target detuning `-0.08` and limiter `0.03`, with all-dt lock 0.992, bridge ratio 1.589, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, and near slips 0.
 - The standalone `independent_validate_412.py` script independently reproduces the strict 4 -> 8 -> 12 candidate without importing the main harness: baseline/half/quarter dt all pass, worst lock 0.992, bridge ratio 1.607, purity 0.923, budget 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, near slips 0, and `independent_validation_passed=True`.
 - The standalone `physical_412_lc_bridge.py` script expresses that independent 4 -> 8 -> 12 bridge as three coupled nonlinear LC resonators under audio, low-RF, and normalized scale presets. All scale presets pass baseline/half/quarter dt gates with worst lock 0.992108, bridge ratio 1.606971, purity 0.922789, budget 0.0000510, generated-envelope CV 0.134693, max jump 0.971944 rad, and no direct 8/12 drive or target-frequency injection.
-- The standalone `spice_412_export.py` script now exports ngspice-compatible audio, low-RF, normalized, nonlinear-variant, linear-control, and direct 4+8 reference netlists for the physical LC bridge. Local execution was requested with `--run` but skipped per netlist because native ngspice is not on PATH and WSL installation requires sudo password, so SPICE transient matching remains untested locally.
+- The standalone `spice_412_export.py` script now exports and runs ngspice-compatible audio, low-RF, normalized, nonlinear-variant, linear-control, and direct 4+8 reference netlists for the physical LC bridge. WSL ngspice was installed and the latest local run completed 15 of 19 netlists; 4 stiff behavioral/audio/RF rows failed to converge. The normalized behavioral proxy preserved strong lock and purity but not the Python bridge-ratio gain.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, and exported ngspice netlists. The blocker for that branch is running circuit-level validation, refining physical nonlinear components, and broader family-law replication, not the earlier baseline ledger residual.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, and first local ngspice execution. The blocker for that branch is nonlinear component realism, parameter sensitivity, and broader family-law replication, not the earlier baseline ledger residual.
 
 ## Latest Magnetic Autolock Summary
 
@@ -520,7 +520,7 @@ Standalone result:
 - Audio-scale representative values: f=(440, 883.894, 1309.862) Hz, L=(13.08 mH, 6.90 mH, 4.47 mH), C=(10 uF, 4.7 uF, 3.3 uF), R=(0.912, 0.901, 0.480) ohm, Q=(39.7, 42.5, 76.8), all mild.
 - Low-RF representative values: f=(1.0 MHz, 2.009 MHz, 2.977 MHz), L=(25.33 uH, 13.36 uH, 8.66 uH), C=(1 nF, 470 pF, 330 pF), R=(4.01, 3.97, 2.11) ohm, Q=(39.7, 42.5, 76.8), all mild.
 - Linear coupling fractions are weak at about 0.00427 and 0.00420. The aggressive assumption is the nonlinear mixing strength, not the LC/Q values.
-- Current next fix: SPICE/ngspice validation first, then physical parameter refinement and spatial phase-matching modeling.
+- Current next fix: physical nonlinear-component refinement, parameter sweep, and spatial phase-matching modeling.
 
 ## Latest SPICE 4->8->12 Export Summary
 
@@ -555,12 +555,16 @@ What it tests:
 Standalone result:
 
 - `valid_spice_netlists_generated=True`.
-- Run command tested: `python spice_412_export.py --run`.
-- `ngspice_available=False` in the current local environment, so every netlist row has `execution_status=skipped_no_ngspice`.
-- Environment checks: native `ngspice` is not on PATH; `winget search ngspice` found no matching package; WSL Ubuntu is available, but `sudo -n apt-get install -y ngspice` failed because sudo requires a password; Docker is not installed.
+- WSL install command completed through `wsl -u root`: ngspice is available as `/usr/bin/ngspice`, version `ngspice-42`.
+- Run command tested: `python spice_412_export.py --run --ngspice-path wsl:ngspice`.
+- `ngspice_available=True`; status mix is `failed_to_converge;ran_successfully`, with 15 rows successful and 4 rows correctly classified as convergence failures.
+- Convergence failures were the audio and low-RF `behavioral_proxy_current` rows plus the audio and low-RF `voltage_dependent_capacitance_proxy` rows. Failures reported ngspice `TRAN: Timestep too small`.
 - `discovery_rows_source_only=True`; the audio, low-RF, and normalized discovery netlists have no direct 8 drive, no direct 12 drive, and no target-frequency injection.
-- Nonlinear element assessment: aggressive behavioral varactor/mixing proxy; useful for circuit validation but not yet a component-level implementation.
-- Current next fix: install/run ngspice, then refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.
+- The normalized `behavioral_proxy_current` discovery row is the closest SPICE reproduction: lock `0.997003`, purity `0.971359`, target growth `2.06766`, max phase jump `0.274669`, but normalized bridge ratio only `0.788167` versus Python LC `1.606971`.
+- Target-band build-up was observed in several nonlinear rows, but none roughly reproduced all Python LC behavior once bridge ratio was included.
+- Linear no-nonlinearity controls failed as expected under target-band criteria: phase lock stayed near `0.014`, purity near `1.7e-6`, and target-node FFT peaks stayed at the source frequency.
+- Nonlinear element assessment: aggressive behavioral varactor/mixing proxy; useful for first circuit validation but not yet a component-level implementation.
+- Current next fix: refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.
 
 ## Recommendation
 
@@ -568,7 +572,7 @@ Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Install ngspice or provide a working path, then run `python spice_412_export.py --run` or `python spice_412_export.py --run --ngspice-path wsl:ngspice`.
+1. Refine nonlinear component models and convergence settings, especially the stiff audio/RF behavioral and voltage-dependent capacitance rows.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
 3. Refine physical component ranges, nonlinear capacitance/mixing implementation, coupling implementation, and spatial phase matching.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.

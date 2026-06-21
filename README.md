@@ -37,12 +37,12 @@ What has not survived yet:
 - Harmonic budget-ledger forensics shows that 4 -> 8 -> 12 budget residual converges away strongly through eighth dt and no single ledger component matches the residual magnitude; it is currently classified as numerical ledger sensitivity, not promotion.
 - Harmonic substep quadrature independently validates the 4 -> 8 -> 12 near-candidate as trajectory-integration sensitive: trajectory-preserving quadrature does not close baseline budget, but substep-4 re-integration closes baseline/half/quarter/eighth dt while preserving lock, bridge ratio, purity, envelope CV, and phase-jump gates.
 - Independent validation and the first LC physicalization now preserve the strict 4 -> 8 -> 12 result outside the main harness. The LC track keeps audio, low-RF, and normalized scale presets source-only with no direct 8 drive, no direct 12 drive, and no target-frequency injection.
-- The SPICE export track now emits CI-friendly ngspice netlists for audio, low-RF, normalized, five nonlinear realism variants, a linear no-nonlinearity control, and the direct 4+8 reference. Local execution remains skipped because native ngspice is not on PATH and WSL install requires sudo password.
+- The SPICE export track now emits and runs CI-friendly ngspice netlists through WSL ngspice. In the latest run, 15 of 19 netlists ran successfully and 4 stiff behavioral/audio/RF rows failed to converge. The normalized behavioral proxy preserved strong lock and purity, but not the Python bridge-ratio gain.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Run the exported 4 -> 8 -> 12 netlists under ngspice, then refine nonlinear components, sweep physical parameters, and model spatial phase matching before trying geometry/evolve or a 369-specific stronger target servo.
+- Refine nonlinear components, sweep physical parameters, and model spatial phase matching before trying geometry/evolve or a 369-specific stronger target servo.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -360,16 +360,18 @@ Standalone result from `python physical_412_lc_bridge.py`:
 - All audio-scale, low-RF-scale, and arbitrary-normalized-scale rows passed baseline/half/quarter dt gates. Worst metrics: lock 0.992108, bridge ratio 1.606971, purity 0.922789, budget 0.0000510, generated-envelope CV 0.134693, target-envelope CV 0.035824, max jump 0.971944 rad, near slips 0.
 - Representative audio-scale parameters: f=(440, 883.894, 1309.862) Hz, L=(13.08 mH, 6.90 mH, 4.47 mH), C=(10 uF, 4.7 uF, 3.3 uF), R=(0.912, 0.901, 0.480) ohm, Q=(39.7, 42.5, 76.8), all mild. Peak voltages were about 8.70 V, 7.45 V, and 10.39 V.
 - The LC read remains source-only: no direct 8 drive, no direct 12 drive, and no target-frequency injection. The direct 4+8 row is still only a ceiling denominator.
-- Current recommendation: SPICE/ngspice validation first, then physical parameter refinement and spatial phase-matching modeling.
+- Current recommendation: physical nonlinear-component refinement, parameter sweep, and spatial phase-matching modeling.
 
 ## Latest SPICE 4->8->12 Export Read
 
-Standalone result from `python spice_412_export.py --run`:
+Standalone result from `python spice_412_export.py --run --ngspice-path wsl:ngspice` after installing ngspice in WSL:
 
 - Generated ngspice-compatible netlists for `audio_412_bridge.cir`, `low_rf_412_bridge.cir`, `normalized_412_bridge.cir`, five nonlinear realism variants per scale, the `linear_no_nonlinearity_control`, and the separated ceiling/reference `reference_direct_4plus8.cir`.
-- Outputs are written to `runs/spice_412_bridge/spice_412_summary.json`, `spice_412_summary.csv`, and `README_SPICE_412_EXPORT.md`. `spice_412_timeseries.csv` is only written when ngspice execution succeeds.
-- Local ngspice execution was requested but skipped per netlist with `execution_status=skipped_no_ngspice`. Native `ngspice` is not on PATH, `winget search ngspice` found no matching package, WSL Ubuntu is present but `sudo apt-get install ngspice` requires a password, and Docker is unavailable.
+- Outputs are written to `runs/spice_412_bridge/spice_412_summary.json`, `spice_412_summary.csv`, `spice_412_timeseries.csv`, and `README_SPICE_412_EXPORT.md`.
+- WSL ngspice is installed and available as `/usr/bin/ngspice` (`ngspice-42`). Native Windows `ngspice` is still not on PATH, `winget search ngspice` found no matching package, and Docker is unavailable.
+- Execution statuses are `failed_to_converge;ran_successfully`: 15 rows ran successfully and 4 rows failed to converge with ngspice `TRAN: Timestep too small` reports.
 - Discovery netlists remain source-only: no direct generated-mode drive, no direct target-mode drive, and no target-frequency injection. The direct 4+8 netlist is marked `ceiling_reference`.
 - Circuit variants now include `behavioral_proxy_current`, `voltage_dependent_capacitance_proxy`, `diode_pair_proxy`, `varactor_diode_model_proxy`, `saturable_inductor_proxy`, and `linear_no_nonlinearity_control`.
-- Parser and metric path are implemented for ngspice CSV output: target voltage growth, FFT peaks, approximate target phase lock, target spectral purity, generated-envelope CV, max phase jump, and bridge ratio using the separated direct 4+8 reference.
-- Current recommendation: install/run ngspice using a native path or `--ngspice-path wsl:ngspice`, then refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.
+- The normalized behavioral proxy was the closest SPICE row: lock `0.997003`, purity `0.971359`, target growth `2.06766`, max jump `0.274669`, and normalized reference bridge ratio `0.788167`. It did not preserve the Python LC bridge ratio `1.606971`.
+- The linear no-nonlinearity controls ran and failed as expected under target-band criteria: lock stayed near `0.014`, purity near `1.7e-6`, and target FFT peaks stayed at the source frequency rather than near 12.
+- Current recommendation: nonlinear component refinement, parameter sweep, then spatial phase-matching modeling.

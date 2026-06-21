@@ -386,8 +386,11 @@ Added `spice_412_export.py`:
 Standalone result:
 
 - Valid SPICE netlists were generated.
-- `python spice_412_export.py --run` was tested.
-- Local ngspice execution was skipped because `ngspice` was not installed on PATH. `winget search ngspice` found no matching Windows package, WSL Ubuntu is available but `sudo apt-get install ngspice` requires a password, and Docker is unavailable.
-- No SPICE transient target build-up or Python-vs-SPICE metric comparison has been measured locally yet.
-- The nonlinear element is classified as an aggressive behavioral varactor/mixing proxy: suitable for a first ngspice validation track, but not yet a physically refined component implementation.
-- Current next fix: install/run ngspice, then refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.
+- WSL ngspice was installed through `wsl -u root`; `/usr/bin/ngspice` reports `ngspice-42`.
+- `python spice_412_export.py --run --ngspice-path wsl:ngspice` was tested.
+- Local execution status mix: `failed_to_converge;ran_successfully`, with 15 successful rows and 4 convergence failures. Failed rows reported ngspice `TRAN: Timestep too small`.
+- The normalized `behavioral_proxy_current` discovery row preserved strong target behavior: lock `0.997003`, purity `0.971359`, target growth `2.06766`, max phase jump `0.274669`, but bridge ratio was only `0.788167` against the normalized direct 4+8 reference.
+- Several diode/varactor/saturable rows showed target-band content near 12, but their locks were low and none roughly reproduced the full Python LC behavior.
+- Linear no-nonlinearity controls failed as expected under target-band criteria: lock stayed near `0.014`, purity near `1.7e-6`, and target-node FFT peaks stayed at the source frequency.
+- The nonlinear element remains classified as an aggressive behavioral varactor/mixing proxy: suitable for first ngspice validation, but not yet a physically refined component implementation.
+- Current next fix: refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.

@@ -23,7 +23,7 @@ import physical_412_lc_bridge as phys
 
 
 OUT_DIR = Path("runs") / "spice_412_bridge"
-REFERENCE_SCALE = "low-RF-scale"
+REFERENCE_SCALE = "arbitrary-normalized-scale"
 DISCOVERY_SCALES = (
     ("audio_412_bridge", "audio-scale"),
     ("low_rf_412_bridge", "low-RF-scale"),
@@ -453,9 +453,27 @@ def export_netlists(out_dir: Path, variant_names: Iterable[str]) -> List[SpiceEx
 
 def classify_run_failure(message: str) -> str:
     lower = message.lower()
-    if any(token in lower for token in ("convergence", "timestep too small", "singular", "failed", "error")):
+    if any(token in lower for token in ("convergence", "timestep too small", "singular", "failed", "error", "aborted")):
         return "failed_to_converge"
     return "failed_to_converge"
+
+
+def convergence_failure_reason(log_text: str) -> str:
+    failure_tokens = (
+        "timestep too small",
+        "run simulation(s) aborted",
+        "convergence",
+        "singular matrix",
+        "source stepping failed",
+        "gmin stepping failed",
+        "doanalyses: tran:",
+    )
+    for raw_line in log_text.splitlines():
+        line = raw_line.strip()
+        lower = line.lower()
+        if any(token in lower for token in failure_tokens):
+            return line
+    return ""
 
 
 def run_ngspice(export: SpiceExport, ngspice_path: str, timeout_s: int) -> RunResult:
@@ -492,6 +510,9 @@ def run_ngspice(export: SpiceExport, ngspice_path: str, timeout_s: int) -> RunRe
     log_path.write_text(log_text, encoding="utf-8")
     if proc.returncode != 0:
         return RunResult(classify_run_failure(log_text), False, f"returncode={proc.returncode}; log={log_path.name}", log_path)
+    failure_reason = convergence_failure_reason(log_text)
+    if failure_reason:
+        return RunResult("failed_to_converge", False, f"returncode=0 but ngspice reported: {failure_reason}; log={log_path.name}", log_path)
     if not export.csv_path.exists():
         return RunResult("failed_to_converge", False, f"returncode=0 but CSV missing; log={log_path.name}", log_path)
     return RunResult("ran_successfully", True, f"returncode=0; log={log_path.name}", log_path)
@@ -590,6 +611,39 @@ def read_ngspice_csv(path: Path) -> Dict[str, np.ndarray]:
     raise ValueError(f"Expected at least time and three voltage columns in {path}, got {arr.shape[1]}")
 
 
+def uniform_resample(data: Dict[str, np.ndarray], preferred_dt: float, max_points: int = 20000) -> Dict[str, np.ndarray]:
+    t = np.asarray(data["time"], dtype=float)
+    finite = np.isfinite(t)
+    for key in ("v1", "v2", "v3", "i1", "i2", "i3"):
+        if key in data:
+            finite &= np.isfinite(np.asarray(data[key], dtype=float))
+    if int(np.sum(finite)) < 8:
+        raise ValueError("not enough finite samples for resampling")
+
+    order = np.argsort(t[finite])
+    sorted_t = t[finite][order]
+    keep = np.concatenate(([True], np.diff(sorted_t) > 0.0))
+    sorted_t = sorted_t[keep]
+    if len(sorted_t) < 8:
+        raise ValueError("not enough unique time samples for resampling")
+
+    positive_dt = np.diff(sorted_t)
+    positive_dt = positive_dt[positive_dt > 0.0]
+    dt = preferred_dt if np.isfinite(preferred_dt) and preferred_dt > 0.0 else float(np.median(positive_dt))
+    if not np.isfinite(dt) or dt <= 0.0:
+        dt = float((sorted_t[-1] - sorted_t[0]) / max(1, len(sorted_t) - 1))
+    count = int(np.floor((sorted_t[-1] - sorted_t[0]) / dt)) + 1
+    count = max(8, min(max_points, count))
+    uniform_t = np.linspace(float(sorted_t[0]), float(sorted_t[-1]), count)
+
+    resampled: Dict[str, np.ndarray] = {"time": uniform_t}
+    for key in ("v1", "v2", "v3", "i1", "i2", "i3"):
+        if key in data:
+            values = np.asarray(data[key], dtype=float)[finite][order][keep]
+            resampled[key] = np.interp(uniform_t, sorted_t, values)
+    return resampled
+
+
 def complex_projection(signal: np.ndarray, time_s: np.ndarray, freq_hz: float) -> complex:
     phase = np.exp(-1j * 2.0 * np.pi * freq_hz * time_s)
     return 2.0 * np.mean(signal * phase)
@@ -656,6 +710,7 @@ def rms(values: np.ndarray) -> float:
 
 def spice_metrics(export: SpiceExport, data: Dict[str, np.ndarray],
                   reference_data: Dict[str, np.ndarray] | None = None) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]]]:
+    data = uniform_resample(data, export.tstep_s)
     t = data["time"]
     v1 = data["v1"]
     v2 = data["v2"]
@@ -703,6 +758,7 @@ def spice_metrics(export: SpiceExport, data: Dict[str, np.ndarray],
     purity = float(min(1.0, target_power / (float(np.mean(v3[mask] ** 2)) + 1e-18)))
     bridge_ratio = float("nan")
     if reference_data is not None and export.scale_name == REFERENCE_SCALE:
+        reference_data = uniform_resample(reference_data, export.tstep_s)
         rt = reference_data["time"]
         rv3 = reference_data["v3"]
         rmask = (rt >= 0.35 * drive_until) & (rt < drive_until)
@@ -761,6 +817,30 @@ def rough_python_match(metrics: Dict[str, float | str]) -> str:
     purity_ok = np.isfinite(purity) and abs(purity - PYTHON_BASELINE["spectral_purity_target"]) < 0.25
     bridge_ok = not np.isfinite(bridge) or abs(bridge - PYTHON_BASELINE["bridge_ratio"]) < 0.75
     return str(lock_ok and purity_ok and bridge_ok)
+
+
+def row_float(row: Dict[str, float | str], key: str, default: float = float("nan")) -> float:
+    try:
+        value = row.get(key, default)
+        if value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def target_peak_near_12(row: Dict[str, float | str], tolerance_fraction: float = 0.08) -> bool:
+    target_freq = row_float(row, "nominal_target_frequency_hz")
+    peak_freq = row_float(row, "spice_fft_peak_target_hz")
+    if not np.isfinite(target_freq) or target_freq <= 0.0 or not np.isfinite(peak_freq):
+        return False
+    return abs(peak_freq - target_freq) <= tolerance_fraction * target_freq
+
+
+def has_target_band_component(row: Dict[str, float | str]) -> bool:
+    purity = row_float(row, "spice_spectral_purity_target", 0.0)
+    target_power = row_float(row, "spice_target_projection_power", 0.0)
+    return purity > 0.10 and target_power > 1e-18 and target_peak_near_12(row)
 
 
 def summarize_export(export: SpiceExport, variant: NonlinearVariant, run_requested: bool,
@@ -834,15 +914,27 @@ def aggregate_summary(rows: List[Dict[str, float | str]], run_requested: bool, n
     )
     target_build_rows = [
         r for r in ran
-        if float(r.get("spice_target_voltage_growth_ratio", 0.0) or 0.0) > 1.10
-        or float(r.get("spice_target_rms_v", 0.0) or 0.0) > 1e-12
+        if has_target_band_component(r)
+        and (
+            row_float(r, "spice_target_voltage_growth_ratio", 0.0) > 1.10
+            or row_float(r, "spice_target_rms_v", 0.0) > 1e-12
+        )
     ]
     matching_rows = [r for r in ran if str(r.get("rough_python_behavior_match")) == "True"]
     linear_rows = [r for r in ran if str(r.get("nonlinear_variant")) == "linear_no_nonlinearity_control"]
     linear_failed = "not_run"
     if linear_rows:
-        linear_failed = str(all(float(r.get("spice_target_voltage_growth_ratio", 0.0) or 0.0) < 1.25 for r in linear_rows))
+        linear_failed = str(all(
+            not has_target_band_component(r)
+            and row_float(r, "spice_phase_lock_target", 0.0) < 0.20
+            and row_float(r, "spice_spectral_purity_target", 0.0) < 0.05
+            for r in linear_rows
+        ))
     statuses = sorted(set(str(r.get("execution_status")) for r in exports))
+    if run_requested and ngspice_available:
+        recommended_next_step = "component refinement, parameter sweep, then spatial phase-matching modeling"
+    else:
+        recommended_next_step = "Run ngspice if available, then component refinement, parameter sweep, and spatial phase-matching modeling"
     return {
         "row_type": "aggregate",
         "valid_spice_netlists_generated": str(all(str(r["valid_spice_netlist_generated"]) == "True" for r in exports)),
@@ -859,7 +951,7 @@ def aggregate_summary(rows: List[Dict[str, float | str]], run_requested: bool, n
         "rough_python_match_circuits": ";".join(str(r["circuit"]) for r in matching_rows),
         "linear_no_nonlinearity_control_failed_as_expected": linear_failed,
         "nonlinear_element_assessment": "behavioral proxy remains aggressive; diode/varactor/saturable variants are first-pass realism checks",
-        "recommended_next_step": "Run ngspice if available, then component refinement, parameter sweep, and spatial phase-matching modeling",
+        "recommended_next_step": recommended_next_step,
     }
 
 
