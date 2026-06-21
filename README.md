@@ -46,11 +46,12 @@ What has not survived yet:
 - The transmission-line SPICE refinement replaces envelope-state propagation with explicit normalized LC ladder propagation plus tuned shunt band sections. The phase-matched source-only TL row promoted with lock 0.997206, bridge ratio 8.261740, purity 0.961441, generated-envelope CV 0.070890, max phase jump 0.057316, behavioral dependency 0.36 versus the envelope-ladder baseline 0.65, and dead controls.
 - The physical waveguide interpretation layer maps the promoted TL result onto candidate media. The best first electrical bench analog is a nonlinear varactor-loaded transmission line near 50 MHz with estimated interaction length 0.382 m; acoustic/phononic rows look easiest for compact length, while plain PCB/microstrip is mostly length/nonlinearity limited.
 - The bench-oriented varactor NLTL SPICE design exports concrete 50/100/150 MHz varactor-diode loaded LC ladders. All 22 ngspice rows ran successfully, but no row promoted: the best 48-cell/75-ohm line reached lock 0.896172 and bridge ratio 1.287941 with plausible stress and low behavioral dependency 0.08, but 150 MHz spectral purity stayed only 0.006802.
+- The varactor NLTL refinement raises 150 MHz purity but still does not promote. All 23 ngspice rows ran; the highest-purity row used 96 cells, 100 ohm, and passive extraction plus rejection, reaching lock 0.996283, bridge ratio 18.502732, purity 0.112843, and behavioral dependency 0.08, but component stress was unrealistic and purity remained below the 0.80 gate.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Strengthen the varactor NLTL component design through component selection/BOM and capacitance-swing/phase-velocity sweeps, while starting an acoustic waveguide simulation as a parallel low-frequency analog.
+- Start an acoustic waveguide simulation as a parallel low-frequency analog, and continue a deeper varactor BOM/part-family sweep before PCB layout.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -140,6 +141,7 @@ python spice_412_distributed_ladder.py --run --ngspice-path wsl:ngspice
 python spice_412_transmission_line_refine.py --run --ngspice-path wsl:ngspice
 python physical_waveguide_412.py
 python spice_412_varactor_nltl_design.py --run --ngspice-path wsl:ngspice
+python spice_412_varactor_nltl_refine.py --run --ngspice-path wsl:ngspice
 ```
 
 Key bridge modes:
@@ -490,7 +492,22 @@ Standalone result from `python spice_412_varactor_nltl_design.py --run --ngspice
 - Outputs are written to `runs/spice_412_varactor_nltl_design/spice_412_varactor_nltl_summary.json`, `spice_412_varactor_nltl_summary.csv`, `spice_412_varactor_nltl_timeseries.csv`, and `README_SPICE_412_VARACTOR_NLTL_DESIGN.md`.
 - Sweep coverage: 12, 16, 24, 32, and 48 cells crossed with 25, 50, and 75 ohm target impedances, plus linear, weak-varactor, detuned, shuffled, too-short, too-lossy, and direct 50+100 MHz reference controls.
 - All 22 netlists ran successfully under WSL `ngspice-42`.
-- No `spice_varactor_nltl_candidate` or `near_miss` promoted. The best row was `d015 varactor_nltl_48cells_75ohm`: lock `0.896172`, bridge ratio `1.287941`, purity `0.006802`, target coherent growth `1.019062`, generated-envelope CV `0.013623`, max phase jump `0.226855`, and plausible stress.
+- No `spice_varactor_nltl_candidate` or `near_miss` promoted. The best row was `d015 varactor_nltl_48cells_75ohm`: lock `0.896172`, bridge ratio `1.287941`, purity `0.006802`, target coherent growth `1.019062`, generated-envelope CV `0.013623`, max phase jump `2.422032`, and plausible stress.
 - Behavioral dependency dropped to `0.08`, well below the previous TL baseline `0.36`, because generation comes from the varactor diode capacitance model rather than explicit behavioral current mixing.
 - Controls stayed dead with max leakage score `0.099801`.
 - Current read: the bench NLTL is component-plausible and stable, but the first capacitance-swing/phase-velocity design spreads too much energy outside the 150 MHz target band. Next fix is component selection/BOM plus stronger varactor and phase-velocity sweeps before PCB layout.
+
+## Latest SPICE 4->8->12 Varactor NLTL Refinement
+
+Standalone result from `python spice_412_varactor_nltl_refine.py --run --ngspice-path wsl:ngspice`:
+
+- Added `spice_412_varactor_nltl_refine.py` and generated focused refinement netlists around the previous best 48-cell/75-ohm varactor NLTL row.
+- Outputs are written to `runs/spice_412_varactor_nltl_refine/spice_412_varactor_nltl_refine_summary.json`, `spice_412_varactor_nltl_refine_summary.csv`, `spice_412_varactor_nltl_refine_timeseries.csv`, and `README_SPICE_412_VARACTOR_NLTL_REFINE.md`.
+- Sweep coverage: 48, 64, 80, and 96 cells; 50, 75, and 100 ohm variants; stronger capacitance swing/bias/drive settings; phase-velocity trims; passive 150 MHz extraction, source/generated rejection, target shunt trap, and load/Q shaping.
+- All 23 netlists ran successfully under WSL `ngspice-42`.
+- No `spice_varactor_nltl_candidate` or `near_miss` promoted. Target purity improved but remained below the `0.30` near-miss and `0.80` candidate gates.
+- Best purity row was `r013 refine_96c_100ohm_extraction_plus_rejection`: lock `0.996283`, bridge ratio `18.502732`, purity `0.112843`, target growth `1.075207`, generated-envelope CV `0.073475`, max phase jump `0.252252`, behavioral dependency `0.08`, but stress was `unrealistic`.
+- Best plausible-stress purity row was `r003 refine_80c_75ohm_none`: lock `0.991412`, bridge ratio `8.462014`, purity `0.107203`, target growth `1.007927`, and plausible stress.
+- Increasing cell count helped purity up to the 80/96-cell region: best purity by cell count was 48=`0.010084`, 64=`0.050886`, 80=`0.107203`, 96=`0.112843`.
+- Passive target extraction/rejection helped purity, but not enough to reach a clean 150 MHz band. Controls stayed dead with max leakage score `0.137543`.
+- Current read: varactor NLTL phase lock and bridge gain are recoverable with low behavioral dependency, but clean target-band purity remains the blocker. Next fix is acoustic parallel simulation plus deeper component/BOM sweep before PCB layout.

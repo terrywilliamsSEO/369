@@ -560,9 +560,33 @@ Standalone result:
 - All 22 netlists ran successfully under WSL `ngspice-42`.
 - No `spice_varactor_nltl_candidate` or `near_miss` promoted.
 - Best row: `d015 varactor_nltl_48cells_75ohm`.
-- Best metrics: lock `0.896172`, bridge ratio `1.287941`, spectral purity near 150 MHz `0.006802`, target coherent growth `1.019062`, generated-envelope CV `0.013623`, max phase jump `0.226855`, and plausible component stress.
+- Best metrics: lock `0.896172`, bridge ratio `1.287941`, spectral purity near 150 MHz `0.006802`, target coherent growth `1.019062`, generated-envelope CV `0.013623`, max phase jump `2.422032`, and plausible component stress.
 - Best component scale: 48 cells, 75 ohm, total length `0.381972 m`, cell pitch `0.007958 m`, per-cell L `119.366 nH`, per-cell total C `21.221 pF`, varactor `Cjo` `43.791 pF`.
 - Behavioral dependency fell to `0.08`, lower than the prior normalized TL baseline `0.36`.
 - Controls stayed dead with max leakage score `0.099801`.
 - Current interpretation: the realistic varactor line is stable and bench-plausible, but the first component-level design does not concentrate coherent energy into the 150 MHz target band. The likely blockers are varactor capacitance swing and phase-velocity/harmonic loading, not raw component stress.
 - Current next fix: stronger varactor component sweep and part-family selection before PCB layout; keep acoustic waveguide simulation as a parallel low-frequency analog.
+
+## SPICE 4->8->12 Varactor NLTL Refinement
+
+Added `spice_412_varactor_nltl_refine.py`:
+
+- Refines the first realistic varactor-loaded NLTL around the previous best `d015` row.
+- Sweeps 48, 64, 80, and 96 cells; 50, 75, and 100 ohm variants; stronger capacitance swing; lower varactor `Rs`; `Cjo`, `Vj`, `M`, bias, and drive settings.
+- Adds passive target-band cleanup options: 150 MHz extraction, weak 150 MHz bandpass, source rejection trap, generated rejection trap, target shunt trap, and extraction plus rejection.
+- Keeps discovery rows source-only: no direct 100 MHz drive, no direct 150 MHz drive, and no target-frequency injection.
+- Controls include linear fixed-capacitor, weak-varactor, detuned velocity, shuffled frequency, too-short, too-lossy, and separated direct 50+100 MHz reference.
+- Outputs go to `runs/spice_412_varactor_nltl_refine/spice_412_varactor_nltl_refine_summary.json`, `spice_412_varactor_nltl_refine_summary.csv`, `spice_412_varactor_nltl_refine_timeseries.csv`, and `README_SPICE_412_VARACTOR_NLTL_REFINE.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_varactor_nltl_refine.py --run --ngspice-path wsl:ngspice`.
+- 23 netlists ran successfully under WSL `ngspice-42`.
+- No full candidate or near miss promoted.
+- Target purity improved from `0.006802` to `0.112843`, while the best row preserved strong lock and bridge gain.
+- Best purity row: `r013 refine_96c_100ohm_extraction_plus_rejection`, lock `0.996283`, bridge ratio `18.502732`, purity `0.112843`, target growth `1.075207`, generated-envelope CV `0.073475`, max phase jump `0.252252`, behavioral dependency `0.08`, but component stress was `unrealistic`.
+- Best plausible-stress row by purity: `r003 refine_80c_75ohm_none`, lock `0.991412`, bridge ratio `8.462014`, purity `0.107203`, target growth `1.007927`, and plausible stress.
+- Increasing cell count helped: best purity by cell count was 48=`0.010084`, 64=`0.050886`, 80=`0.107203`, 96=`0.112843`.
+- Passive extraction/rejection helped, but not enough to reach the 0.30 near-miss purity gate.
+- Controls stayed dead with max leakage score `0.137543`.
+- Current interpretation: lock and bridge ratio can survive realistic low-behavioral varactor NLTL refinement, but target-band spectral cleanup is still far short. Acoustic/phononic simulation should run in parallel with any deeper electrical BOM sweep.
