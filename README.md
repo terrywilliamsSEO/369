@@ -44,11 +44,12 @@ What has not survived yet:
 - The spatial phase-matching track shows that an explicit distributed topology can recover coherent 4 -> 8 -> 12 phase lock in the normalized model: 17 discovery rows promoted, best lock 0.999128, bridge ratio 4.748881, purity 0.997300, and controls stayed dead. This points toward distributed/waveguide-like validation rather than more lumped scalar tuning.
 - The distributed-ladder SPICE track exports that topology into normalized ngspice envelope-ladder netlists. The phase-matched source-only ladder ran successfully and promoted with lock 0.915421, bridge ratio 3.718438, purity 0.970030, generated-envelope CV 0.032846, max phase jump 0.003169, and dead linear/detuned/shuffled controls.
 - The transmission-line SPICE refinement replaces envelope-state propagation with explicit normalized LC ladder propagation plus tuned shunt band sections. The phase-matched source-only TL row promoted with lock 0.997206, bridge ratio 8.261740, purity 0.961441, generated-envelope CV 0.070890, max phase jump 0.057316, behavioral dependency 0.36 versus the envelope-ladder baseline 0.65, and dead controls.
+- The physical waveguide interpretation layer maps the promoted TL result onto candidate media. The best first electrical bench analog is a nonlinear varactor-loaded transmission line near 50 MHz with estimated interaction length 0.382 m; acoustic/phononic rows look easiest for compact length, while plain PCB/microstrip is mostly length/nonlinearity limited.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Build physical waveguide models next, then PCB/transmission-line approximations, before returning to lumped component parameter refinement.
+- Build a PCB/transmission-line SPICE design for a varactor-loaded nonlinear line, with acoustic waveguide simulation as a parallel low-frequency analog.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -136,6 +137,7 @@ python spice_412_component_phase_lock.py --ngspice-path wsl:ngspice
 python spatial_phase_matching_412.py
 python spice_412_distributed_ladder.py --run --ngspice-path wsl:ngspice
 python spice_412_transmission_line_refine.py --run --ngspice-path wsl:ngspice
+python physical_waveguide_412.py
 ```
 
 Key bridge modes:
@@ -464,3 +466,16 @@ Standalone result from `python spice_412_transmission_line_refine.py --run --ngs
 - Deliberate mismatch did not lower the raw phase metric on tiny residual target response, but it suppressed material bridge ratio to `0.002707`, so it stayed control-dead.
 - Linear, detuned, shuffled, lumped, and mismatched controls stayed dead with max coherent leakage score `0.0`.
 - Current next fix: physical waveguide modeling, then PCB/transmission-line approximation.
+
+## Latest Physical Waveguide 4->8->12 Interpretation
+
+Standalone result from `python physical_waveguide_412.py`:
+
+- Added `physical_waveguide_412.py` and generated `runs/physical_waveguide_412/physical_waveguide_412_summary.json`, `physical_waveguide_412_summary.csv`, and `README_PHYSICAL_WAVEGUIDE_412.md`.
+- The script maps the promoted TL row onto PCB/microstrip or coaxial ladders, acoustic/phononic chains, nonlinear magnetic transmission lines, varactor-loaded transmission lines, mechanical/metamaterial lattices, and optical/nonlinear waveguides as a conceptual comparison.
+- The best first electrical bench analog is `nonlinear_varactor_loaded_transmission_line`: plausible bench-scale, source frequency `50 MHz`, required interaction length `0.381972 m`, estimated bridge ratio `8.261740`, and target coherent growth `4.046130`.
+- Acoustic/phononic mapping is also plausible bench-scale and much shorter, with source frequency `40 kHz` and length `0.076394 m`, but the harder part is calibrated nonlinear drive/readout without transducer feedthrough.
+- Nonlinear magnetic transmission line mapping is plausible bench-scale at `10 MHz` with length `0.763944 m`, but core loss, bias history, and saturation stress are the risks.
+- Plain PCB/microstrip or coax is classified as aggressive but testable: length `6.875494 m`; the blocker is length/nonlinearity more than raw loss.
+- Controls stayed dead: phase-mismatched, too-lossy, too-short, weak-nonlinearity, and linear/no-nonlinearity mappings had max leakage score `0.040093`.
+- Current next fix: PCB/transmission-line SPICE design for a varactor-loaded nonlinear transmission line, with acoustic simulation as a parallel low-frequency analog.

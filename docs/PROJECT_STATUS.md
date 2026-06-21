@@ -42,12 +42,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `spatial_phase_matching_412.py` script models a distributed 1D phase-matched topology for 4 -> 8 -> 12. It promoted 17 source-only spatial bridge candidates with clean controls; the best row had lock 0.999128, bridge ratio 4.748881, purity 0.997300, generated-envelope CV 0.053898, max phase jump 0.000683, and clean energy budget.
 - The standalone `spice_412_distributed_ladder.py` script exports the distributed topology as normalized ngspice envelope-ladder netlists. The phase-matched source-only ladder promoted with lock 0.915421, bridge ratio 3.718438, purity 0.970030, generated-envelope CV 0.032846, max phase jump 0.003169, and clean coherent controls.
 - The standalone `spice_412_transmission_line_refine.py` script refines that result into explicit normalized LC transmission-line ladders. The phase-matched source-only TL row promoted with lock 0.997206, bridge ratio 8.261740, purity 0.961441, generated-envelope CV 0.070890, max phase jump 0.057316, and behavioral dependency 0.36, lower than the envelope-ladder baseline 0.65.
+- The standalone `physical_waveguide_412.py` script maps the promoted TL row into physical media candidates. It ranks a nonlinear varactor-loaded transmission line as the best first electrical bench analog at 50 MHz with required interaction length 0.382 m; acoustic/phononic and nonlinear magnetic lines are also plausible bench-scale, while plain PCB/microstrip is length/nonlinearity limited.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, and a less-behavioral transmission-line SPICE refinement. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, and explicit LC transmission-line ladder recover coherent lock with clean controls. The next question is whether that mechanism survives physical waveguide modeling and concrete PCB/acoustic/transmission-line approximations.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, and a physical waveguide interpretation layer. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, and explicit LC transmission-line ladder recover coherent lock with clean controls. The next question is whether a varactor-loaded nonlinear transmission-line SPICE design or acoustic/phononic waveguide simulation can preserve the bridge with component-level nonlinearity, tolerable stress, and real loss.
 
 ## Latest Magnetic Autolock Summary
 
@@ -781,15 +782,47 @@ Standalone result:
 - Linear, detuned, shuffled, lumped, and mismatched controls stayed dead with max coherent leakage score `0.0`.
 - Current next fix: physical waveguide modeling first, then PCB/transmission-line or acoustic waveguide approximations.
 
+## Latest Physical Waveguide 4->8->12 Interpretation
+
+Script added:
+
+```bash
+python physical_waveguide_412.py
+```
+
+Outputs:
+
+- `runs/physical_waveguide_412/physical_waveguide_412_summary.json`
+- `runs/physical_waveguide_412/physical_waveguide_412_summary.csv`
+- `runs/physical_waveguide_412/README_PHYSICAL_WAVEGUIDE_412.md`
+
+What it tests:
+
+- A physical interpretation layer for the promoted `spice_412_transmission_line_refine.py` TL row.
+- Candidate media: PCB/microstrip or coaxial transmission-line ladder, acoustic/phononic waveguide, nonlinear magnetic transmission line, nonlinear varactor-loaded transmission line, mechanical/metamaterial lattice, and optical/nonlinear waveguide as conceptual comparison only.
+- For each row it estimates frequency scale, 4/8/12 wavelengths, phase and group velocity mismatch, required interaction length, coherence length, QPM period, loss per unit length, nonlinear gain per unit length, target coherent growth, stress, feasibility class, and primary blocker.
+- Controls include phase-mismatched, too-lossy, too-short, weak-nonlinearity, and linear/no-nonlinearity physical mappings.
+
+Standalone result:
+
+- Best first electrical bench analog: `nonlinear_varactor_loaded_transmission_line`.
+- Varactor row: plausible bench-scale, source frequency `50 MHz`, required interaction length `0.381972 m`, cell pitch `0.011937 m`, target coherent growth estimate `4.046130`, bridge ratio estimate `8.261740`.
+- Acoustic/phononic row: plausible bench-scale, source frequency `40 kHz`, required length `0.076394 m`, bridge ratio estimate `5.251393`; easiest for compact length and slow phase velocity, but harder for clean nonlinear drive/readout.
+- Nonlinear magnetic row: plausible bench-scale, source frequency `10 MHz`, required length `0.763944 m`, bridge ratio estimate `6.137960`; risks are core loss, bias history, and saturation stress.
+- Plain PCB/microstrip or coax row: aggressive but testable, source frequency `100 MHz`, required length `6.875494 m`; blocker is length/nonlinearity more than raw loss.
+- Mechanical/metamaterial row is aggressive but testable; optical/nonlinear waveguide remains conceptual only.
+- Controls stayed dead with max leakage score `0.040093`.
+- Current next fix: PCB/transmission-line SPICE design for a varactor-loaded nonlinear transmission line, with acoustic simulation as a parallel low-frequency analog.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Build a physical 4 -> 8 -> 12 waveguide/phase-matching model, then map it into PCB/transmission-line or acoustic waveguide approximations.
+1. Build a PCB/transmission-line SPICE design for a varactor-loaded nonlinear transmission line, with acoustic waveguide simulation as a parallel low-frequency analog.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
-3. Refine transmission-line component realism and stress limits only after a physical waveguide parameterization is in place.
+3. Refine nonlinear magnetic line component realism if the varactor-loaded design fails stress or loss limits.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 5. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 6. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

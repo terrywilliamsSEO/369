@@ -519,3 +519,25 @@ Standalone result:
 - The deliberate mismatch control kept a high raw phase metric on tiny residual target response, but material bridge ratio fell to `0.002707`, so it stayed dead.
 - Linear/no-nonlinearity, detuned, shuffled, lumped, and mismatched controls stayed dead with max coherent leakage score `0.0`.
 - Current next fix: build a physical waveguide/phase-matching model, then explore PCB/transmission-line or acoustic waveguide approximations.
+
+## Physical Waveguide 4->8->12 Interpretation
+
+Added `physical_waveguide_412.py`:
+
+- Maps the promoted normalized TL result into possible physical waveguide and transmission-line realizations.
+- Candidate media: PCB/microstrip or coaxial transmission-line ladder, acoustic waveguide or phononic chain, nonlinear magnetic transmission line, nonlinear varactor-loaded transmission line, mechanical/metamaterial lattice, and optical/nonlinear waveguide as a conceptual comparison.
+- Uses the promoted TL row as reference: lock `0.997206`, bridge ratio `8.261740`, purity `0.961441`, target coherent growth `3.955957`, generated-envelope CV `0.070890`, max phase jump `0.057316`, and behavioral dependency `0.36`.
+- Estimates `k4`, `k8`, `k12`, `delta_k_448`, `delta_k_4812`, coherence length, QPM period, normalized-to-physical length mapping, loss per unit length, nonlinear gain per unit length, target coherent growth, component/material stress, feasibility class, and main physical blocker.
+- Adds physical controls for phase mismatch, excessive loss, short interaction length, weak nonlinearity, and linear/no-nonlinearity.
+- Outputs go to `runs/physical_waveguide_412/physical_waveguide_412_summary.json`, `physical_waveguide_412_summary.csv`, and `README_PHYSICAL_WAVEGUIDE_412.md`.
+
+Standalone result:
+
+- Run command tested: `python physical_waveguide_412.py`.
+- Best first electrical bench analog: `nonlinear_varactor_loaded_transmission_line`, plausible bench-scale, source frequency `50 MHz`, interaction length `0.381972 m`, cell pitch `0.011937 m`, bridge estimate `8.261740`, target coherent growth estimate `4.046130`.
+- Acoustic/phononic row is also plausible bench-scale and shortest: source frequency `40 kHz`, required length `0.076394 m`, bridge estimate `5.251393`.
+- Nonlinear magnetic line is plausible bench-scale: source frequency `10 MHz`, required length `0.763944 m`, bridge estimate `6.137960`.
+- Plain PCB/microstrip or coax is aggressive but testable rather than the best discovery medium: source frequency `100 MHz`, required length `6.875494 m`, and the primary blocker is length/nonlinearity more than raw loss.
+- Mechanical/metamaterial lattice is aggressive but testable; optical/nonlinear waveguide is conceptual only.
+- Controls stayed dead with max leakage score `0.040093`.
+- Current next fix: PCB/transmission-line SPICE design for a varactor-loaded nonlinear transmission line, with acoustic waveguide simulation as a parallel low-frequency analog.
