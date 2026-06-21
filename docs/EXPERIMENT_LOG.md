@@ -433,3 +433,23 @@ Standalone result:
 - None promoted because phase lock stayed very low. Closest behavioral-proxy row was `c008` (`diode_bridge_mixer`): lock `0.017518`, purity `0.989155`, bridge ratio `1.647442`, target-band growth `1.284235`, and plausible stress.
 - Linear and shuffled controls stayed dead, but weak-nonlinearity and detuned controls leaked target-band response under the current criterion; `controls_remained_dead=False`.
 - Current next fix: deeper component sweep and spatial phase-matching modeling before physical parameter refinement.
+
+## SPICE 4->8->12 Component Phase Lock
+
+Added `spice_412_component_phase_lock.py`:
+
+- Starts from the component-realism bridge-ratio crossing seeds: `c008`, `c013`, `c018`, `c023`, `c028`, and `c033`.
+- Sweeps target detuning, generated detuning, coupling sign/orientation, coupling strength, Q/load shaping, passive resonant trap phase shapers, and limiter/loss shaping.
+- Keeps discovery rows source-only and component-plausible: no behavioral current mixing, no direct 8 drive, no direct 12 drive, and no target-frequency injection.
+- Adds coherent-growth control scoring for linear/no-nonlinearity, weak nonlinearity, detuned target, shuffled frequencies, source-only off-resonance, and separated direct 4+8 ceiling references.
+- Outputs go to `runs/spice_412_component_phase_lock/spice_412_component_phase_lock_summary.json`, `spice_412_component_phase_lock_summary.csv`, `spice_412_component_phase_lock_timeseries.csv`, and `README_SPICE_412_COMPONENT_PHASE_LOCK.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_component_phase_lock.py --ngspice-path wsl:ngspice --max-cases 84`.
+- 84 discovery rows and 5 controls ran successfully under WSL `ngspice-42`; no convergence failures.
+- Many rows retained bridge ratio >1.5, but none reached phase lock >0.50 or >0.90.
+- Best phase-lock row was `p048` (`varactor_pair_mixer`, coupling orientation): lock `0.030889`, generated lock `0.026074`, bridge ratio `0.633056`, purity `0.914026`, coherent growth `1.03079`.
+- Best high-bridge row was `p050` (`saturable_inductor_core`, coupling orientation): bridge ratio `124.013`, lock `0.025185`, purity `0.992149`, coherent growth `2.21288`; it was rejected for phase incoherence.
+- Weak-nonlinearity and detuned controls still leaked under coherent-growth criteria; linear, shuffled, and off-resonance controls stayed dead.
+- Current next fix: spatial phase-matching model or rejection of the current component topology before deeper scalar component sweeps.

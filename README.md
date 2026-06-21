@@ -40,11 +40,12 @@ What has not survived yet:
 - The SPICE export track now emits and runs CI-friendly ngspice netlists through WSL ngspice. In the latest run, 15 of 19 netlists ran successfully and 4 stiff behavioral/audio/RF rows failed to converge. The normalized behavioral proxy preserved strong lock and purity, but not the Python bridge-ratio gain.
 - The SPICE nonlinearity-refinement track found two source-only behavioral proxy rows that cross bridge ratio >1.5 with clean linear controls. The closest row is still behavioral-only, not component-plausible: lock 0.996193, purity 0.981658, bridge ratio 1.563169, target-band growth 1.276714.
 - The SPICE component-realism track forbids behavioral current mixing in discovery rows. Several component-plausible rows crossed bridge ratio >1.5, but all had very low phase lock near 0.02 and two controls leaked target-band response, so no component candidate or near miss promoted.
+- The SPICE component phase-lock track kept high component bridge ratios under detuning, coupling orientation, Q/load shaping, trap, and limiter sweeps, but no row exceeded phase lock 0.50. Weak and detuned controls still leaked under coherent-growth scoring.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Deepen component-realism sweeps, refine physical parameters, and model spatial phase matching before trying geometry/evolve or a 369-specific stronger target servo.
+- Model spatial phase matching or reject the current component topology before deeper component sweeps; then refine physical parameters only if phase coherence appears.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -128,6 +129,7 @@ python spice_412_export.py --run --ngspice-path "C:/path/to/ngspice.exe"
 python spice_412_export.py --run --ngspice-path wsl:ngspice
 python spice_412_refine_nonlinearity.py --ngspice-path wsl:ngspice
 python spice_412_component_realism.py --ngspice-path wsl:ngspice
+python spice_412_component_phase_lock.py --ngspice-path wsl:ngspice
 ```
 
 Key bridge modes:
@@ -403,3 +405,15 @@ Standalone result from `python spice_412_component_realism.py --ngspice-path wsl
 - Component-plausible rows crossing bridge ratio >1.5 were `c008`, `c013`, `c018`, `c023`, `c028`, and `c033`; however their target phase lock stayed low, with the closest behavioral-proxy row `c008` at lock `0.017518`, purity `0.989155`, bridge ratio `1.647442`, and target-band growth `1.284235`.
 - No `spice_component_bridge_candidate` or `spice_component_near_miss` promoted. Linear and shuffled controls stayed dead, but weak-nonlinearity and detuned controls showed target-band leakage under the current criterion, so `controls_remained_dead=False`.
 - Current recommendation: deeper component sweep and spatial phase-matching modeling before physical parameter refinement.
+
+## Latest SPICE 4->8->12 Component Phase Lock
+
+Standalone result from `python spice_412_component_phase_lock.py --ngspice-path wsl:ngspice --max-cases 84`:
+
+- Added `spice_412_component_phase_lock.py` and generated `runs/spice_412_component_phase_lock/spice_412_component_phase_lock_summary.json`, `spice_412_component_phase_lock_summary.csv`, `spice_412_component_phase_lock_timeseries.csv`, and `README_SPICE_412_COMPONENT_PHASE_LOCK.md`.
+- Focused on seed rows `c008`, `c013`, `c018`, `c023`, `c028`, and `c033`, sweeping target/generated detuning, coupling sign/orientation, coupling strength, Q/load shaping, passive trap phase shapers, and limiter/loss scale.
+- Run result: 84 discovery rows and 5 controls ran successfully under WSL `ngspice-42`; no convergence failures.
+- Many rows kept bridge ratio >1.5, but phase lock did not materially recover. Best phase-lock row was `p048` (`varactor_pair_mixer`, coupling orientation) with lock `0.030889`, bridge ratio `0.633056`, purity `0.914026`, and coherent target growth `1.03079`.
+- Best high-bridge row was `p050` (`saturable_inductor_core`, coupling orientation) with bridge ratio `124.013`, lock only `0.025185`, purity `0.992149`, and coherent growth `2.21288`, so it was rejected for phase incoherence.
+- No row reached phase lock >0.50 or >0.90. No phase candidate or near miss promoted.
+- Linear, shuffled, and off-resonance controls stayed dead; weak-nonlinearity and detuned controls still leaked under coherent-growth criteria. Current recommendation: spatial phase-matching model or rejection of the current component topology before deeper sweeps.
