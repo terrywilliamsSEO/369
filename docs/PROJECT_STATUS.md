@@ -39,12 +39,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `spice_412_refine_nonlinearity.py` script runs a focused normalized-scale ngspice refinement sweep over nonlinear component implementations. It found two source-only behavioral proxy rows above bridge ratio 1.5 with clean linear controls; the closest row had lock 0.996193, purity 0.981658, bridge ratio 1.563169, target-band growth 1.276714, and generated-envelope CV 0.091533. No component-plausible diode/varactor/saturable/hybrid row promoted.
 - The standalone `spice_412_component_realism.py` script removes behavioral current mixing from discovery and sweeps component-plausible diode, varactor, saturable, hybrid, and trap networks. Six component rows crossed bridge ratio 1.5, but none phase-locked; the closest behavioral-proxy row had lock 0.017518, purity 0.989155, bridge ratio 1.647442, and no promotion. Weak-nonlinearity and detuned controls also leaked target-band response, so controls did not all stay dead.
 - The standalone `spice_412_component_phase_lock.py` script sweeps detuning, coupling orientation/sign, coupling strength, Q/load shaping, trap phase shapers, and limiter/loss around the six component bridge crossers. It preserved many high bridge ratios but found no row above phase lock 0.50; weak and detuned controls still leaked under coherent-growth scoring.
+- The standalone `spatial_phase_matching_412.py` script models a distributed 1D phase-matched topology for 4 -> 8 -> 12. It promoted 17 source-only spatial bridge candidates with clean controls; the best row had lock 0.999128, bridge ratio 4.748881, purity 0.997300, generated-envelope CV 0.053898, max phase jump 0.000683, and clean energy budget.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, and a component phase-lock sweep. The blocker for that branch is that the current component topology can generate target-band amplitude and bridge ratio without coherent target phase lock, while weak/detuned controls still leak. This points toward spatial phase-matching/topology modeling or rejection of the current component topology, not just more scalar parameter tuning.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, and a distributed phase-matching topology model. The blocker has narrowed: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model can recover lock with clean controls. The next question is whether that distributed mechanism survives SPICE ladder export and a physically plausible waveguide/phase-matching realization.
 
 ## Latest Magnetic Autolock Summary
 
@@ -663,15 +664,47 @@ Standalone result from `--max-cases 84`:
 - Coupling orientation produced the highest phase-lock score in this focused pass, but the absolute lock value remained only `0.030889`.
 - Current next fix: spatial phase-matching model or rejection of the current component topology before deeper scalar component sweeps.
 
+## Latest Spatial Phase Matching 4->8->12
+
+Script added:
+
+```bash
+python spatial_phase_matching_412.py
+```
+
+Outputs:
+
+- `runs/spatial_phase_matching_412/spatial_phase_matching_412_summary.json`
+- `runs/spatial_phase_matching_412/spatial_phase_matching_412_summary.csv`
+- `runs/spatial_phase_matching_412/spatial_phase_matching_412_timeseries.csv`
+- `runs/spatial_phase_matching_412/README_SPATIAL_PHASE_MATCHING_412.md`
+
+What it tests:
+
+- A normalized 1D distributed coupled-mode chain with explicit wave numbers, phase mismatch, quasi-phase-matching gratings, alternating coupling signs, backward-wave target options, group-velocity mismatch, nonlinear 4+4 and 4+8 mixing, and passive saturation loss.
+- Discovery rows are source-only at mode 4: no direct generated-mode drive, no direct target-mode drive, and no target-frequency injection.
+- Direct 4+8 is a separated ceiling denominator only.
+- Controls include randomized grating, linear/no-nonlinearity, detuned target, and shuffled frequency rows.
+
+Standalone result:
+
+- Full run result: 47 discovery rows and 4 controls; 17 rows promoted as `spatial_phase_bridge_candidate`, and 6 more were near misses.
+- Best promoted row was `s043 nonlinear_strength_1.55`: topology `co_directional_phase_matched`, lock `0.999128`, bridge ratio `4.748881`, purity `0.997300`, target coherent growth `20.196273`, generated-envelope CV `0.053898`, max phase jump `0.000683`, and energy budget error `3.44e-12`.
+- Explicit phase mismatch predicted failure: the mismatched rows fell to lock `0.026108` and `0.060735` with bridge ratios below `0.001`.
+- QPM outperformed the compact lumped and mismatched rows but did not fully promote: best QPM lock `0.744986`, bridge ratio `9.413271`, purity `0.970969`.
+- Linear, randomized grating, detuned target, and shuffled frequency controls stayed dead under the coherent-growth leakage score; max leakage score was `0.064712`.
+- Current interpretation: a plausible next physical path is distributed or waveguide-like phase matching rather than the current lumped LC component topology. This is topology-screening evidence, not hardware proof.
+- Current next fix: SPICE distributed ladder export, then physical waveguide/phase-matching refinement.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Build a spatial phase-matching/topology model for component-plausible 4 -> 8 -> 12, or explicitly reject the current lumped component topology before deeper scalar sweeps.
+1. Export a SPICE distributed ladder for the 4 -> 8 -> 12 phase-matched topology, then compare it to the normalized spatial model.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
-3. Refine physical component ranges only after the topology can produce coherent target phase lock with clean weak/detuned controls.
+3. Refine physical waveguide/phase-matching parameters before returning to lumped component ranges.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 5. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 6. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

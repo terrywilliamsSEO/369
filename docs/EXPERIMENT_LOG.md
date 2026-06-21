@@ -453,3 +453,24 @@ Standalone result:
 - Best high-bridge row was `p050` (`saturable_inductor_core`, coupling orientation): bridge ratio `124.013`, lock `0.025185`, purity `0.992149`, coherent growth `2.21288`; it was rejected for phase incoherence.
 - Weak-nonlinearity and detuned controls still leaked under coherent-growth criteria; linear, shuffled, and off-resonance controls stayed dead.
 - Current next fix: spatial phase-matching model or rejection of the current component topology before deeper scalar component sweeps.
+
+## Spatial Phase Matching 4->8->12
+
+Added `spatial_phase_matching_412.py`:
+
+- Builds a normalized 1D distributed coupled-mode model for source-only 4 -> generated 8 -> target 12 transfer.
+- Tracks explicit wave numbers `k4`, `k8`, `k12`, phase mismatch terms `delta_k_448 = k8 - 2*k4` and `delta_k_4812 = k12 - k8 - k4`, QPM grating period/duty, alternating sign topology, backward-wave target options, group-velocity mismatch, nonlinear 4+4 and 4+8 mixing, passive saturation loss, and energy budget.
+- Keeps discovery rows source-only: no direct 8 drive, no direct 12 drive, and no target-frequency injection.
+- Includes a separated direct 4+8 ceiling reference plus randomized grating, linear/no-nonlinearity, detuned target, and shuffled frequency controls.
+- Outputs go to `runs/spatial_phase_matching_412/spatial_phase_matching_412_summary.json`, `spatial_phase_matching_412_summary.csv`, `spatial_phase_matching_412_timeseries.csv`, and `README_SPATIAL_PHASE_MATCHING_412.md`.
+
+Standalone result:
+
+- Run command tested: `python spatial_phase_matching_412.py`.
+- 47 discovery rows and 4 controls ran in the normalized model.
+- Seventeen source-only rows promoted as `spatial_phase_bridge_candidate`; six more were near misses.
+- Best promoted row was `s043 nonlinear_strength_1.55`: co-directional phase-matched topology, lock `0.999128`, bridge ratio `4.748881`, purity `0.997300`, target coherent growth `20.196273`, generated-envelope CV `0.053898`, max phase jump `0.000683`, and energy budget error `3.44e-12`.
+- Mismatched rows failed as expected: locks `0.026108` and `0.060735`, bridge ratios below `0.001`.
+- QPM outperformed compact lumped and mismatched rows but stayed a near miss: best QPM lock `0.744986`, bridge ratio `9.413271`, purity `0.970969`.
+- Controls stayed dead under coherent-growth leakage scoring; max leakage score was `0.064712`.
+- Current next fix: SPICE distributed ladder export, then a physical waveguide/phase-matching model.

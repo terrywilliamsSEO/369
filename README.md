@@ -41,11 +41,12 @@ What has not survived yet:
 - The SPICE nonlinearity-refinement track found two source-only behavioral proxy rows that cross bridge ratio >1.5 with clean linear controls. The closest row is still behavioral-only, not component-plausible: lock 0.996193, purity 0.981658, bridge ratio 1.563169, target-band growth 1.276714.
 - The SPICE component-realism track forbids behavioral current mixing in discovery rows. Several component-plausible rows crossed bridge ratio >1.5, but all had very low phase lock near 0.02 and two controls leaked target-band response, so no component candidate or near miss promoted.
 - The SPICE component phase-lock track kept high component bridge ratios under detuning, coupling orientation, Q/load shaping, trap, and limiter sweeps, but no row exceeded phase lock 0.50. Weak and detuned controls still leaked under coherent-growth scoring.
+- The spatial phase-matching track shows that an explicit distributed topology can recover coherent 4 -> 8 -> 12 phase lock in the normalized model: 17 discovery rows promoted, best lock 0.999128, bridge ratio 4.748881, purity 0.997300, and controls stayed dead. This points toward distributed/waveguide-like validation rather than more lumped scalar tuning.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Model spatial phase matching or reject the current component topology before deeper component sweeps; then refine physical parameters only if phase coherence appears.
+- Export a distributed-ladder SPICE model and build a physical waveguide/phase-matching model before returning to component parameter refinement.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -130,6 +131,7 @@ python spice_412_export.py --run --ngspice-path wsl:ngspice
 python spice_412_refine_nonlinearity.py --ngspice-path wsl:ngspice
 python spice_412_component_realism.py --ngspice-path wsl:ngspice
 python spice_412_component_phase_lock.py --ngspice-path wsl:ngspice
+python spatial_phase_matching_412.py
 ```
 
 Key bridge modes:
@@ -417,3 +419,16 @@ Standalone result from `python spice_412_component_phase_lock.py --ngspice-path 
 - Best high-bridge row was `p050` (`saturable_inductor_core`, coupling orientation) with bridge ratio `124.013`, lock only `0.025185`, purity `0.992149`, and coherent growth `2.21288`, so it was rejected for phase incoherence.
 - No row reached phase lock >0.50 or >0.90. No phase candidate or near miss promoted.
 - Linear, shuffled, and off-resonance controls stayed dead; weak-nonlinearity and detuned controls still leaked under coherent-growth criteria. Current recommendation: spatial phase-matching model or rejection of the current component topology before deeper sweeps.
+
+## Latest Spatial Phase Matching 4->8->12
+
+Standalone result from `python spatial_phase_matching_412.py`:
+
+- Added `spatial_phase_matching_412.py` and generated `runs/spatial_phase_matching_412/spatial_phase_matching_412_summary.json`, `spatial_phase_matching_412_summary.csv`, `spatial_phase_matching_412_timeseries.csv`, and `README_SPATIAL_PHASE_MATCHING_412.md`.
+- The model is a normalized 1D distributed coupled-mode chain with explicit `k4`, `k8`, `k12`, `delta_k_448 = k8 - 2*k4`, `delta_k_4812 = k12 - k8 - k4`, quasi-phase-matching gratings, alternating sign patterns, backward-wave target options, group-velocity mismatch, passive saturation loss, and source-only 4 drive.
+- Discovery rows preserve no direct 8 drive, no direct 12 drive, and no target-frequency injection. The separated direct 4+8 row remains a ceiling denominator only.
+- Full run result: 47 discovery rows and 4 controls; 17 `spatial_phase_bridge_candidate` rows and 6 near misses promoted. Controls stayed dead with max leakage score `0.064712`.
+- Best row was `s043 nonlinear_strength_1.55`: topology `co_directional_phase_matched`, lock `0.999128`, bridge ratio `4.748881`, purity `0.997300`, target coherent growth `20.196273`, generated-envelope CV `0.053898`, max phase jump `0.000683`, and energy budget error `3.44e-12`.
+- QPM did not fully promote, but it outperformed compact lumped and deliberately mismatched rows: best QPM lock `0.744986`, bridge ratio `9.413271`; mismatched rows fell to lock `0.026108` and `0.060735`.
+- The compact lumped-equivalent row produced large target energy but low phase lock `0.436675`, so it was rejected for phase mismatch. This supports the hypothesis that coherent 4 -> 8 -> 12 transfer needs distributed phase matching rather than the previous lumped LC topology.
+- Current next fix: export a distributed-ladder SPICE model, then refine a physical waveguide/phase-matching realization.
