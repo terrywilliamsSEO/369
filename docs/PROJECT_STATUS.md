@@ -37,12 +37,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `physical_412_lc_bridge.py` script expresses that independent 4 -> 8 -> 12 bridge as three coupled nonlinear LC resonators under audio, low-RF, and normalized scale presets. All scale presets pass baseline/half/quarter dt gates with worst lock 0.992108, bridge ratio 1.606971, purity 0.922789, budget 0.0000510, generated-envelope CV 0.134693, max jump 0.971944 rad, and no direct 8/12 drive or target-frequency injection.
 - The standalone `spice_412_export.py` script now exports and runs ngspice-compatible audio, low-RF, normalized, nonlinear-variant, linear-control, and direct 4+8 reference netlists for the physical LC bridge. WSL ngspice was installed and the latest local run completed 15 of 19 netlists; 4 stiff behavioral/audio/RF rows failed to converge. The normalized behavioral proxy preserved strong lock and purity but not the Python bridge-ratio gain.
 - The standalone `spice_412_refine_nonlinearity.py` script runs a focused normalized-scale ngspice refinement sweep over nonlinear component implementations. It found two source-only behavioral proxy rows above bridge ratio 1.5 with clean linear controls; the closest row had lock 0.996193, purity 0.981658, bridge ratio 1.563169, target-band growth 1.276714, and generated-envelope CV 0.091533. No component-plausible diode/varactor/saturable/hybrid row promoted.
+- The standalone `spice_412_component_realism.py` script removes behavioral current mixing from discovery and sweeps component-plausible diode, varactor, saturable, hybrid, and trap networks. Six component rows crossed bridge ratio 1.5, but none phase-locked; the closest row had lock 0.016446, purity 0.986424, bridge ratio 1.573878, and no promotion. Weak-nonlinearity and detuned controls also leaked target-band response, so controls did not all stay dead.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, and a behavioral-only SPICE refinement candidate. The blocker for that branch is replacing behavioral mixing with component-plausible nonlinear elements, parameter sensitivity, and broader family-law replication, not the earlier baseline ledger residual.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, and a first component-realism sweep. The blocker for that branch is phase-locking component-plausible nonlinear networks while keeping controls clean, plus parameter sensitivity and broader family-law replication, not the earlier baseline ledger residual.
 
 ## Latest Magnetic Autolock Summary
 
@@ -597,13 +598,45 @@ Standalone result from `--max-discovery-cases 56`:
 - No component-plausible diode/varactor/saturable/hybrid row promoted. Successful promotion is behavioral-only.
 - Current next fix: component-level refinement to replace behavioral mixing, then a physical parameter sweep.
 
+## Latest SPICE 4->8->12 Component Realism
+
+Script added:
+
+```bash
+python spice_412_component_realism.py --ngspice-path wsl:ngspice
+```
+
+Outputs:
+
+- `runs/spice_412_component_realism/spice_412_component_realism_summary.json`
+- `runs/spice_412_component_realism/spice_412_component_realism_summary.csv`
+- `runs/spice_412_component_realism/spice_412_component_realism_timeseries.csv`
+- `runs/spice_412_component_realism/README_SPICE_412_COMPONENT_REALISM.md`
+
+What it tests:
+
+- Component-plausible nonlinear replacements for the behavioral proxy winner.
+- Discovery variants: `anti_parallel_diode_mixer`, `diode_bridge_mixer`, `varactor_pair_mixer`, `back_to_back_varactor_stack`, `saturable_inductor_core`, `coupled_saturable_transformer`, `hybrid_varactor_plus_saturable_inductor`, and `diode_plus_resonant_trap_network`.
+- Controls: `linear_no_nonlinearity_control`, `weak_nonlinearity_control`, `detuned_target_control`, `shuffled_frequency_control`, and separated direct 4+8 ceiling references.
+- Discovery rows remain source-only with no direct 8 drive, no direct 12 drive, and no target-frequency injection. Behavioral current mixing is forbidden for discovery rows.
+
+Standalone result from `--max-cases 44`:
+
+- 40 discovery rows were evaluated; 38 ran successfully and 2 failed to converge with ngspice `TRAN: Timestep too small`.
+- Bridge ratio >1.5 was crossed by `c008`, `c013`, `c018`, `c023`, `c028`, and `c033`, all component-plausible source-only rows.
+- No row promoted: those bridge-ratio crossers did not phase-lock. The closest component row was `c018` (`back_to_back_varactor_stack`) with lock `0.016446`, purity `0.986424`, bridge ratio `1.573878`, target-band growth `0.984463`, and plausible stress.
+- No near miss promoted because the near-miss gate requires lock >0.90, purity >0.80, bridge ratio >1.0, and clean controls.
+- Linear and shuffled controls stayed dead, but weak-nonlinearity and detuned controls showed target-band leakage under the current criterion. `controls_remained_dead=False`, with maximum leakage score `0.600079`.
+- Convergence failures were `c015` (`varactor_pair_mixer`) and `c035` (`hybrid_varactor_plus_saturable_inductor`), both at conservative max-step settings with `TRAN: Timestep too small` around `dvp12a`.
+- Current next fix: deeper component sweep and spatial phase-matching modeling before physical parameter refinement.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Refine component-level nonlinear models that can replace behavioral current mixing while keeping the clean linear-control result.
+1. Deepen component-plausible nonlinear sweeps, especially around phase-locking and clean weak/detuned controls.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
 3. Refine physical component ranges, nonlinear capacitance/mixing implementation, coupling implementation, and spatial phase matching.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.

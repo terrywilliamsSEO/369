@@ -39,11 +39,12 @@ What has not survived yet:
 - Independent validation and the first LC physicalization now preserve the strict 4 -> 8 -> 12 result outside the main harness. The LC track keeps audio, low-RF, and normalized scale presets source-only with no direct 8 drive, no direct 12 drive, and no target-frequency injection.
 - The SPICE export track now emits and runs CI-friendly ngspice netlists through WSL ngspice. In the latest run, 15 of 19 netlists ran successfully and 4 stiff behavioral/audio/RF rows failed to converge. The normalized behavioral proxy preserved strong lock and purity, but not the Python bridge-ratio gain.
 - The SPICE nonlinearity-refinement track found two source-only behavioral proxy rows that cross bridge ratio >1.5 with clean linear controls. The closest row is still behavioral-only, not component-plausible: lock 0.996193, purity 0.981658, bridge ratio 1.563169, target-band growth 1.276714.
+- The SPICE component-realism track forbids behavioral current mixing in discovery rows. Several component-plausible rows crossed bridge ratio >1.5, but all had very low phase lock near 0.02 and two controls leaked target-band response, so no component candidate or near miss promoted.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Refine nonlinear components, sweep physical parameters, and model spatial phase matching before trying geometry/evolve or a 369-specific stronger target servo.
+- Deepen component-realism sweeps, refine physical parameters, and model spatial phase matching before trying geometry/evolve or a 369-specific stronger target servo.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -126,6 +127,7 @@ python spice_412_export.py --run
 python spice_412_export.py --run --ngspice-path "C:/path/to/ngspice.exe"
 python spice_412_export.py --run --ngspice-path wsl:ngspice
 python spice_412_refine_nonlinearity.py --ngspice-path wsl:ngspice
+python spice_412_component_realism.py --ngspice-path wsl:ngspice
 ```
 
 Key bridge modes:
@@ -389,3 +391,15 @@ Standalone result from `python spice_412_refine_nonlinearity.py --ngspice-path w
 - Closest Python-LC row was `r042`: nonlinear strength scale `2.0`, limiter scale `2.0`, coupling scale `1.25`, drive scale `1.5`, default solver, maxstep scale `1.0`; lock `0.996193`, purity `0.981658`, bridge ratio `1.563169`, generated-envelope CV `0.091533`, max jump `0.289970`, target-band growth `1.276714`.
 - Linear no-nonlinearity controls remained dead: maximum linear leakage score `0.0`; target-band growth stayed `0`, purity stayed near `1.7e-6`, and target FFT peaks stayed at the source band.
 - No diode/varactor/saturable/hybrid component-plausible row promoted. The successful variants are behavioral-only, so the next step is component-level refinement to replace behavioral mixing, then a physical parameter sweep.
+
+## Latest SPICE 4->8->12 Component Realism
+
+Standalone result from `python spice_412_component_realism.py --ngspice-path wsl:ngspice --max-cases 44`:
+
+- Added `spice_412_component_realism.py` and generated `runs/spice_412_component_realism/spice_412_component_realism_summary.json`, `spice_412_component_realism_summary.csv`, `spice_412_component_realism_timeseries.csv`, and `README_SPICE_412_COMPONENT_REALISM.md`.
+- Discovery rows forbid behavioral current mixing, direct 8 drive, direct 12 drive, and target-frequency injection. Direct 4+8 rows are separated ceiling references only.
+- Focused normalized-scale sweep covered anti-parallel diode, diode bridge, varactor pair, back-to-back varactor stack, saturable inductor, coupled saturable transformer, hybrid varactor+saturable, and diode+resonant trap component families.
+- Run result: 40 discovery rows were evaluated; 38 ran successfully and 2 failed to converge with ngspice `TRAN: Timestep too small`.
+- Component-plausible rows crossing bridge ratio >1.5 were `c008`, `c013`, `c018`, `c023`, `c028`, and `c033`; however their target phase lock stayed low, with the closest component row `c018` at lock `0.016446`, purity `0.986424`, bridge ratio `1.573878`, and target-band growth `0.984463`.
+- No `spice_component_bridge_candidate` or `spice_component_near_miss` promoted. Linear and shuffled controls stayed dead, but weak-nonlinearity and detuned controls showed target-band leakage under the current criterion, so `controls_remained_dead=False`.
+- Current recommendation: deeper component sweep and spatial phase-matching modeling before physical parameter refinement.

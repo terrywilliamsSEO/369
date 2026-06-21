@@ -415,3 +415,21 @@ Standalone result:
 - Linear no-nonlinearity controls remained dead: maximum leakage score `0.0`, target-band growth `0`, purity near `1.7e-6`, and target FFT at the source frequency.
 - No diode/varactor/saturable/hybrid component-plausible row promoted; successful rows are behavioral-only.
 - Current next fix: component-level refinement to replace behavioral current mixing, then a physical parameter sweep.
+
+## SPICE 4->8->12 Component Realism
+
+Added `spice_412_component_realism.py`:
+
+- Replaces behavioral current mixing in discovery rows with component-plausible nonlinear networks: anti-parallel diode, diode bridge, varactor pair, back-to-back varactor stack, saturable inductor, coupled saturable transformer, hybrid varactor+saturable, and diode+resonant trap.
+- Keeps discovery rows source-only: no direct 8 drive, no direct 12 drive, and no target-frequency injection. Direct 4+8 rows remain separated ceiling references only.
+- Adds controls for linear/no-nonlinearity, weak nonlinearity, detuned target, and shuffled generated/target frequencies.
+- Outputs go to `runs/spice_412_component_realism/spice_412_component_realism_summary.json`, `spice_412_component_realism_summary.csv`, `spice_412_component_realism_timeseries.csv`, and `README_SPICE_412_COMPONENT_REALISM.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_component_realism.py --ngspice-path wsl:ngspice --max-cases 44`.
+- 40 discovery rows were evaluated; 38 ran successfully and 2 failed to converge with ngspice `TRAN: Timestep too small`.
+- Six source-only component rows crossed bridge ratio >1.5: `c008`, `c013`, `c018`, `c023`, `c028`, and `c033`.
+- None promoted because phase lock stayed very low. Closest component row was `c018` (`back_to_back_varactor_stack`): lock `0.016446`, purity `0.986424`, bridge ratio `1.573878`, target-band growth `0.984463`, and plausible stress.
+- Linear and shuffled controls stayed dead, but weak-nonlinearity and detuned controls leaked target-band response under the current criterion; `controls_remained_dead=False`.
+- Current next fix: deeper component sweep and spatial phase-matching modeling before physical parameter refinement.
