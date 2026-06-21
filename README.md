@@ -114,6 +114,8 @@ python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick
 python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick
 python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick
+python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick --sweeps
 ```
 
 Key bridge modes:
@@ -139,6 +141,7 @@ python tesla_369_lab.py --mode harmonic_bridge_family --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_dt_rescue --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick --sweeps
 ```
 
 ## Evidence Standard
@@ -317,3 +320,14 @@ Quick sweeps result from `runs/harmonic_bridge_substep_quadrature_quick_sweeps_s
 - Substep re-integration preserved the candidate: baseline substep-4 lock 0.9917, bridge ratio 1.531, and purity 0.925.
 - Classification: `budget_residual_source=trajectory_integration_error`, `candidate_pending_detuning_refine=True`, `candidate_numerically_fragile=False`, and no final promotion from this diagnostic mode alone.
 - Current recommendation: run a tight 4 -> 8 -> 12 target-detuning sweep plus an independent validation script/solver before promoting any family-law result.
+
+## Latest Harmonic Bridge 4->8->12 Detuning Refine Read
+
+Quick smoke result from `runs/harmonic_bridge_412_detuning_refine_quick_smoke3`:
+
+- The best refined 4 -> 8 -> 12 row used target detuning `-0.08`, Stage A offset `+0.040`, generated damping factor `1.05`, A->B coupling `0.90`, and limiter `0.03`.
+- It passed both `harmonic_bridge_candidate` and `strict_harmonic_bridge_candidate` across baseline, half, and quarter dt under substep-4 re-integration.
+- Worst all-dt metrics for that row: lock 0.992, bridge ratio 1.589, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max phase jump 0.972 rad, and near slips 0.
+- Nearby rows at Stage A `+0.045`, target detuning `-0.075`, and target detuning `-0.070` also passed strict gates.
+- Under the same substep accounting, 4 -> 8 -> 12 beat 3 -> 6 -> 9 and 5 -> 10 -> 15 after bridge-ratio gating. The 5 -> 10 -> 15 control still had high lock, but its bridge ratio stayed below 1.5.
+- This does not promote geometry/evolve. Current recommendation: independent validation solver first, then full family-law mapping.

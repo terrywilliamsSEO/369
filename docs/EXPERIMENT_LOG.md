@@ -312,3 +312,23 @@ Quick sweeps result:
 - Substep re-integration preserved the bridge: baseline substep-4 lock 0.9917, bridge ratio 1.531, purity 0.925.
 - The run marks `candidate_pending_detuning_refine=True`, `budget_residual_source=trajectory_integration_error`, and `candidate_numerically_fragile=False`.
 - Current next fix: tight 4 -> 8 -> 12 target-detuning sweep plus an independent validation script/solver before any final promotion.
+
+## Harmonic Bridge 4->8->12 Detuning Refine
+
+Added a substep-validated detuning refinement mode:
+
+- Starts from the substep-quadrature 4 -> 8 -> 12 candidate: target detuning `-0.08`, Stage A offset `+0.040`, generated damping factor `1.05`, A->B coupling `0.90`, limiter `0.04`.
+- Uses substep-4 re-integration for all primary candidate rows.
+- Quick mode runs a lead-centered one-axis smoke; `--quick --sweeps` expands to the requested target-detuning crossed grid over Stage A offset, generated damping, A->B coupling, and limiter strength.
+- Validates top rows at baseline, half, and quarter dt; sweep mode also adds eighth dt.
+- Keeps 3 -> 6 -> 9, 5 -> 10 -> 15, 4 -> 8 -> 12 no-detuning, and direct-reference ceiling rows in the ranking.
+- Discovery rows keep direct 2f drive, direct 3f drive, and target-frequency injection forbidden.
+
+Quick smoke result:
+
+- Best row: 4 -> 8 -> 12 with target detuning `-0.08`, Stage A offset `+0.040`, generated damping factor `1.05`, A->B coupling `0.90`, limiter `0.03`.
+- It passed `harmonic_bridge_candidate`, `strict_harmonic_bridge_candidate`, and `family_lead_candidate` across baseline/half/quarter dt under substep-4 accounting.
+- Worst all-dt metrics: phase lock 0.992, bridge ratio 1.589, spectral purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max phase jump 0.972 rad, near slips 0.
+- Nearby strict rows also appeared at Stage A `+0.045`, target detuning `-0.075`, and target detuning `-0.070`.
+- 4 -> 8 -> 12 beat 3 -> 6 -> 9 and 5 -> 10 -> 15 under the same substep accounting after bridge-ratio gating.
+- Current next fix: independent validation solver first, then full family-law mapping. Do not promote geometry/evolve from this mode alone.

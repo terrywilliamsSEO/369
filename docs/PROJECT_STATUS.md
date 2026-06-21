@@ -32,12 +32,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Harmonic dt rescue shows the 4 -> 8 -> 12 near miss can satisfy all strict non-budget phase/bridge/envelope gates across dt after target detuning, but baseline-dt budget error still blocks promotion.
 - Harmonic budget-ledger forensics shows the 4 -> 8 -> 12 budget residual collapses with timestep: baseline 0.04490, half-dt 0.00498, quarter-dt 0.000605, eighth-dt 0.000110, with estimated convergence order about 3.11. No single ledger component matches the residual.
 - Harmonic substep quadrature shows the residual is trajectory-integration sensitive: same-trajectory quadrature does not close baseline, but substep-4 re-integration closes baseline/half/quarter/eighth dt and preserves the strong 4 -> 8 -> 12 bridge.
+- Harmonic 4 -> 8 -> 12 detuning refinement finds strict substep-4 rows: the best quick row uses target detuning `-0.08` and limiter `0.03`, with all-dt lock 0.992, bridge ratio 1.589, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, and near slips 0.
 
 ## Current Blocker
 
-No passive model has passed the strict 4x runtime lock gate.
+No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 4x failure is now split between generated-stage lock quality, driven-model budget accounting, and family specificity. The narrow forensics search found budget-clean zero-slip rows, but they still miss lock/jump/envelope gates. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 dt-rescue, budget-ledger, and substep-quadrature smokes now point to trajectory-integration sensitivity, not phase instability, as the blocker for that family.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, so the blocker for that branch is independent validation and family-law confirmation, not the earlier baseline ledger residual.
 
 ## Latest Magnetic Autolock Summary
 
@@ -428,14 +429,40 @@ Quick sweeps result from `runs/harmonic_bridge_substep_quadrature_quick_sweeps_s
 - Classification: `budget_residual_source=trajectory_integration_error`, `candidate_pending_detuning_refine=True`, `candidate_numerically_fragile=False`.
 - This does not final-promote the row. Current next step: tight 4 -> 8 -> 12 target-detuning sweep plus an independent validation script/solver.
 
+## Latest Harmonic Bridge 4->8->12 Detuning Refine Summary
+
+Mode added:
+
+```bash
+python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick
+python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick --sweeps
+```
+
+What it tests:
+
+- The substep-validated 4 -> 8 -> 12 target-detuned basin around target detuning `-0.08`, Stage A offset `+0.040`, generated damping factor `1.05`, A->B coupling `0.90`, and limiter `0.04`.
+- Substep-4 re-integration for every primary candidate row.
+- Baseline/half/quarter-dt validation for top rows, with eighth dt added in sweep mode.
+- Comparison rows for the best current 3 -> 6 -> 9 and 5 -> 10 -> 15 rows under the same substep-4 accounting, plus 4 -> 8 -> 12 no-detuning and a direct-reference ceiling.
+- Direct 2f/3f drive and target-frequency injection remain forbidden in discovery rows.
+
+Quick smoke result from `runs/harmonic_bridge_412_detuning_refine_quick_smoke3`:
+
+- Best row: target detuning `-0.08`, Stage A offset `+0.040`, generated damping factor `1.05`, A->B coupling `0.90`, limiter `0.03`.
+- It passed `harmonic_bridge_candidate`, `strict_harmonic_bridge_candidate`, and `family_lead_candidate` across baseline, half, and quarter dt.
+- Worst all-dt metrics: lock 0.992, bridge ratio 1.589, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max phase jump 0.972 rad, and near slips 0.
+- Nearby strict passes were also found at Stage A `+0.045`, target detuning `-0.075`, and target detuning `-0.070`.
+- 4 -> 8 -> 12 beat the 3 -> 6 -> 9 and 5 -> 10 -> 15 comparison rows under the same substep accounting and bridge-ratio gating. The 5 -> 10 -> 15 control kept high lock but failed the bridge-ratio gate.
+- Current next fix: independent validation solver, then full family-law mapping. Do not promote geometry/evolve from this mode alone.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run a tight 4 -> 8 -> 12 target-detuning basin sweep using the substep-validated settings.
-2. Build an independent validation script/solver for the 4 -> 8 -> 12 substep result before any final promotion.
+1. Build an independent validation script/solver for the strict 4 -> 8 -> 12 substep result before any final promotion.
+2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
 3. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 4. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 5. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

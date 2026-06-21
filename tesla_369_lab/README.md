@@ -299,6 +299,8 @@ python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick
 python tesla_369_lab.py --mode harmonic_bridge_budget_ledger --quick --sweeps
 python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick
 python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick --sweeps
+python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick
+python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick --sweeps
 python tesla_369_lab.py --mode energy_audit --quick
 python tesla_369_lab.py --mode energy_audit --case cascade_full_ladder
 ```
@@ -421,6 +423,9 @@ harmonic_bridge_budget_ledger_timeseries.csv
 harmonic_bridge_substep_quadrature_summary.csv
 harmonic_bridge_substep_quadrature_components.csv
 harmonic_bridge_substep_quadrature_timeseries.csv
+harmonic_bridge_412_detuning_refine_summary.csv
+harmonic_bridge_412_detuning_refine_ranked.csv
+harmonic_bridge_412_detuning_refine_timeseries.csv
 energy_audit_summary.csv
 energy_ledger_timeseries.csv
 component_budget_breakdown.csv
@@ -455,6 +460,7 @@ The key question is not "did 369 look cool?" The key questions are:
 - In harmonic bridge dt rescue mode, is the 4->8->12 near miss a phase instability or a dt-sensitive budget/tuning issue?
 - In harmonic bridge budget ledger mode, does the 4->8->12 budget residual converge away with dt, or does a specific ledger term/non-passive artifact explain the failure?
 - In harmonic bridge substep quadrature mode, does independent substep accounting/re-integration close the 4->8->12 budget while preserving the bridge?
+- In harmonic bridge 4->8->12 detuning refine mode, does a nearby substep-4 target-detuned row pass strict harmonic gates and beat 3->6->9 plus 5->10->15 under the same accounting?
 - In energy-audit mode, does the effect survive after enforcing passive energy accounting?
 
 ## How to interpret receiver results
