@@ -46,12 +46,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `spice_412_varactor_nltl_design.py` script builds concrete 50/100/150 MHz varactor-loaded LC ladder netlists. All 22 ngspice rows ran, controls stayed dead, and behavioral dependency fell to 0.08, but no row promoted because 150 MHz spectral purity stayed low. The best row was 48 cells at 75 ohm with lock 0.896172, bridge ratio 1.287941, purity 0.006802, and plausible stress.
 - The standalone `spice_412_varactor_nltl_refine.py` script refines the realistic varactor line with larger cell counts, passive 150 MHz extraction/rejection, load/Q shaping, and stronger capacitance-swing settings. All 23 ngspice rows ran and controls stayed dead. Purity improved to 0.112843, with lock 0.996283 and bridge ratio 18.502732, but no row promoted because target purity remained below gate and the highest-purity row had unrealistic stress.
 - The standalone `acoustic_waveguide_412.py` script builds a low-frequency acoustic/phononic analog at 40/80/120 kHz. One source-only phase-matched row promoted: 48 cells, 0.058 m length, lock 0.999352, bridge ratio 4628.598328, 120 kHz purity 0.999611, generated-envelope CV 0.231570, max jump 0.007893, plausible pressure stress, and dead controls.
+- The standalone `spice_412_electrical_candidate_race.py` script races realistic electrical families at 50/100/150 MHz. All 26 ngspice rows ran successfully. No electrical candidate or near miss promoted; strongest was hybrid varactor-plus-magnetic with lock 0.964163, bridge ratio 13.199504, purity 0.102689, generated CV 0.086907, max jump 0.676598, aggressive-but-testable stress, and dead controls.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, and a promoted acoustic/phononic waveguide analog. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, and acoustic waveguide analog recover coherent lock with clean controls. Realistic varactor NLTL rows can recover lock and bridge gain with low behavioral dependency, but they still do not concentrate enough clean spectral power into the 150 MHz target band. The next question is whether the acoustic result can be turned into a credible nonlinear drive/readout bench design while electrical varactor part-family sweeps continue.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, a promoted acoustic/phononic waveguide analog, and an electrical candidate race across realistic line families. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, and acoustic waveguide analog recover coherent lock with clean controls. Realistic electrical rows can recover lock and bridge gain, but they still do not concentrate enough clean spectral power into the 150 MHz target band. The latest electrical race says target extraction helps, and hybrid varactor-plus-magnetic is stronger than pure varactor, but purity remains below the candidate and near-miss gates.
 
 ## Latest Magnetic Autolock Summary
 
@@ -924,6 +925,40 @@ Standalone result:
 - QPM did not beat the best co-directional phase-matched row in this first acoustic pass. The best QPM row kept high raw lock but only bridge ratio `0.013277`.
 - Current interpretation: the acoustic/phononic analog recovers clean 120 kHz purity where the realistic varactor NLTL did not. This is still a normalized drive/readout model, so the next fix is acoustic bench design focused on nonlinear transducer coupling, feedthrough suppression, and readout calibration.
 
+## Latest SPICE 4->8->12 Electrical Candidate Race
+
+Script added:
+
+```bash
+python spice_412_electrical_candidate_race.py --run --ngspice-path wsl:ngspice
+```
+
+Outputs:
+
+- `runs/spice_412_electrical_candidate_race/spice_412_electrical_candidate_race_summary.json`
+- `runs/spice_412_electrical_candidate_race/spice_412_electrical_candidate_race_summary.csv`
+- `runs/spice_412_electrical_candidate_race/spice_412_electrical_candidate_race_timeseries.csv`
+- `runs/spice_412_electrical_candidate_race/README_SPICE_412_ELECTRICAL_CANDIDATE_RACE.md`
+
+What it tests:
+
+- A bounded electrical implementation race at 50/100/150 MHz.
+- Candidate families: varactor-loaded NLTL, step-recovery diode line, nonlinear magnetic transmission line, hybrid varactor-plus-magnetic line, high-Q target extraction, distributed bandpass sections, magnetic target extraction, and dual-path phase-matched line.
+- Discovery rows remain source-only: no direct 100 MHz drive, no direct 150 MHz drive, no target-frequency injection, and no hidden behavioral target source.
+- Controls include linear fixed-component, weak-nonlinearity, detuned target velocity, shuffled frequency, too-short, too-lossy, phase-mismatched, target-extraction-only/no-nonlinearity, nonlinearity-only/no-extraction, and a separated direct 50+100 MHz ceiling reference.
+
+Standalone result:
+
+- All 26 rows ran successfully under WSL `ngspice-42`: 16 discovery rows, 9 controls, and one ceiling reference.
+- No `spice_electrical_412_candidate` promoted, and no `spice_electrical_412_near_miss` promoted. All discovery rows failed on low 150 MHz purity.
+- Strongest overall, best plausible/aggressive-stress purity, and best clean-control bridge ratio were all `e007 hybrid_varactor_plus_magnetic_line`.
+- Best row metrics: lock `0.964163`, bridge ratio `13.199504`, 150 MHz purity `0.102689`, target coherent growth `1.070849`, generated-envelope CV `0.086907`, target-envelope CV `0.184348`, max phase jump `0.676598`, near slips `0`, aggressive-but-testable stress, behavioral dependency `0.20`.
+- Target extraction/rejection helped purity but did not solve it: extraction best `0.102689` versus raw-line best `0.032538`, still far below the `0.80` candidate gate.
+- Pure varactor rows remained low-purity: best raw varactor purity was `0.032538`; high-Q extraction varactor rows topped out at `0.042790`.
+- Step-recovery and pure magnetic proxies did not compete in this first pass; their best purity values remained near zero.
+- Controls stayed dead with max leakage score `0.0`.
+- Current interpretation: pure varactor NLTL should not remain the only electrical route. The next electrical refinement should focus on hybrid varactor-plus-magnetic topology and more physical nonlinear magnetic/step-recovery component models, while the acoustic demo branch remains the stronger purity path.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
@@ -931,7 +966,7 @@ Do not promote to `geometry369` yet.
 Next options:
 
 1. Convert the promoted acoustic/phononic waveguide analog into a bench-oriented nonlinear drive/readout design.
-2. Continue varactor NLTL refinement with real part families, capacitance ratios, bias, drive, and phase-velocity loading before PCB layout.
+2. Refine hybrid varactor-plus-magnetic and nonlinear magnetic electrical line models before committing to PCB layout.
 3. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 5. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.

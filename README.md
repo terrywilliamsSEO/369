@@ -48,11 +48,12 @@ What has not survived yet:
 - The bench-oriented varactor NLTL SPICE design exports concrete 50/100/150 MHz varactor-diode loaded LC ladders. All 22 ngspice rows ran successfully, but no row promoted: the best 48-cell/75-ohm line reached lock 0.896172 and bridge ratio 1.287941 with plausible stress and low behavioral dependency 0.08, but 150 MHz spectral purity stayed only 0.006802.
 - The varactor NLTL refinement raises 150 MHz purity but still does not promote. All 23 ngspice rows ran; the highest-purity row used 96 cells, 100 ohm, and passive extraction plus rejection, reaching lock 0.996283, bridge ratio 18.502732, purity 0.112843, and behavioral dependency 0.08, but component stress was unrealistic and purity remained below the 0.80 gate.
 - The acoustic waveguide parallel simulation promotes a low-frequency 40/80/120 kHz phase-matched analog. The best source-only row is a 48-cell, 0.058 m guide with lock 0.999352, bridge ratio 4628.598328, purity 0.999611, generated-envelope CV 0.231570, max phase jump 0.007893, plausible pressure stress, and dead controls.
+- The electrical candidate race runs 26 ngspice rows across varactor, step-recovery, magnetic, hybrid, high-Q extraction, distributed bandpass, and dual-path line families. No realistic electrical candidate or near miss promoted; the strongest row was hybrid varactor-plus-magnetic with lock 0.964163, bridge ratio 13.199504, purity 0.102689, plausible/aggressive stress, and dead controls.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Convert the acoustic waveguide candidate into a bench/readout design, and continue a deeper varactor BOM/part-family sweep before PCB layout.
+- Convert the acoustic waveguide candidate into a bench/readout design, and shift the electrical route toward hybrid varactor-plus-magnetic refinement before PCB layout.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -144,6 +145,7 @@ python physical_waveguide_412.py
 python spice_412_varactor_nltl_design.py --run --ngspice-path wsl:ngspice
 python spice_412_varactor_nltl_refine.py --run --ngspice-path wsl:ngspice
 python acoustic_waveguide_412.py
+python spice_412_electrical_candidate_race.py --run --ngspice-path wsl:ngspice
 ```
 
 Key bridge modes:
@@ -526,3 +528,17 @@ Standalone result from `python acoustic_waveguide_412.py`:
 - Estimated physical scale is bench-sized: 40 kHz source, 0.058 m guide length for the promoted row, peak pressure about `329 Pa`, plausible stress, and transducer feedthrough risk about `0.024`.
 - Linear/no-nonlinearity, weak-nonlinearity, detuned-target, phase-mismatched, shuffled-frequency, too-short, and too-lossy controls stayed dead with max leakage score `0.0`.
 - Current read: the acoustic analog recovers clean 120 kHz purity in a normalized phase-matched waveguide model. The next fix is acoustic bench/readout design, with deeper varactor BOM sweeps remaining a parallel electrical path.
+
+## Latest SPICE 4->8->12 Electrical Candidate Race
+
+Standalone result from `python spice_412_electrical_candidate_race.py --run --ngspice-path wsl:ngspice`:
+
+- Added `spice_412_electrical_candidate_race.py` and generated a bounded electrical family race at 50/100/150 MHz.
+- Outputs are written to `runs/spice_412_electrical_candidate_race/spice_412_electrical_candidate_race_summary.json`, `spice_412_electrical_candidate_race_summary.csv`, `spice_412_electrical_candidate_race_timeseries.csv`, and `README_SPICE_412_ELECTRICAL_CANDIDATE_RACE.md`.
+- Race coverage: varactor-loaded NLTL, step-recovery diode line, nonlinear magnetic transmission line, hybrid varactor-plus-magnetic line, high-Q target extraction, distributed bandpass sections, magnetic target extraction, and dual-path phase-matched line.
+- All 26 rows ran successfully under WSL `ngspice-42`: 16 discovery rows, 9 controls, and one direct 50+100 MHz ceiling reference.
+- No `spice_electrical_412_candidate` or `spice_electrical_412_near_miss` promoted. Every discovery row was rejected for low 150 MHz purity.
+- Strongest overall, best purity under plausible/aggressive stress, and best bridge ratio were all `e007 hybrid_varactor_plus_magnetic_line`: lock `0.964163`, bridge ratio `13.199504`, purity `0.102689`, target growth `1.070849`, generated-envelope CV `0.086907`, max phase jump `0.676598`, aggressive-but-testable stress, and behavioral dependency `0.20`.
+- Target extraction/rejection helped but did not solve purity: extraction best purity `0.102689` versus raw-line best `0.032538`, still far below the `0.80` candidate gate.
+- Controls stayed dead with max leakage score `0.0`.
+- Current read: pure varactor NLTL should no longer be the only electrical route. The next electrical pass should refine hybrid varactor-plus-magnetic topology and nonlinear magnetic component models, while the acoustic demo branch remains the strongest purity path.

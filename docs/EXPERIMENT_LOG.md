@@ -612,3 +612,27 @@ Standalone result:
 - The phase-mismatched control failed materially, with bridge ratio `0.000026` and purity `0.009303`; linear, weak, detuned, mismatched, shuffled, too-short, and too-lossy controls stayed dead with max leakage score `0.0`.
 - QPM did not outperform the best co-directional phase-matched row in this first acoustic pass; the best QPM row had high raw lock but bridge ratio only `0.013277`.
 - Current interpretation: acoustic/phononic phase matching can recover clean 120 kHz target purity in the normalized model. The next fix is a bench-oriented acoustic design for nonlinear drive/readout and transducer feedthrough suppression, while electrical varactor BOM sweeps continue as a parallel path.
+
+## SPICE 4->8->12 Electrical Candidate Race
+
+Added `spice_412_electrical_candidate_race.py`:
+
+- Runs a bounded ngspice race across realistic/component-adjacent electrical line families at 50, 100, and 150 MHz.
+- Candidate families: `varactor_loaded_nltl`, `step_recovery_diode_line`, `nonlinear_magnetic_transmission_line`, `hybrid_varactor_plus_magnetic_line`, `varactor_line_with_high_q_target_extraction`, `varactor_line_with_distributed_bandpass_sections`, `magnetic_line_with_target_extraction`, and `dual_path_phase_matched_line`.
+- Tracks representative sweep axes: cell count, impedance, line length, phase velocity trims, extraction Q, rejection traps, target bandpass coupling, drive amplitude, loss, terminal matching, nonlinear strength, varactor stack/bias, step-recovery proxy strength, magnetic strength, hybrid relative phase, and QPM/sign flips.
+- Keeps discovery rows source-only: no direct 100 MHz drive, no direct 150 MHz drive, no target-frequency injection, and no hidden behavioral target source.
+- Controls include linear fixed-component line, weak-nonlinearity line, detuned target velocity, shuffled frequency, too-short line, too-lossy line, phase-mismatched line, target extraction only with no nonlinearity, nonlinearity only with target extraction removed, and a separated direct 50+100 MHz ceiling reference.
+- Outputs go to `runs/spice_412_electrical_candidate_race/spice_412_electrical_candidate_race_summary.json`, `spice_412_electrical_candidate_race_summary.csv`, `spice_412_electrical_candidate_race_timeseries.csv`, and `README_SPICE_412_ELECTRICAL_CANDIDATE_RACE.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_electrical_candidate_race.py --run --ngspice-path wsl:ngspice`.
+- All 26 rows ran successfully under WSL `ngspice-42`.
+- No full candidate and no near miss promoted; every discovery row was rejected for low 150 MHz purity.
+- Strongest family overall: `hybrid_varactor_plus_magnetic_line`.
+- Best row: `e007 hybrid_varactor_plus_magnetic_line`, with lock `0.964163`, bridge ratio `13.199504`, purity `0.102689`, target growth `1.070849`, generated-envelope CV `0.086907`, target-envelope CV `0.184348`, max phase jump `0.676598`, near slips `0`, aggressive-but-testable stress, and behavioral dependency `0.20`.
+- Best pure varactor row remained much lower in purity: raw varactor best `0.032538`, high-Q extraction varactor best `0.042790`.
+- Target extraction and rejection traps helped, raising best purity from raw-line `0.032538` to extraction-assisted `0.102689`, but did not solve the purity problem.
+- Step-recovery and pure magnetic proxy rows did not compete in this first pass; their target purity stayed near zero.
+- Controls stayed dead with max leakage score `0.0`.
+- Current interpretation: electrical lock and bridge gain remain recoverable, but clean 150 MHz target-band purity is still the electrical blocker. Pure varactor NLTL should be broadened or replaced by hybrid varactor-plus-magnetic refinement, while the acoustic demo branch remains the strongest purity route.
