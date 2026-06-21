@@ -47,11 +47,12 @@ What has not survived yet:
 - The physical waveguide interpretation layer maps the promoted TL result onto candidate media. The best first electrical bench analog is a nonlinear varactor-loaded transmission line near 50 MHz with estimated interaction length 0.382 m; acoustic/phononic rows look easiest for compact length, while plain PCB/microstrip is mostly length/nonlinearity limited.
 - The bench-oriented varactor NLTL SPICE design exports concrete 50/100/150 MHz varactor-diode loaded LC ladders. All 22 ngspice rows ran successfully, but no row promoted: the best 48-cell/75-ohm line reached lock 0.896172 and bridge ratio 1.287941 with plausible stress and low behavioral dependency 0.08, but 150 MHz spectral purity stayed only 0.006802.
 - The varactor NLTL refinement raises 150 MHz purity but still does not promote. All 23 ngspice rows ran; the highest-purity row used 96 cells, 100 ohm, and passive extraction plus rejection, reaching lock 0.996283, bridge ratio 18.502732, purity 0.112843, and behavioral dependency 0.08, but component stress was unrealistic and purity remained below the 0.80 gate.
+- The acoustic waveguide parallel simulation promotes a low-frequency 40/80/120 kHz phase-matched analog. The best source-only row is a 48-cell, 0.058 m guide with lock 0.999352, bridge ratio 4628.598328, purity 0.999611, generated-envelope CV 0.231570, max phase jump 0.007893, plausible pressure stress, and dead controls.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Start an acoustic waveguide simulation as a parallel low-frequency analog, and continue a deeper varactor BOM/part-family sweep before PCB layout.
+- Convert the acoustic waveguide candidate into a bench/readout design, and continue a deeper varactor BOM/part-family sweep before PCB layout.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -142,6 +143,7 @@ python spice_412_transmission_line_refine.py --run --ngspice-path wsl:ngspice
 python physical_waveguide_412.py
 python spice_412_varactor_nltl_design.py --run --ngspice-path wsl:ngspice
 python spice_412_varactor_nltl_refine.py --run --ngspice-path wsl:ngspice
+python acoustic_waveguide_412.py
 ```
 
 Key bridge modes:
@@ -511,3 +513,16 @@ Standalone result from `python spice_412_varactor_nltl_refine.py --run --ngspice
 - Increasing cell count helped purity up to the 80/96-cell region: best purity by cell count was 48=`0.010084`, 64=`0.050886`, 80=`0.107203`, 96=`0.112843`.
 - Passive target extraction/rejection helped purity, but not enough to reach a clean 150 MHz band. Controls stayed dead with max leakage score `0.137543`.
 - Current read: varactor NLTL phase lock and bridge gain are recoverable with low behavioral dependency, but clean target-band purity remains the blocker. Next fix is acoustic parallel simulation plus deeper component/BOM sweep before PCB layout.
+
+## Latest Acoustic Waveguide 4->8->12
+
+Standalone result from `python acoustic_waveguide_412.py`:
+
+- Added `acoustic_waveguide_412.py` and generated a low-frequency acoustic/phononic 1D waveguide analog at 40/80/120 kHz.
+- Outputs are written to `runs/acoustic_waveguide_412/acoustic_waveguide_412_summary.json`, `acoustic_waveguide_412_summary.csv`, `acoustic_waveguide_412_timeseries.csv`, and `README_ACOUSTIC_WAVEGUIDE_412.md`.
+- The model includes explicit `k4`, `k8`, `k12`, `delta_k_448`, `delta_k_4812`, forward waveguide transport, phase-matching gain, QPM signs, nonlinear local stiffness proxies for 40+40 -> 80 and 40+80 -> 120, damping/loss, boundary absorption, pressure/readout estimates, and source-only drive.
+- One source-only discovery row promoted: `a005 phase_matched_short_48cell`.
+- Promoted metrics: lock `0.999352`, bridge ratio `4628.598328`, 120 kHz purity `0.999611`, target coherent growth `26.944527`, generated-envelope CV `0.231570`, target-envelope CV `0.322958`, max phase jump `0.007893`, and near slips `0`.
+- Estimated physical scale is bench-sized: 40 kHz source, 0.058 m guide length for the promoted row, peak pressure about `329 Pa`, plausible stress, and transducer feedthrough risk about `0.024`.
+- Linear/no-nonlinearity, weak-nonlinearity, detuned-target, phase-mismatched, shuffled-frequency, too-short, and too-lossy controls stayed dead with max leakage score `0.0`.
+- Current read: the acoustic analog recovers clean 120 kHz purity in a normalized phase-matched waveguide model. The next fix is acoustic bench/readout design, with deeper varactor BOM sweeps remaining a parallel electrical path.

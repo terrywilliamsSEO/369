@@ -45,12 +45,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `physical_waveguide_412.py` script maps the promoted TL row into physical media candidates. It ranks a nonlinear varactor-loaded transmission line as the best first electrical bench analog at 50 MHz with required interaction length 0.382 m; acoustic/phononic and nonlinear magnetic lines are also plausible bench-scale, while plain PCB/microstrip is length/nonlinearity limited.
 - The standalone `spice_412_varactor_nltl_design.py` script builds concrete 50/100/150 MHz varactor-loaded LC ladder netlists. All 22 ngspice rows ran, controls stayed dead, and behavioral dependency fell to 0.08, but no row promoted because 150 MHz spectral purity stayed low. The best row was 48 cells at 75 ohm with lock 0.896172, bridge ratio 1.287941, purity 0.006802, and plausible stress.
 - The standalone `spice_412_varactor_nltl_refine.py` script refines the realistic varactor line with larger cell counts, passive 150 MHz extraction/rejection, load/Q shaping, and stronger capacitance-swing settings. All 23 ngspice rows ran and controls stayed dead. Purity improved to 0.112843, with lock 0.996283 and bridge ratio 18.502732, but no row promoted because target purity remained below gate and the highest-purity row had unrealistic stress.
+- The standalone `acoustic_waveguide_412.py` script builds a low-frequency acoustic/phononic analog at 40/80/120 kHz. One source-only phase-matched row promoted: 48 cells, 0.058 m length, lock 0.999352, bridge ratio 4628.598328, 120 kHz purity 0.999611, generated-envelope CV 0.231570, max jump 0.007893, plausible pressure stress, and dead controls.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, and a focused varactor NLTL refinement. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, and explicit LC transmission-line ladder recover coherent lock with clean controls. Realistic varactor NLTL rows can now recover lock and bridge gain with low behavioral dependency, but they still do not concentrate enough clean spectral power into the 150 MHz target band. The next question is whether an acoustic/phononic waveguide or a deeper real-part varactor sweep can recover purity without returning to behavioral mixing.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, and a promoted acoustic/phononic waveguide analog. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, and acoustic waveguide analog recover coherent lock with clean controls. Realistic varactor NLTL rows can recover lock and bridge gain with low behavioral dependency, but they still do not concentrate enough clean spectral power into the 150 MHz target band. The next question is whether the acoustic result can be turned into a credible nonlinear drive/readout bench design while electrical varactor part-family sweeps continue.
 
 ## Latest Magnetic Autolock Summary
 
@@ -890,15 +891,48 @@ Standalone result:
 - Current interpretation: low-behavioral varactor NLTL rows can recover lock and bridge gain, but clean 150 MHz target-band purity remains the physical blocker.
 - Current next fix: acoustic parallel simulation plus deeper component/BOM sweep before PCB layout.
 
+## Latest Acoustic Waveguide 4->8->12
+
+Script added:
+
+```bash
+python acoustic_waveguide_412.py
+```
+
+Outputs:
+
+- `runs/acoustic_waveguide_412/acoustic_waveguide_412_summary.json`
+- `runs/acoustic_waveguide_412/acoustic_waveguide_412_summary.csv`
+- `runs/acoustic_waveguide_412/acoustic_waveguide_412_timeseries.csv`
+- `runs/acoustic_waveguide_412/README_ACOUSTIC_WAVEGUIDE_412.md`
+
+What it tests:
+
+- A low-frequency 1D acoustic/phononic waveguide analog for source-only 40 kHz -> generated 80 kHz -> target 120 kHz transfer.
+- Explicit wave numbers `k4`, `k8`, `k12`, mismatch terms `delta_k_448 = k8 - 2*k4` and `delta_k_4812 = k12 - k8 - k4`, coherence length, QPM period, forward transport, group-velocity ratios, damping/loss, boundary absorption, and local nonlinear stiffness proxies.
+- Discovery rows remain source-only: no direct 80 kHz drive, no direct 120 kHz drive, and no target-frequency injection.
+- Controls include linear/no-nonlinearity, weak nonlinearity, detuned target velocity, phase mismatch, shuffled frequency, too-short guide, too-lossy guide, and a separated direct 40+80 kHz ceiling reference.
+
+Standalone result:
+
+- Sixteen rows were evaluated: eight discovery rows, seven controls, and one direct 40+80 ceiling reference.
+- One acoustic phase bridge candidate promoted: `a005 phase_matched_short_48cell`.
+- Promoted metrics: lock `0.999352`, bridge ratio `4628.598328`, 120 kHz spectral purity `0.999611`, target coherent growth `26.944527`, generated-envelope CV `0.231570`, target-envelope CV `0.322958`, max phase jump `0.007893`, and near slips `0`.
+- The promoted row is bench-scale in the normalized acoustic mapping: 48 cells, length `0.058 m`, peak pressure about `328.77 Pa`, plausible pressure stress, and transducer feedthrough risk `0.024243`.
+- Phase mismatch predicted failure under material metrics: the mismatched control had bridge ratio `0.000026`, purity `0.009303`, and stayed control-dead.
+- Linear, weak, detuned, mismatched, shuffled, too-short, and too-lossy controls stayed dead with max leakage score `0.0`.
+- QPM did not beat the best co-directional phase-matched row in this first acoustic pass. The best QPM row kept high raw lock but only bridge ratio `0.013277`.
+- Current interpretation: the acoustic/phononic analog recovers clean 120 kHz purity where the realistic varactor NLTL did not. This is still a normalized drive/readout model, so the next fix is acoustic bench design focused on nonlinear transducer coupling, feedthrough suppression, and readout calibration.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Start an acoustic/phononic waveguide simulation as a parallel low-frequency analog for target-band purity.
-2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
-3. Continue varactor NLTL refinement with real part families, capacitance ratios, bias, drive, and phase-velocity loading before PCB layout.
+1. Convert the promoted acoustic/phononic waveguide analog into a bench-oriented nonlinear drive/readout design.
+2. Continue varactor NLTL refinement with real part families, capacitance ratios, bias, drive, and phase-velocity loading before PCB layout.
+3. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 5. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 6. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

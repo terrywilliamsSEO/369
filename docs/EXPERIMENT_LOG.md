@@ -590,3 +590,25 @@ Standalone result:
 - Passive extraction/rejection helped, but not enough to reach the 0.30 near-miss purity gate.
 - Controls stayed dead with max leakage score `0.137543`.
 - Current interpretation: lock and bridge ratio can survive realistic low-behavioral varactor NLTL refinement, but target-band spectral cleanup is still far short. Acoustic/phononic simulation should run in parallel with any deeper electrical BOM sweep.
+
+## Acoustic Waveguide 4->8->12
+
+Added `acoustic_waveguide_412.py`:
+
+- Builds a low-frequency acoustic/phononic analog at 40, 80, and 120 kHz.
+- Uses a 1D distributed chain with forward waveguide transport, explicit phase velocity and group velocity controls, wave numbers `k4`, `k8`, `k12`, mismatch terms `delta_k_448` and `delta_k_4812`, coherence length, QPM period, damping/loss, boundary absorption, and local nonlinear stiffness proxies for 40+40 -> 80 and 40+80 -> 120.
+- Keeps discovery rows source-only: no direct 80 kHz drive, no direct 120 kHz drive, and no target-frequency injection.
+- Includes phase-matched, mild-dispersion, QPM, and deliberately controlled rows, plus a separated direct 40+80 kHz ceiling reference.
+- Controls include linear/no-nonlinearity, weak nonlinearity, detuned target velocity, phase mismatch, shuffled frequency, too-short guide, and too-lossy guide.
+- Outputs go to `runs/acoustic_waveguide_412/acoustic_waveguide_412_summary.json`, `acoustic_waveguide_412_summary.csv`, `acoustic_waveguide_412_timeseries.csv`, and `README_ACOUSTIC_WAVEGUIDE_412.md`.
+
+Standalone result:
+
+- Run command tested: `python acoustic_waveguide_412.py`.
+- Sixteen rows were evaluated: eight discovery rows, seven controls, and one separated ceiling reference.
+- One source-only row promoted as `acoustic_phase_bridge_candidate`: `a005 phase_matched_short_48cell`.
+- Promoted metrics: lock `0.999352`, bridge ratio `4628.598328`, 120 kHz purity `0.999611`, target coherent growth `26.944527`, generated-envelope CV `0.231570`, max phase jump `0.007893`, and near slips `0`.
+- The promoted row is bench-scale in this normalized acoustic mapping: 48 cells, interaction length `0.058 m`, peak pressure about `328.77 Pa`, plausible stress, and transducer feedthrough risk `0.024243`.
+- The phase-mismatched control failed materially, with bridge ratio `0.000026` and purity `0.009303`; linear, weak, detuned, mismatched, shuffled, too-short, and too-lossy controls stayed dead with max leakage score `0.0`.
+- QPM did not outperform the best co-directional phase-matched row in this first acoustic pass; the best QPM row had high raw lock but bridge ratio only `0.013277`.
+- Current interpretation: acoustic/phononic phase matching can recover clean 120 kHz target purity in the normalized model. The next fix is a bench-oriented acoustic design for nonlinear drive/readout and transducer feedthrough suppression, while electrical varactor BOM sweeps continue as a parallel path.
