@@ -1,0 +1,19 @@
+
+Note: No compatibility mode selected!
+
+
+Circuit: * normalized_412_bridge_linear_no_nonlinearity_control: physical 4->8->12 nonlinear lc bridge
+
+Doing analysis at TEMP = 27.000000 and TNOM = 27.000000
+
+Using transient initial conditions
+
+No. of Data Rows : 4269
+binary raw file "normalized_412_bridge_linear_no_nonlinearity_control.raw"
+ngspice-42 done
+
+Using SPARSE 1.3 as Direct Linear Solver
+The Inductive System consisting of
+ l1 l2 l3
+ k12 k23
+has an incomplete set of K couplings, (missing ones are implicitly 0)
