@@ -49,11 +49,13 @@ What has not survived yet:
 - The varactor NLTL refinement raises 150 MHz purity but still does not promote. All 23 ngspice rows ran; the highest-purity row used 96 cells, 100 ohm, and passive extraction plus rejection, reaching lock 0.996283, bridge ratio 18.502732, purity 0.112843, and behavioral dependency 0.08, but component stress was unrealistic and purity remained below the 0.80 gate.
 - The acoustic waveguide parallel simulation promotes a low-frequency 40/80/120 kHz phase-matched analog. The best source-only row is a 48-cell, 0.058 m guide with lock 0.999352, bridge ratio 4628.598328, purity 0.999611, generated-envelope CV 0.231570, max phase jump 0.007893, plausible pressure stress, and dead controls.
 - The electrical candidate race runs 26 ngspice rows across varactor, step-recovery, magnetic, hybrid, high-Q extraction, distributed bandpass, and dual-path line families. No realistic electrical candidate or near miss promoted; the strongest row was hybrid varactor-plus-magnetic with lock 0.964163, bridge ratio 13.199504, purity 0.102689, plausible/aggressive stress, and dead controls.
+- The hybrid varactor-plus-magnetic refinement improves the best electrical 150 MHz purity to 0.450171 and promotes three near misses, but no full electrical candidate. Best row `h024` keeps lock 0.951055 and bridge ratio 57.258300 with aggressive-but-testable stress; controls stayed dead.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
 - Convert the acoustic waveguide candidate into a bench/readout design, and shift the electrical route toward hybrid varactor-plus-magnetic refinement before PCB layout.
+- For the electrical route, focus next on hybrid magnetic component realism and target extraction, not pure varactor NLTL alone.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -146,6 +148,7 @@ python spice_412_varactor_nltl_design.py --run --ngspice-path wsl:ngspice
 python spice_412_varactor_nltl_refine.py --run --ngspice-path wsl:ngspice
 python acoustic_waveguide_412.py
 python spice_412_electrical_candidate_race.py --run --ngspice-path wsl:ngspice
+python spice_412_hybrid_magnetic_refine.py --run --ngspice-path wsl:ngspice
 ```
 
 Key bridge modes:
@@ -542,3 +545,18 @@ Standalone result from `python spice_412_electrical_candidate_race.py --run --ng
 - Target extraction/rejection helped but did not solve purity: extraction best purity `0.102689` versus raw-line best `0.032538`, still far below the `0.80` candidate gate.
 - Controls stayed dead with max leakage score `0.0`.
 - Current read: pure varactor NLTL should no longer be the only electrical route. The next electrical pass should refine hybrid varactor-plus-magnetic topology and nonlinear magnetic component models, while the acoustic demo branch remains the strongest purity path.
+
+## Latest SPICE 4->8->12 Hybrid Magnetic Refinement
+
+Standalone result from `python spice_412_hybrid_magnetic_refine.py --run --ngspice-path wsl:ngspice --timeout 180`:
+
+- Added `spice_412_hybrid_magnetic_refine.py` and generated a focused refinement around the prior hybrid varactor-plus-magnetic race winner.
+- Outputs are written to `runs/spice_412_hybrid_magnetic_refine/spice_412_hybrid_magnetic_refine_summary.json`, `spice_412_hybrid_magnetic_refine_summary.csv`, `spice_412_hybrid_magnetic_refine_timeseries.csv`, and `README_SPICE_412_HYBRID_MAGNETIC_REFINE.md`.
+- Sweep coverage: hybrid section placement, magnetic saturation/loss/bias proxies, varactor swing/bias/stacking, independent phase-velocity trim, passive 150 MHz extraction/rejection cleanup, output loading, and stress-reduction rows.
+- The final run evaluated 37 rows: 25 discovery rows, 11 controls, and one separated direct 50+100 MHz ceiling reference. 28 rows ran successfully and 9 aggressive discovery rows failed convergence.
+- No full `spice_hybrid_magnetic_412_candidate` promoted because 150 MHz purity stayed below `0.80`.
+- Three `spice_hybrid_magnetic_412_near_miss` rows promoted above the `0.30` purity gate.
+- Best row: `h024 varactor_first_then_magnetic`, lock `0.951055`, bridge ratio `57.258300`, 150 MHz purity `0.450171`, target coherent growth `0.923077`, generated-envelope CV `0.174921`, max phase jump `0.103864`, aggressive-but-testable stress, and behavioral dependency `0.20`.
+- Best growth-preserving near miss: `h025`, lock `0.950309`, bridge ratio `62.726998`, purity `0.428616`, target coherent growth `1.055082`, generated CV `0.238262`, and aggressive-but-testable stress.
+- Controls stayed dead with max leakage score `0.0`; pure varactor control purity was `0.100477`, and pure magnetic control purity was effectively zero.
+- Current read: hybrid varactor-plus-magnetic clearly beats pure varactor and pure magnetic controls. Mild phase-velocity trim plus varactor-first placement matters most in this pass, but full electrical promotion still needs much cleaner 150 MHz spectral concentration.
