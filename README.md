@@ -36,11 +36,12 @@ What has not survived yet:
 - Harmonic dt rescue shows the best 4 -> 8 -> 12 target-detuned row is not a phase instability: strict non-budget metrics survive baseline/half/quarter dt, but baseline-dt budget error still blocks promotion.
 - Harmonic budget-ledger forensics shows that 4 -> 8 -> 12 budget residual converges away strongly through eighth dt and no single ledger component matches the residual magnitude; it is currently classified as numerical ledger sensitivity, not promotion.
 - Harmonic substep quadrature independently validates the 4 -> 8 -> 12 near-candidate as trajectory-integration sensitive: trajectory-preserving quadrature does not close baseline budget, but substep-4 re-integration closes baseline/half/quarter/eighth dt while preserving lock, bridge ratio, purity, envelope CV, and phase-jump gates.
+- Independent validation and the first LC physicalization now preserve the strict 4 -> 8 -> 12 result outside the main harness. The LC track keeps audio, low-RF, and normalized scale presets source-only with no direct 8 drive, no direct 12 drive, and no target-frequency injection.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Run a tight 4 -> 8 -> 12 target-detuning basin sweep and an independent validation script for the substep re-integration result before trying geometry/evolve or a 369-specific stronger target servo.
+- Validate the physicalized 4 -> 8 -> 12 bridge in SPICE/ngspice, then refine physical parameters and spatial phase matching before trying geometry/evolve or a 369-specific stronger target servo.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -117,6 +118,7 @@ python tesla_369_lab.py --mode harmonic_bridge_substep_quadrature --quick --swee
 python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick
 python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick --sweeps
 python independent_validate_412.py
+python physical_412_lc_bridge.py
 ```
 
 Key bridge modes:
@@ -343,3 +345,14 @@ Standalone result from `python independent_validate_412.py`:
 - Candidate drive remained source-only 4: no direct 8 drive, no direct 12 drive, and no target-frequency injection. The direct 4+8 row is used only as a ceiling denominator for bridge ratio.
 - Material differences from the main harness: none. The candidate is marked `independent_validation_passed=True`.
 - Current recommendation: full family-law mapping and broader validation before any geometry/evolve promotion.
+
+## Latest Physical 4->8->12 LC Bridge Read
+
+Standalone result from `python physical_412_lc_bridge.py`:
+
+- The script maps the independent strict 4 -> 8 -> 12 candidate onto three coupled nonlinear LC resonators with `L1/C1/R1`, `L2/C2/R2`, and `L3/C3/R3`, plus Q factors, weak linear coupling, varactor-like quartic capacitance, nonlinear mixing, and passive soft-limiter loss.
+- Outputs are written to `runs/physical_412_lc_bridge/physical_412_summary.json`, `physical_412_summary.csv`, `physical_412_timeseries.csv`, and `README_PHYSICAL_412_LC_BRIDGE.md`.
+- All audio-scale, low-RF-scale, and arbitrary-normalized-scale rows passed baseline/half/quarter dt gates. Worst metrics: lock 0.992108, bridge ratio 1.606971, purity 0.922789, budget 0.0000510, generated-envelope CV 0.134693, target-envelope CV 0.035824, max jump 0.971944 rad, near slips 0.
+- Representative audio-scale parameters: f=(440, 883.894, 1309.862) Hz, L=(13.08 mH, 6.90 mH, 4.47 mH), C=(10 uF, 4.7 uF, 3.3 uF), R=(0.912, 0.901, 0.480) ohm, Q=(39.7, 42.5, 76.8), all mild. Peak voltages were about 8.70 V, 7.45 V, and 10.39 V.
+- The LC read remains source-only: no direct 8 drive, no direct 12 drive, and no target-frequency injection. The direct 4+8 row is still only a ceiling denominator.
+- Current recommendation: SPICE/ngspice validation first, then physical parameter refinement and spatial phase-matching modeling.

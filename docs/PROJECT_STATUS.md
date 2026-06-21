@@ -34,12 +34,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Harmonic substep quadrature shows the residual is trajectory-integration sensitive: same-trajectory quadrature does not close baseline, but substep-4 re-integration closes baseline/half/quarter/eighth dt and preserves the strong 4 -> 8 -> 12 bridge.
 - Harmonic 4 -> 8 -> 12 detuning refinement finds strict substep-4 rows: the best quick row uses target detuning `-0.08` and limiter `0.03`, with all-dt lock 0.992, bridge ratio 1.589, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, and near slips 0.
 - The standalone `independent_validate_412.py` script independently reproduces the strict 4 -> 8 -> 12 candidate without importing the main harness: baseline/half/quarter dt all pass, worst lock 0.992, bridge ratio 1.607, purity 0.923, budget 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, near slips 0, and `independent_validation_passed=True`.
+- The standalone `physical_412_lc_bridge.py` script expresses that independent 4 -> 8 -> 12 bridge as three coupled nonlinear LC resonators under audio, low-RF, and normalized scale presets. All scale presets pass baseline/half/quarter dt gates with worst lock 0.992108, bridge ratio 1.606971, purity 0.922789, budget 0.0000510, generated-envelope CV 0.134693, max jump 0.971944 rad, and no direct 8/12 drive or target-frequency injection.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows and standalone independent validation, so the blocker for that branch is broader family-law confirmation and replication beyond the quick validator, not the earlier baseline ledger residual.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, and a first LC physicalization, so the blocker for that branch is circuit-level validation, physical parameter refinement, and broader family-law replication, not the earlier baseline ledger residual.
 
 ## Latest Magnetic Autolock Summary
 
@@ -487,14 +488,48 @@ Standalone result:
 - No material differences from the main harness were detected. The bridge ratio is slightly higher because the standalone reference denominator is candidate-specific.
 - Current next fix: full family-law mapping and broader independent replication before any geometry/evolve promotion.
 
+## Latest Physical 4->8->12 LC Bridge Summary
+
+Script added:
+
+```bash
+python physical_412_lc_bridge.py
+```
+
+Outputs:
+
+- `runs/physical_412_lc_bridge/physical_412_summary.json`
+- `runs/physical_412_lc_bridge/physical_412_summary.csv`
+- `runs/physical_412_lc_bridge/physical_412_timeseries.csv`
+- `runs/physical_412_lc_bridge/README_PHYSICAL_412_LC_BRIDGE.md`
+
+What it tests:
+
+- A normalized but physically interpretable three-LC version of the independently validated strict 4 -> 8 -> 12 bridge.
+- Scale presets: `audio-scale`, `low-RF-scale`, and `arbitrary-normalized-scale`.
+- Resonator values computed from `f = 1 / (2*pi*sqrt(LC))`, with `R` derived from the validated damping/Q values.
+- Weak linear coupling, varactor-like quartic capacitance, nonlinear mixing, and passive soft-limiter loss.
+- Source-only drive on resonator 1. No direct generated-mode drive, no direct target-mode drive, and no target-frequency injection.
+- Direct 4+8 is still used only as a bridge-ratio ceiling denominator.
+
+Standalone result:
+
+- `all_dt_all_scales_passed=True`.
+- Worst all-dt/all-scale metrics: lock 0.992108, bridge ratio 1.606971, purity 0.922789, budget 0.0000510, generated-envelope CV 0.134693, target-envelope CV 0.035824, max phase jump 0.971944 rad, near slips 0.
+- Audio-scale representative values: f=(440, 883.894, 1309.862) Hz, L=(13.08 mH, 6.90 mH, 4.47 mH), C=(10 uF, 4.7 uF, 3.3 uF), R=(0.912, 0.901, 0.480) ohm, Q=(39.7, 42.5, 76.8), all mild.
+- Low-RF representative values: f=(1.0 MHz, 2.009 MHz, 2.977 MHz), L=(25.33 uH, 13.36 uH, 8.66 uH), C=(1 nF, 470 pF, 330 pF), R=(4.01, 3.97, 2.11) ohm, Q=(39.7, 42.5, 76.8), all mild.
+- Linear coupling fractions are weak at about 0.00427 and 0.00420. The aggressive assumption is the nonlinear mixing strength, not the LC/Q values.
+- Current next fix: SPICE/ngspice validation first, then physical parameter refinement and spatial phase-matching modeling.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run full family-law mapping and broader independent replication now that the strict 4 -> 8 -> 12 candidate passed standalone validation.
+1. Run SPICE/ngspice validation of the physicalized 4 -> 8 -> 12 LC bridge.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
-3. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
-4. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
-5. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.
+3. Refine physical component ranges, nonlinear capacitance strength, coupling implementation, and spatial phase matching.
+4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
+5. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
+6. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

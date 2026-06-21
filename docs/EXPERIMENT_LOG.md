@@ -349,3 +349,22 @@ Standalone result:
 - Worst all-dt metrics: lock 0.992, bridge ratio 1.607, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max phase jump 0.972 rad, near slips 0.
 - No material differences from the main harness were flagged. The bridge ratio is slightly higher than the harness report because the standalone denominator is candidate-specific.
 - Current next fix: full family-law mapping and broader replication before any geometry/evolve promotion.
+
+## Physical 4->8->12 LC Bridge
+
+Added `physical_412_lc_bridge.py`:
+
+- Translates the independently validated strict 4 -> 8 -> 12 candidate into a normalized but physically interpretable nonlinear LC model.
+- Represents three resonators as `L1/C1/R1`, `L2/C2/R2`, and `L3/C3/R3`, computes resonant frequencies with `f = 1 / (2*pi*sqrt(LC))`, and derives Q/R from the validated damping constants.
+- Includes `audio-scale`, `low-RF-scale`, and `arbitrary-normalized-scale` presets.
+- Reports weak linear coupling coefficients, varactor-like nonlinear capacitance strength, nonlinear mixing, passive soft-limiter loss, joule-scale drive work, stored energy, resistive loss, limiter loss, peak voltages, and peak currents.
+- Keeps discovery rows source-only: no direct 8 drive, no direct 12 drive, and no target-frequency injection. Direct 4+8 remains only a ceiling denominator.
+- Outputs go to `runs/physical_412_lc_bridge/physical_412_summary.json`, `physical_412_summary.csv`, `physical_412_timeseries.csv`, and `README_PHYSICAL_412_LC_BRIDGE.md`.
+
+Standalone result:
+
+- `all_dt_all_scales_passed=True` across audio, low-RF, and normalized scale presets.
+- Worst all-dt/all-scale metrics: lock 0.992108, bridge ratio 1.606971, purity 0.922789, budget error 0.0000510, generated-envelope CV 0.134693, target-envelope CV 0.035824, max phase jump 0.971944 rad, near slips 0.
+- Audio-scale representative values: f=(440, 883.894, 1309.862) Hz, L=(13.08 mH, 6.90 mH, 4.47 mH), C=(10 uF, 4.7 uF, 3.3 uF), R=(0.912, 0.901, 0.480) ohm, Q=(39.7, 42.5, 76.8), all mild.
+- Low-RF representative values: f=(1.0 MHz, 2.009 MHz, 2.977 MHz), L=(25.33 uH, 13.36 uH, 8.66 uH), C=(1 nF, 470 pF, 330 pF), R=(4.01, 3.97, 2.11) ohm, Q=(39.7, 42.5, 76.8), all mild.
+- Current next fix: SPICE/ngspice validation, then physical parameter refinement and spatial phase-matching modeling.
