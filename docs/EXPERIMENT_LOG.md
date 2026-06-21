@@ -375,15 +375,19 @@ Added `spice_412_export.py`:
 
 - Exports the physical 4 -> 8 -> 12 LC bridge into ngspice-compatible netlists for audio-scale, low-RF-scale, and normalized-scale.
 - Exports a separated `reference_direct_4plus8.cir` ceiling denominator using direct 4+8 drive; it is not a discovery row.
+- Adds explicit execution with `--run` and path override with `--ngspice-path`, including `--ngspice-path wsl:ngspice` for WSL installs.
+- Reports per-netlist execution status: `exported`, `skipped_no_ngspice`, `ran_successfully`, `failed_to_converge`, or `parser_failed`.
 - Discovery netlists drive only resonator 1/source mode and keep direct generated-mode drive, direct target-mode drive, and target-frequency injection absent.
 - Circuit model includes three lossy LC resonators, Q-matched inductor-branch resistance, weak mutual inductive coupling, behavioral varactor-like capacitance, behavioral nonlinear mixing, and passive soft-limiter conductance.
-- If ngspice is installed, the script runs transient simulations, exports ngspice CSV/raw output, parses resonator voltages/currents, and computes approximate lock, bridge ratio, purity, generated-envelope CV, and max phase jump.
+- Adds nonlinear model variants: `behavioral_proxy_current`, `voltage_dependent_capacitance_proxy`, `diode_pair_proxy`, `varactor_diode_model_proxy`, `saturable_inductor_proxy`, and `linear_no_nonlinearity_control`.
+- If ngspice is installed, the script runs transient simulations, exports ngspice CSV/raw output, parses resonator voltages/currents, and computes target voltage growth, FFT peaks, approximate lock, bridge ratio, purity near 12, generated-envelope CV, and max phase jump.
 - Outputs go to `runs/spice_412_bridge/audio_412_bridge.cir`, `low_rf_412_bridge.cir`, `normalized_412_bridge.cir`, `reference_direct_4plus8.cir`, `spice_412_summary.json`, `spice_412_summary.csv`, and `README_SPICE_412_EXPORT.md`.
 
 Standalone result:
 
 - Valid SPICE netlists were generated.
-- Local ngspice execution was skipped because `ngspice` was not installed on PATH.
+- `python spice_412_export.py --run` was tested.
+- Local ngspice execution was skipped because `ngspice` was not installed on PATH. `winget search ngspice` found no matching Windows package, WSL Ubuntu is available but `sudo apt-get install ngspice` requires a password, and Docker is unavailable.
 - No SPICE transient target build-up or Python-vs-SPICE metric comparison has been measured locally yet.
 - The nonlinear element is classified as an aggressive behavioral varactor/mixing proxy: suitable for a first ngspice validation track, but not yet a physically refined component implementation.
 - Current next fix: install/run ngspice, then refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.

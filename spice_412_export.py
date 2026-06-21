@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Export the physical 4->8->12 LC bridge to ngspice netlists.
+"""Export and optionally run ngspice validation for the 4->8->12 LC bridge.
 
-The generated circuits are intended as a first circuit-level validation track,
-not as final hardware designs.  They preserve the discovery rule that only the
-source resonator is externally driven.  The direct 4+8 circuit is emitted only
-as a separated ceiling/reference denominator.
+The generated circuits are first-pass validation artifacts, not final hardware
+designs.  Discovery netlists drive only the source resonator.  The direct 4+8
+netlist is emitted only as a separated ceiling/reference denominator.
 """
 from __future__ import annotations
 
@@ -16,7 +15,7 @@ import shutil
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 import numpy as np
 
@@ -25,11 +24,16 @@ import physical_412_lc_bridge as phys
 
 OUT_DIR = Path("runs") / "spice_412_bridge"
 REFERENCE_SCALE = "low-RF-scale"
-NETLIST_SPECS = (
-    ("audio_412_bridge", "audio-scale", phys.CANDIDATE, "discovery"),
-    ("low_rf_412_bridge", "low-RF-scale", phys.CANDIDATE, "discovery"),
-    ("normalized_412_bridge", "arbitrary-normalized-scale", phys.CANDIDATE, "discovery"),
-    ("reference_direct_4plus8", REFERENCE_SCALE, phys.DIRECT_REFERENCE, "ceiling_reference"),
+DISCOVERY_SCALES = (
+    ("audio_412_bridge", "audio-scale"),
+    ("low_rf_412_bridge", "low-RF-scale"),
+    ("normalized_412_bridge", "arbitrary-normalized-scale"),
+)
+REQUIRED_CANONICAL_FILES = (
+    "audio_412_bridge.cir",
+    "low_rf_412_bridge.cir",
+    "normalized_412_bridge.cir",
+    "reference_direct_4plus8.cir",
 )
 PYTHON_BASELINE = {
     "phase_lock_target": 0.992108,
@@ -40,6 +44,27 @@ PYTHON_BASELINE = {
     "near_slip_count": 0.0,
     "energy_budget_error": 0.0000510,
 }
+EXECUTION_STATUSES = (
+    "exported",
+    "skipped_no_ngspice",
+    "ran_successfully",
+    "failed_to_converge",
+    "parser_failed",
+)
+
+
+@dataclass(frozen=True)
+class NonlinearVariant:
+    name: str
+    description: str
+    realism_label: str
+    realism_score: float
+    include_behavioral_mix: bool = False
+    include_vdep_cap: bool = False
+    include_diode_pair: bool = False
+    include_varactor_diode: bool = False
+    include_saturable_inductor: bool = False
+    include_soft_limiter: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,6 +72,7 @@ class SpiceExport:
     circuit_name: str
     scale_name: str
     role: str
+    nonlinear_variant: str
     netlist_path: Path
     csv_path: Path
     raw_path: Path
@@ -60,6 +86,65 @@ class SpiceExport:
     direct_8_drive: bool
     direct_12_drive: bool
     target_frequency_injection: bool
+
+
+@dataclass(frozen=True)
+class RunResult:
+    execution_status: str
+    success: bool
+    reason: str
+    log_path: Path | None = None
+
+
+NONLINEAR_VARIANTS: Dict[str, NonlinearVariant] = {
+    "behavioral_proxy_current": NonlinearVariant(
+        name="behavioral_proxy_current",
+        description="Original behavioral current export: varactor-like ddt(C(V)) plus explicit nonlinear mixing currents.",
+        realism_label="aggressive behavioral proxy",
+        realism_score=0.52,
+        include_behavioral_mix=True,
+        include_vdep_cap=True,
+        include_soft_limiter=True,
+    ),
+    "voltage_dependent_capacitance_proxy": NonlinearVariant(
+        name="voltage_dependent_capacitance_proxy",
+        description="Voltage-controlled capacitance terms without explicit sum-frequency current injection.",
+        realism_label="aggressive but component-adjacent",
+        realism_score=0.62,
+        include_vdep_cap=True,
+        include_soft_limiter=True,
+    ),
+    "diode_pair_proxy": NonlinearVariant(
+        name="diode_pair_proxy",
+        description="Anti-parallel diode pairs between adjacent resonators as a passive nonlinear coupling proxy.",
+        realism_label="physically plausible component proxy, likely weak",
+        realism_score=0.74,
+        include_diode_pair=True,
+        include_soft_limiter=True,
+    ),
+    "varactor_diode_model_proxy": NonlinearVariant(
+        name="varactor_diode_model_proxy",
+        description="Diode junction-capacitance varactor proxy between adjacent resonators.",
+        realism_label="plausible but parameter-sensitive",
+        realism_score=0.70,
+        include_varactor_diode=True,
+        include_soft_limiter=True,
+    ),
+    "saturable_inductor_proxy": NonlinearVariant(
+        name="saturable_inductor_proxy",
+        description="Cubic restoring-current proxy for a saturable magnetic branch.",
+        realism_label="aggressive magnetic saturation proxy",
+        realism_score=0.58,
+        include_saturable_inductor=True,
+        include_soft_limiter=True,
+    ),
+    "linear_no_nonlinearity_control": NonlinearVariant(
+        name="linear_no_nonlinearity_control",
+        description="Linear LC and weak coupling only; should not reproduce the nonlinear bridge.",
+        realism_label="linear control",
+        realism_score=1.0,
+    ),
+}
 
 
 def ensure_dir(path: Path) -> Path:
@@ -85,6 +170,10 @@ def spice_num(value: float) -> str:
     if value == 0:
         return "0"
     return f"{value:.12g}"
+
+
+def clean_name(name: str) -> str:
+    return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in name)
 
 
 def direct_drive_flags(config: phys.BridgeConfig) -> Dict[str, bool]:
@@ -150,13 +239,115 @@ def drive_current_for_mode(scale_name: str, config: phys.BridgeConfig, mode_idx:
     return params[mode_idx].current_scale_a_per_model_velocity * config.drive_amp / norm
 
 
+def variant_suffix(variant_name: str) -> str:
+    return "" if variant_name == "behavioral_proxy_current" else f"_{variant_name}"
+
+
+def discovery_specs(variant_names: Iterable[str]) -> List[Tuple[str, str, phys.BridgeConfig, str, NonlinearVariant]]:
+    specs: List[Tuple[str, str, phys.BridgeConfig, str, NonlinearVariant]] = []
+    for variant_name in variant_names:
+        variant = NONLINEAR_VARIANTS[variant_name]
+        suffix = variant_suffix(variant_name)
+        for prefix, scale_name in DISCOVERY_SCALES:
+            specs.append((f"{prefix}{suffix}", scale_name, phys.CANDIDATE, "discovery", variant))
+    reference_variant = NONLINEAR_VARIANTS["behavioral_proxy_current"]
+    specs.append(("reference_direct_4plus8", REFERENCE_SCALE, phys.DIRECT_REFERENCE, "ceiling_reference", reference_variant))
+    return specs
+
+
+def variant_lines(scale_name: str, config: phys.BridgeConfig, variant: NonlinearVariant) -> List[str]:
+    preset = phys.SCALE_PRESETS[scale_name]
+    params = phys.build_lc_params(config, preset)
+    mix = nonlinear_mix_coefficients(scale_name, config)
+    limiter = soft_limiter_params(scale_name, config)
+    c = [p.capacitance_f for p in params]
+    vscale = [p.voltage_scale_v for p in params]
+    lines: List[str] = [
+        "",
+        f"* Nonlinear variant: {variant.name}",
+        f"* {variant.description}",
+    ]
+    if variant.include_vdep_cap:
+        lines.append("* Voltage-dependent capacitance terms.")
+        for idx, p_lc in enumerate(params, start=1):
+            lines.append(f".param beta{idx}={spice_num(p_lc.varactor_beta_per_v2)}")
+            lines.append(f"Bvar{idx} n{idx} 0 I={{c{idx}*beta{idx}*V(n{idx})*V(n{idx})*ddt(V(n{idx}))}}")
+        if variant.name == "voltage_dependent_capacitance_proxy":
+            bx12 = 0.15 * abs(mix["mixa_00_to_2"]) / max(c[1], 1e-30)
+            bx23 = 0.08 * abs(mix["mixb_01_to_3"]) / max(c[2], 1e-30)
+            lines.extend([
+                f".param betax12={spice_num(bx12)}",
+                f".param betax23={spice_num(bx23)}",
+                "Bxcap12 n2 0 I={c2*betax12*V(n1)*V(n1)*ddt(V(n2))}",
+                "Bxcap23 n3 0 I={c3*betax23*V(n2)*V(n2)*ddt(V(n3))}",
+            ])
+    if variant.include_behavioral_mix:
+        lines.extend([
+            "* Explicit behavioral nonlinear mixing currents, scaled from the validated normalized LC model.",
+            f".param mixa_01_to_1={spice_num(mix['mixa_01_to_1'])}",
+            f".param mixa_00_to_2={spice_num(mix['mixa_00_to_2'])}",
+            f".param mixb_12_to_1={spice_num(mix['mixb_12_to_1'])}",
+            f".param mixb_02_to_2={spice_num(mix['mixb_02_to_2'])}",
+            f".param mixb_01_to_3={spice_num(mix['mixb_01_to_3'])}",
+            "Bmix1 n1 0 I={-(mixa_01_to_1*V(n1)*V(n2) + mixb_12_to_1*V(n2)*V(n3))}",
+            "Bmix2 n2 0 I={-(mixa_00_to_2*V(n1)*V(n1) + mixb_02_to_2*V(n1)*V(n3))}",
+            "Bmix3 n3 0 I={-(mixb_01_to_3*V(n1)*V(n2))}",
+        ])
+    if variant.include_diode_pair:
+        vt = 0.035 * math.sqrt(vscale[0] * vscale[1])
+        rs = max(0.1, 0.05 * math.sqrt(params[0].resistance_ohm * params[1].resistance_ohm))
+        lines.extend([
+            "* Anti-parallel diode-pair nonlinear coupling proxy.",
+            f".model DPAIR D(Is={spice_num(1e-12)} N=1.7 Rs={spice_num(rs)} Cjo={spice_num(0.002 * min(c))} Vj={spice_num(max(vt, 0.1))} M=0.45)",
+            "Dpair12a n1 n2 DPAIR",
+            "Dpair12b n2 n1 DPAIR",
+            "Dpair23a n2 n3 DPAIR",
+            "Dpair23b n3 n2 DPAIR",
+        ])
+    if variant.include_varactor_diode:
+        lines.extend([
+            "* Junction-capacitance varactor-diode proxy between adjacent resonators.",
+            f".model DVAR D(Is={spice_num(1e-14)} N=1.2 Rs={spice_num(0.5)} Cjo={spice_num(0.015 * min(c))} Vj=1.0 M=0.5 Fc=0.5)",
+            "Dvar12a n1 n2 DVAR",
+            "Dvar12b n2 n1 DVAR",
+            "Dvar23a n2 n3 DVAR",
+            "Dvar23b n3 n2 DVAR",
+        ])
+    if variant.include_saturable_inductor:
+        scale = phys.scale_factor(preset)
+        ksat1 = 0.012 * c[0] * (2.0 * math.pi * params[0].frequency_hz) ** 2 / max(vscale[0] ** 2, 1e-30)
+        ksat2 = 0.012 * c[1] * (2.0 * math.pi * params[1].frequency_hz) ** 2 / max(vscale[1] ** 2, 1e-30)
+        ksat3 = 0.012 * c[2] * (2.0 * math.pi * params[2].frequency_hz) ** 2 / max(vscale[2] ** 2, 1e-30)
+        _ = scale
+        lines.extend([
+            "* Cubic restoring-current proxy for saturable magnetic branches.",
+            f".param ksat1={spice_num(ksat1)}",
+            f".param ksat2={spice_num(ksat2)}",
+            f".param ksat3={spice_num(ksat3)}",
+            "Bsat1 n1 0 I={ksat1*V(n1)*V(n1)*V(n1)}",
+            "Bsat2 n2 0 I={ksat2*V(n2)*V(n2)*V(n2)}",
+            "Bsat3 n3 0 I={ksat3*V(n3)*V(n3)*V(n3)}",
+        ])
+    if variant.include_soft_limiter:
+        lines.extend([
+            "* Passive soft limiter / loss proxy. Current follows voltage drop, so it dissipates.",
+            f".param gsoft12={spice_num(limiter['gsoft12'])}",
+            f".param gsoft23={spice_num(limiter['gsoft23'])}",
+            f".param vlim12={spice_num(limiter['vlim12'])}",
+            f".param vlim23={spice_num(limiter['vlim23'])}",
+            "Bsoft12 n1 n2 I={gsoft12*V(n1,n2)*0.5*(1+tanh((abs(V(n1,n2))-vlim12)/(0.3*vlim12+1e-30)))}",
+            "Bsoft23 n2 n3 I={gsoft23*V(n2,n3)*0.5*(1+tanh((abs(V(n2,n3))-vlim23)/(0.3*vlim23+1e-30)))}",
+        ])
+    if variant.name == "linear_no_nonlinearity_control":
+        lines.append("* Linear control: no nonlinear capacitance, diode, saturable, limiter, or behavioral mixing elements.")
+    return lines
+
+
 def netlist_text(circuit_name: str, scale_name: str, config: phys.BridgeConfig, role: str,
-                 out_dir: Path) -> Tuple[str, SpiceExport]:
+                 variant: NonlinearVariant, out_dir: Path) -> Tuple[str, SpiceExport]:
     preset = phys.SCALE_PRESETS[scale_name]
     params = phys.build_lc_params(config, preset)
     coupling = phys.coupling_summary(config)
-    mix = nonlinear_mix_coefficients(scale_name, config)
-    limiter = soft_limiter_params(scale_name, config)
     flags = direct_drive_flags(config)
     tstop, tstep, drive_until, ramp = physical_timing(scale_name)
     hold_time = max(ramp, drive_until - ramp)
@@ -178,7 +369,7 @@ def netlist_text(circuit_name: str, scale_name: str, config: phys.BridgeConfig, 
 
     lines = [
         f"* {circuit_name}: physical 4->8->12 nonlinear LC bridge",
-        f"* scale={scale_name}; role={role}",
+        f"* scale={scale_name}; role={role}; nonlinear_variant={variant.name}",
         "* Generated by spice_412_export.py.",
         "* Discovery rule: no direct generated/target drive and no target-frequency injection.",
         "* The direct 4+8 file is a separated ceiling/reference denominator only.",
@@ -208,31 +399,9 @@ def netlist_text(circuit_name: str, scale_name: str, config: phys.BridgeConfig, 
         "* Weak linear coupling, exported as mutual inductive coupling between the LC tanks.",
         f"K12 L1 L2 {spice_num(float(coupling['linear_k01_fraction_of_omega_product']))}",
         f"K23 L2 L3 {spice_num(float(coupling['linear_k12_fraction_of_omega_product']))}",
-        "",
-        "* Varactor-like nonlinear capacitance: Ceff ~= C0*(1 + beta*V^2).",
     ])
-    for idx, p_lc in enumerate(params, start=1):
-        lines.append(f".param beta{idx}={spice_num(p_lc.varactor_beta_per_v2)}")
-        lines.append(f"Bvar{idx} n{idx} 0 I={{c{idx}*beta{idx}*V(n{idx})*V(n{idx})*ddt(V(n{idx}))}}")
+    lines.extend(variant_lines(scale_name, config, variant))
     lines.extend([
-        "",
-        "* Behavioral nonlinear mixing terms, scaled from the validated normalized LC model.",
-        f".param mixa_01_to_1={spice_num(mix['mixa_01_to_1'])}",
-        f".param mixa_00_to_2={spice_num(mix['mixa_00_to_2'])}",
-        f".param mixb_12_to_1={spice_num(mix['mixb_12_to_1'])}",
-        f".param mixb_02_to_2={spice_num(mix['mixb_02_to_2'])}",
-        f".param mixb_01_to_3={spice_num(mix['mixb_01_to_3'])}",
-        "Bmix1 n1 0 I={-(mixa_01_to_1*V(n1)*V(n2) + mixb_12_to_1*V(n2)*V(n3))}",
-        "Bmix2 n2 0 I={-(mixa_00_to_2*V(n1)*V(n1) + mixb_02_to_2*V(n1)*V(n3))}",
-        "Bmix3 n3 0 I={-(mixb_01_to_3*V(n1)*V(n2))}",
-        "",
-        "* Passive soft limiter / loss proxy. Current follows voltage drop, so it dissipates.",
-        f".param gsoft12={spice_num(limiter['gsoft12'])}",
-        f".param gsoft23={spice_num(limiter['gsoft23'])}",
-        f".param vlim12={spice_num(limiter['vlim12'])}",
-        f".param vlim23={spice_num(limiter['vlim23'])}",
-        "Bsoft12 n1 n2 I={gsoft12*V(n1,n2)*0.5*(1+tanh((abs(V(n1,n2))-vlim12)/(0.3*vlim12+1e-30)))}",
-        "Bsoft23 n2 n3 I={gsoft23*V(n2,n3)*0.5*(1+tanh((abs(V(n2,n3))-vlim23)/(0.3*vlim23+1e-30)))}",
         "",
         "* External drives.",
         *drive_lines,
@@ -255,6 +424,7 @@ def netlist_text(circuit_name: str, scale_name: str, config: phys.BridgeConfig, 
         circuit_name=circuit_name,
         scale_name=scale_name,
         role=role,
+        nonlinear_variant=variant.name,
         netlist_path=netlist_path,
         csv_path=csv_path,
         raw_path=raw_path,
@@ -272,31 +442,59 @@ def netlist_text(circuit_name: str, scale_name: str, config: phys.BridgeConfig, 
     return "\n".join(lines), export
 
 
-def export_netlists(out_dir: Path) -> List[SpiceExport]:
+def export_netlists(out_dir: Path, variant_names: Iterable[str]) -> List[SpiceExport]:
     exports: List[SpiceExport] = []
-    for circuit_name, scale_name, config, role in NETLIST_SPECS:
-        text, export = netlist_text(circuit_name, scale_name, config, role, out_dir)
+    for circuit_name, scale_name, config, role, variant in discovery_specs(variant_names):
+        text, export = netlist_text(circuit_name, scale_name, config, role, variant, out_dir)
         export.netlist_path.write_text(text, encoding="utf-8")
         exports.append(export)
     return exports
 
 
-def run_ngspice(export: SpiceExport, ngspice_path: str, timeout_s: int) -> Tuple[bool, str]:
-    cmd = [ngspice_path, "-b", export.netlist_path.name]
+def classify_run_failure(message: str) -> str:
+    lower = message.lower()
+    if any(token in lower for token in ("convergence", "timestep too small", "singular", "failed", "error")):
+        return "failed_to_converge"
+    return "failed_to_converge"
+
+
+def run_ngspice(export: SpiceExport, ngspice_path: str, timeout_s: int) -> RunResult:
+    if ngspice_path.startswith("wsl:"):
+        tool = ngspice_path.split(":", 1)[1] or "ngspice"
+        cwd_proc = subprocess.run(
+            ["wsl", "-e", "wslpath", "-a", str(export.netlist_path.parent)],
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        if cwd_proc.returncode != 0:
+            return RunResult("failed_to_converge", False, f"wslpath failed: {cwd_proc.stderr.strip()}")
+        wsl_cwd = cwd_proc.stdout.strip()
+        cmd = ["wsl", "-e", "sh", "-lc", f"cd {sh_quote(wsl_cwd)} && {tool} -b {sh_quote(export.netlist_path.name)}"]
+        run_cwd = None
+    else:
+        cmd = [ngspice_path, "-b", export.netlist_path.name]
+        run_cwd = str(export.netlist_path.parent)
     try:
         proc = subprocess.run(
             cmd,
-            cwd=str(export.netlist_path.parent),
+            cwd=run_cwd,
             text=True,
             capture_output=True,
             timeout=timeout_s,
             check=False,
         )
     except Exception as exc:  # pragma: no cover - depends on local ngspice install.
-        return False, f"{type(exc).__name__}: {exc}"
+        return RunResult("failed_to_converge", False, f"{type(exc).__name__}: {exc}")
     log_path = export.netlist_path.with_suffix(".log")
-    log_path.write_text((proc.stdout or "") + "\n" + (proc.stderr or ""), encoding="utf-8")
-    return proc.returncode == 0 and export.csv_path.exists(), f"returncode={proc.returncode}; log={log_path.name}"
+    log_text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    log_path.write_text(log_text, encoding="utf-8")
+    if proc.returncode != 0:
+        return RunResult(classify_run_failure(log_text), False, f"returncode={proc.returncode}; log={log_path.name}", log_path)
+    if not export.csv_path.exists():
+        return RunResult("failed_to_converge", False, f"returncode=0 but CSV missing; log={log_path.name}", log_path)
+    return RunResult("ran_successfully", True, f"returncode=0; log={log_path.name}", log_path)
 
 
 def try_float(token: str) -> float | None:
@@ -306,19 +504,38 @@ def try_float(token: str) -> float | None:
         return None
 
 
+def sh_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def normalize_header_name(name: str) -> str:
+    lowered = name.strip().lower()
+    lowered = lowered.replace('"', "").replace("'", "")
+    return lowered
+
+
+def column_by_alias(names: List[str], aliases: Iterable[str]) -> int | None:
+    alias_set = set(aliases)
+    for idx, name in enumerate(names):
+        clean = normalize_header_name(name)
+        if clean in alias_set:
+            return idx
+        for alias in alias_set:
+            if alias and alias in clean:
+                return idx
+    return None
+
+
 def read_ngspice_csv(path: Path) -> Dict[str, np.ndarray]:
+    if not path.exists():
+        raise ValueError(f"CSV does not exist: {path}")
     lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip()]
     if not lines:
         raise ValueError(f"No data in {path}")
     first_tokens = lines[0].replace(",", " ").split()
     first_numeric = [try_float(tok) for tok in first_tokens]
     has_header = any(value is None for value in first_numeric)
-    if has_header:
-        names = [name.strip().lower() for name in first_tokens]
-        data_lines = lines[1:]
-    else:
-        names = ["time", "v_n1", "v_n2", "v_n3", "i_l1", "i_l2", "i_l3"]
-        data_lines = lines
+    data_lines = lines[1:] if has_header else lines
     rows: List[List[float]] = []
     for line in data_lines:
         values = [try_float(tok) for tok in line.replace(",", " ").split()]
@@ -327,22 +544,50 @@ def read_ngspice_csv(path: Path) -> Dict[str, np.ndarray]:
             rows.append(numeric)
     if not rows:
         raise ValueError(f"No numeric rows in {path}")
-    arr = np.asarray(rows, dtype=float)
-    if arr.shape[1] > len(names):
-        arr = arr[:, :len(names)]
-    if arr.shape[1] < 4:
-        raise ValueError(f"Expected at least time and three voltages in {path}, got {arr.shape[1]} columns")
-    normalized = {
-        "time": arr[:, 0],
-        "v1": arr[:, 1],
-        "v2": arr[:, 2],
-        "v3": arr[:, 3],
-    }
+    min_cols = min(len(row) for row in rows)
+    arr = np.asarray([row[:min_cols] for row in rows], dtype=float)
+    if has_header:
+        names = first_tokens[: arr.shape[1]]
+        idx_time = column_by_alias(names, ("time", "time-s"))
+        idx_v1 = column_by_alias(names, ("v(n1)", "n1", "v_n1"))
+        idx_v2 = column_by_alias(names, ("v(n2)", "n2", "v_n2"))
+        idx_v3 = column_by_alias(names, ("v(n3)", "n3", "v_n3"))
+        idx_i1 = column_by_alias(names, ("i(l1)", "l1#branch", "i_l1"))
+        idx_i2 = column_by_alias(names, ("i(l2)", "l2#branch", "i_l2"))
+        idx_i3 = column_by_alias(names, ("i(l3)", "l3#branch", "i_l3"))
+        required = (idx_time, idx_v1, idx_v2, idx_v3)
+        if any(idx is None for idx in required):
+            raise ValueError(f"Missing required time/v(n1)/v(n2)/v(n3) columns in {path}; header={first_tokens}")
+        result = {
+            "time": arr[:, int(idx_time)],
+            "v1": arr[:, int(idx_v1)],
+            "v2": arr[:, int(idx_v2)],
+            "v3": arr[:, int(idx_v3)],
+        }
+        if idx_i1 is not None and idx_i2 is not None and idx_i3 is not None:
+            result.update({"i1": arr[:, int(idx_i1)], "i2": arr[:, int(idx_i2)], "i3": arr[:, int(idx_i3)]})
+        return result
+    if arr.shape[1] >= 12 and np.allclose(arr[:, 0], arr[:, 2]) and np.allclose(arr[:, 0], arr[:, 4]):
+        return {
+            "time": arr[:, 0],
+            "v1": arr[:, 3],
+            "v2": arr[:, 5],
+            "v3": arr[:, 7],
+            "i1": arr[:, 9],
+            "i2": arr[:, 11],
+            "i3": arr[:, 13] if arr.shape[1] > 13 else arr[:, 11],
+        }
     if arr.shape[1] >= 7:
-        normalized["i1"] = arr[:, 4]
-        normalized["i2"] = arr[:, 5]
-        normalized["i3"] = arr[:, 6]
-    return normalized
+        return {
+            "time": arr[:, 0],
+            "v1": arr[:, 1],
+            "v2": arr[:, 2],
+            "v3": arr[:, 3],
+            "i1": arr[:, 4],
+            "i2": arr[:, 5],
+            "i3": arr[:, 6],
+        }
+    raise ValueError(f"Expected at least time and three voltage columns in {path}, got {arr.shape[1]}")
 
 
 def complex_projection(signal: np.ndarray, time_s: np.ndarray, freq_hz: float) -> complex:
@@ -384,6 +629,31 @@ def envelope_cv(values: np.ndarray) -> float:
     return float(np.std(np.abs(values)) / mean_abs)
 
 
+def fft_peak(signal: np.ndarray, time_s: np.ndarray, min_hz: float = 0.0) -> Tuple[float, float]:
+    if len(signal) < 8:
+        return float("nan"), 0.0
+    dt = float(np.median(np.diff(time_s)))
+    if dt <= 0:
+        return float("nan"), 0.0
+    centered = signal - float(np.mean(signal))
+    window = np.hanning(len(centered))
+    spec = np.fft.rfft(centered * window)
+    freqs = np.fft.rfftfreq(len(centered), dt)
+    amps = np.abs(spec)
+    mask = freqs >= min_hz
+    if not np.any(mask):
+        return float("nan"), 0.0
+    sub_idx = int(np.argmax(amps[mask]))
+    full_idx = np.flatnonzero(mask)[sub_idx]
+    return float(freqs[full_idx]), float(amps[full_idx])
+
+
+def rms(values: np.ndarray) -> float:
+    if len(values) == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(values ** 2)))
+
+
 def spice_metrics(export: SpiceExport, data: Dict[str, np.ndarray],
                   reference_data: Dict[str, np.ndarray] | None = None) -> Tuple[Dict[str, float | str], List[Dict[str, float | str]]]:
     t = data["time"]
@@ -392,6 +662,9 @@ def spice_metrics(export: SpiceExport, data: Dict[str, np.ndarray],
     v3 = data["v3"]
     if len(t) < 32:
         return {"spice_metric_error": "not_enough_samples"}, []
+    if not np.all(np.isfinite(t)) or not np.all(np.isfinite(v1)) or not np.all(np.isfinite(v2)) or not np.all(np.isfinite(v3)):
+        return {"spice_metric_error": "non_finite_samples"}, []
+
     drive_until = 0.74 * export.tstop_s
     mask = (t >= 0.35 * drive_until) & (t < drive_until)
     if int(np.sum(mask)) < 32:
@@ -410,17 +683,26 @@ def spice_metrics(export: SpiceExport, data: Dict[str, np.ndarray],
     min_len = min(len(z1), len(z2), len(z3))
     if min_len == 0:
         return {"spice_metric_error": "no_sliding_windows"}, []
-    phase_error = np.unwrap(np.angle(z1[:min_len]) + np.angle(z2[:min_len]) - np.angle(z3[:min_len]))
-    wrapped = (phase_error + np.pi) % (2.0 * np.pi) - np.pi
-    lock = float(abs(np.mean(np.exp(1j * wrapped))))
-    phase_step = np.abs(np.diff(phase_error)) if len(phase_error) >= 2 else np.asarray([])
-    near_slips = coalesced_indices(np.where(phase_step > 1.0)[0] + 1)
+    phase_stable = np.median(np.abs(z3[:min_len])) > 1e-12 and np.median(np.abs(z2[:min_len])) > 1e-12
+    if phase_stable:
+        phase_error = np.unwrap(np.angle(z1[:min_len]) + np.angle(z2[:min_len]) - np.angle(z3[:min_len]))
+        wrapped = (phase_error + np.pi) % (2.0 * np.pi) - np.pi
+        lock = float(abs(np.mean(np.exp(1j * wrapped))))
+        phase_step = np.abs(np.diff(phase_error)) if len(phase_error) >= 2 else np.asarray([])
+        near_slips = coalesced_indices(np.where(phase_step > 1.0)[0] + 1)
+    else:
+        phase_error = np.full(min_len, np.nan)
+        wrapped = np.full(min_len, np.nan)
+        lock = float("nan")
+        phase_step = np.asarray([])
+        near_slips = []
+
     target_amp = complex_projection(v3[mask], tm, export.nominal_target_frequency_hz)
     generated_amp = complex_projection(v2[mask], tm, export.nominal_generated_frequency_hz)
     target_power = 0.5 * abs(target_amp) ** 2
     purity = float(min(1.0, target_power / (float(np.mean(v3[mask] ** 2)) + 1e-18)))
     bridge_ratio = float("nan")
-    if reference_data is not None:
+    if reference_data is not None and export.scale_name == REFERENCE_SCALE:
         rt = reference_data["time"]
         rv3 = reference_data["v3"]
         rmask = (rt >= 0.35 * drive_until) & (rt < drive_until)
@@ -428,34 +710,62 @@ def spice_metrics(export: SpiceExport, data: Dict[str, np.ndarray],
             ref_amp = complex_projection(rv3[rmask], rt[rmask], export.nominal_target_frequency_hz)
             ref_power = 0.5 * abs(ref_amp) ** 2
             bridge_ratio = float(target_power / max(ref_power, 1e-30))
+
+    early = t < 0.20 * drive_until
+    late = (t >= 0.60 * drive_until) & (t < drive_until)
+    target_growth = rms(v3[late]) / max(rms(v3[early]), 1e-30)
+    source_peak_hz, source_peak_amp = fft_peak(v1[mask], tm, min_hz=0.25 * export.source_frequency_hz)
+    generated_peak_hz, generated_peak_amp = fft_peak(v2[mask], tm, min_hz=0.25 * export.source_frequency_hz)
+    target_peak_hz, target_peak_amp = fft_peak(v3[mask], tm, min_hz=0.25 * export.source_frequency_hz)
+
     rows: List[Dict[str, float | str]] = []
     for idx in range(min_len):
         rows.append({
             "row_type": "spice_phase_window",
             "circuit": export.circuit_name,
             "scale_preset": export.scale_name,
+            "nonlinear_variant": export.nonlinear_variant,
             "time_s": float(mids[idx]),
-            "phase_error_target": float(wrapped[idx]),
-            "unwrapped_phase_error_target": float(phase_error[idx]),
+            "phase_error_target": float(wrapped[idx]) if np.isfinite(wrapped[idx]) else "",
+            "unwrapped_phase_error_target": float(phase_error[idx]) if np.isfinite(phase_error[idx]) else "",
             "generated_envelope": float(abs(z2[idx])),
             "target_envelope": float(abs(z3[idx])),
         })
     return {
         "spice_phase_lock_target": lock,
+        "spice_phase_extraction_stable": str(phase_stable),
         "spice_bridge_ratio": bridge_ratio,
         "spice_spectral_purity_target": purity,
         "spice_generated_envelope_cv": envelope_cv(z2[:min_len]),
         "spice_target_envelope_cv": envelope_cv(z3[:min_len]),
         "spice_max_phase_jump": float(np.max(phase_step)) if len(phase_step) else 0.0,
         "spice_near_slip_count": float(len(near_slips)),
-        "spice_target_rms_v": float(np.sqrt(np.mean(v3[mask] ** 2))),
-        "spice_generated_rms_v": float(np.sqrt(np.mean(v2[mask] ** 2))),
+        "spice_target_rms_v": rms(v3[mask]),
+        "spice_generated_rms_v": rms(v2[mask]),
         "spice_target_projection_power": float(target_power),
+        "spice_target_voltage_growth_ratio": float(target_growth),
+        "spice_fft_peak_source_hz": source_peak_hz,
+        "spice_fft_peak_source_amp": source_peak_amp,
+        "spice_fft_peak_generated_hz": generated_peak_hz,
+        "spice_fft_peak_generated_amp": generated_peak_amp,
+        "spice_fft_peak_target_hz": target_peak_hz,
+        "spice_fft_peak_target_amp": target_peak_amp,
     }, rows
 
 
-def summarize_export(export: SpiceExport, ngspice_available: bool, ngspice_path: str | None,
-                     run_ok: bool, run_message: str, metrics: Dict[str, float | str] | None) -> Dict[str, float | str]:
+def rough_python_match(metrics: Dict[str, float | str]) -> str:
+    lock = float(metrics.get("spice_phase_lock_target", float("nan")))
+    purity = float(metrics.get("spice_spectral_purity_target", float("nan")))
+    bridge = float(metrics.get("spice_bridge_ratio", float("nan")))
+    lock_ok = np.isfinite(lock) and abs(lock - PYTHON_BASELINE["phase_lock_target"]) < 0.20
+    purity_ok = np.isfinite(purity) and abs(purity - PYTHON_BASELINE["spectral_purity_target"]) < 0.25
+    bridge_ok = not np.isfinite(bridge) or abs(bridge - PYTHON_BASELINE["bridge_ratio"]) < 0.75
+    return str(lock_ok and purity_ok and bridge_ok)
+
+
+def summarize_export(export: SpiceExport, variant: NonlinearVariant, run_requested: bool,
+                     ngspice_available: bool, ngspice_path: str | None,
+                     run_result: RunResult, metrics: Dict[str, float | str] | None) -> Dict[str, float | str]:
     preset = phys.SCALE_PRESETS[export.scale_name]
     params = phys.build_lc_params(phys.DIRECT_REFERENCE if export.role == "ceiling_reference" else phys.CANDIDATE, preset)
     coupling = phys.coupling_summary(phys.CANDIDATE)
@@ -464,14 +774,20 @@ def summarize_export(export: SpiceExport, ngspice_available: bool, ngspice_path:
         "circuit": export.circuit_name,
         "scale_preset": export.scale_name,
         "role": export.role,
+        "nonlinear_variant": export.nonlinear_variant,
+        "nonlinear_variant_description": variant.description,
         "netlist_path": str(export.netlist_path),
-        "csv_path": str(export.csv_path) if run_ok else "",
-        "raw_path": str(export.raw_path) if run_ok else "",
+        "csv_path": str(export.csv_path) if run_result.success else "",
+        "raw_path": str(export.raw_path) if run_result.success else "",
         "valid_spice_netlist_generated": str(export.netlist_path.exists()),
+        "execution_status": run_result.execution_status,
+        "execution_status_allowed": str(run_result.execution_status in EXECUTION_STATUSES),
+        "failure_reason": "" if run_result.success else run_result.reason,
+        "ngspice_run_message": run_result.reason,
+        "run_requested": str(run_requested),
         "ngspice_available": str(ngspice_available),
         "ngspice_path": ngspice_path or "",
-        "ngspice_run_succeeded": str(run_ok),
-        "ngspice_run_message": run_message,
+        "ngspice_run_succeeded": str(run_result.success),
         "source_frequency_hz": export.source_frequency_hz,
         "generated_frequency_hz": export.generated_frequency_hz,
         "target_frequency_hz": export.target_frequency_hz,
@@ -496,122 +812,189 @@ def summarize_export(export: SpiceExport, ngspice_available: bool, ngspice_path:
         "Q3": params[2].q_factor,
         "linear_coupling_k12": coupling["linear_k01_fraction_of_omega_product"],
         "linear_coupling_k23": coupling["linear_k12_fraction_of_omega_product"],
-        "nonlinear_element_assessment": "aggressive behavioral varactor/mixing proxy; plausible as a validation model, not yet a component-level implementation",
-        "recommended_next_step": "nonlinear component refinement, parameter sweep, then spatial phase-matching model",
+        "nonlinear_realism_score": variant.realism_score,
+        "nonlinear_element_assessment": variant.realism_label,
+        "recommended_next_step": "component refinement, parameter sweep, then spatial phase-matching model",
     }
     if metrics:
         row.update(metrics)
-        if all(key in metrics for key in ("spice_phase_lock_target", "spice_spectral_purity_target")):
-            row["rough_python_match_lock"] = str(abs(float(metrics["spice_phase_lock_target"]) - PYTHON_BASELINE["phase_lock_target"]) < 0.15)
-            row["rough_python_match_purity"] = str(abs(float(metrics["spice_spectral_purity_target"]) - PYTHON_BASELINE["spectral_purity_target"]) < 0.20)
-            if not math.isnan(float(metrics.get("spice_bridge_ratio", float("nan")))):
-                row["rough_python_match_bridge_ratio"] = str(abs(float(metrics["spice_bridge_ratio"]) - PYTHON_BASELINE["bridge_ratio"]) < 0.50)
+        row["rough_python_behavior_match"] = rough_python_match(metrics)
     return row
 
 
-def aggregate_summary(rows: List[Dict[str, float | str]], ngspice_available: bool) -> Dict[str, float | str]:
+def aggregate_summary(rows: List[Dict[str, float | str]], run_requested: bool, ngspice_available: bool) -> Dict[str, float | str]:
     exports = [r for r in rows if str(r.get("row_type")) == "spice_export"]
     discovery = [r for r in exports if str(r.get("role")) == "discovery"]
-    ran = [r for r in discovery if str(r.get("ngspice_run_succeeded")) == "True"]
+    ran = [r for r in discovery if str(r.get("execution_status")) == "ran_successfully"]
+    source_only = all(
+        str(r["direct_8_drive_present"]) == "False"
+        and str(r["direct_12_drive_present"]) == "False"
+        and str(r["target_frequency_injection_present"]) == "False"
+        for r in discovery
+    )
+    target_build_rows = [
+        r for r in ran
+        if float(r.get("spice_target_voltage_growth_ratio", 0.0) or 0.0) > 1.10
+        or float(r.get("spice_target_rms_v", 0.0) or 0.0) > 1e-12
+    ]
+    matching_rows = [r for r in ran if str(r.get("rough_python_behavior_match")) == "True"]
+    linear_rows = [r for r in ran if str(r.get("nonlinear_variant")) == "linear_no_nonlinearity_control"]
+    linear_failed = "not_run"
+    if linear_rows:
+        linear_failed = str(all(float(r.get("spice_target_voltage_growth_ratio", 0.0) or 0.0) < 1.25 for r in linear_rows))
+    statuses = sorted(set(str(r.get("execution_status")) for r in exports))
     return {
         "row_type": "aggregate",
         "valid_spice_netlists_generated": str(all(str(r["valid_spice_netlist_generated"]) == "True" for r in exports)),
+        "canonical_required_netlists_present": str(all((OUT_DIR / name).exists() for name in REQUIRED_CANONICAL_FILES)),
+        "run_requested": str(run_requested),
         "ngspice_available": str(ngspice_available),
-        "ngspice_runs_completed": str(bool(ran) and all(str(r["ngspice_run_succeeded"]) == "True" for r in ran)),
-        "discovery_rows_source_only": str(all(str(r["direct_8_drive_present"]) == "False" and str(r["direct_12_drive_present"]) == "False" and str(r["target_frequency_injection_present"]) == "False" for r in discovery)),
+        "ngspice_runs_completed": str(bool(ran)),
+        "execution_statuses": ";".join(statuses),
+        "discovery_rows_source_only": str(source_only),
         "reference_direct_4plus8_separated": str(any(str(r.get("role")) == "ceiling_reference" for r in exports)),
-        "spice_target_build_up_observed": str(any(float(r.get("spice_target_rms_v", 0.0) or 0.0) > 0.0 for r in ran)) if ran else "not_run",
-        "rough_python_match_available": str(bool(ran)) if ran else "not_run",
-        "nonlinear_element_assessment": "aggressive behavioral varactor/mixing proxy; needs component-level refinement",
-        "recommended_next_step": "Install/run ngspice if missing; then refine nonlinear components, sweep parameters, and add spatial phase-matching modeling",
+        "spice_target_build_up_observed": str(bool(target_build_rows)) if ran else "not_run",
+        "target_build_up_circuits": ";".join(str(r["circuit"]) for r in target_build_rows),
+        "rough_python_match_available": str(bool(matching_rows)) if ran else "not_run",
+        "rough_python_match_circuits": ";".join(str(r["circuit"]) for r in matching_rows),
+        "linear_no_nonlinearity_control_failed_as_expected": linear_failed,
+        "nonlinear_element_assessment": "behavioral proxy remains aggressive; diode/varactor/saturable variants are first-pass realism checks",
+        "recommended_next_step": "Run ngspice if available, then component refinement, parameter sweep, and spatial phase-matching modeling",
     }
 
 
 def write_report(out_dir: Path, summary_rows: List[Dict[str, float | str]], aggregate: Dict[str, float | str]) -> None:
     rows = [r for r in summary_rows if str(r.get("row_type")) == "spice_export"]
+    ran = [r for r in rows if str(r.get("execution_status")) == "ran_successfully"]
     lines = [
         "# SPICE 4->8->12 Bridge Export",
         "",
-        "This track exports the physical 4->8->12 LC bridge into ngspice-compatible netlists. The discovery netlists drive only resonator 1. The direct 4+8 netlist is separated as a ceiling/reference denominator and is not a discovery row.",
+        "This track exports the physical 4->8->12 LC bridge into ngspice-compatible netlists. Discovery netlists drive only resonator 1. The direct 4+8 netlist is separated as a ceiling/reference denominator and is not a discovery row.",
         "",
         "## Direct Answers",
-        f"1. Were valid SPICE netlists generated? {aggregate.get('valid_spice_netlists_generated')}.",
-        f"2. Does ngspice run locally? {aggregate.get('ngspice_available')}; completed={aggregate.get('ngspice_runs_completed')}.",
-        f"3. Does the SPICE transient preserve target build-up without direct 8/12 drive? {aggregate.get('spice_target_build_up_observed')}.",
-        f"4. Does SPICE roughly match Python lock, purity, and bridge-ratio behavior? {aggregate.get('rough_python_match_available')} for local execution; see summary metrics when ngspice runs.",
-        f"5. Is the nonlinear element physically plausible, aggressive, or unrealistic? {aggregate.get('nonlinear_element_assessment')}.",
+        f"1. Which netlists ran successfully under ngspice? {aggregate.get('rough_python_match_circuits') if ran else 'none in this run'}; execution_statuses={aggregate.get('execution_statuses')}.",
+        f"2. Did any source-only SPICE netlist show target build-up near 12? {aggregate.get('spice_target_build_up_observed')}; circuits={aggregate.get('target_build_up_circuits')}.",
+        f"3. Did any nonlinear model variant roughly reproduce the Python LC behavior? {aggregate.get('rough_python_match_available')}; circuits={aggregate.get('rough_python_match_circuits')}.",
+        f"4. Did the linear-no-nonlinearity control fail as expected? {aggregate.get('linear_no_nonlinearity_control_failed_as_expected')}.",
+        f"5. Is the required nonlinear element plausible, aggressive, or unrealistic? {aggregate.get('nonlinear_element_assessment')}.",
         f"6. Next step: {aggregate.get('recommended_next_step')}.",
         "",
         "## Exported Netlists",
     ]
     for row in rows:
         lines.append(
-            f"- {row['circuit']}: role={row['role']}, scale={row['scale_preset']}, "
-            f"f=({float(row['source_frequency_hz']):.6g}, {float(row['generated_frequency_hz']):.6g}, {float(row['target_frequency_hz']):.6g}) Hz, "
-            f"ngspice_run={row['ngspice_run_succeeded']}, netlist={Path(str(row['netlist_path'])).name}."
+            f"- {row['circuit']}: status={row['execution_status']}, role={row['role']}, scale={row['scale_preset']}, "
+            f"variant={row['nonlinear_variant']}, netlist={Path(str(row['netlist_path'])).name}."
         )
         lines.append(
             f"  Drive flags: direct_8={row['direct_8_drive_present']}, direct_12={row['direct_12_drive_present']}, target_injection={row['target_frequency_injection_present']}."
         )
-        if str(row.get("ngspice_run_succeeded")) == "True":
+        if str(row.get("execution_status")) == "ran_successfully":
             lines.append(
-                f"  SPICE metrics: lock={float(row.get('spice_phase_lock_target', 0.0)):.6g}, "
+                f"  SPICE metrics: target_growth={float(row.get('spice_target_voltage_growth_ratio', 0.0)):.6g}, "
+                f"lock={float(row.get('spice_phase_lock_target', 0.0)):.6g}, "
                 f"bridge={float(row.get('spice_bridge_ratio', 0.0)):.6g}, purity={float(row.get('spice_spectral_purity_target', 0.0)):.6g}, "
                 f"gen_cv={float(row.get('spice_generated_envelope_cv', 0.0)):.6g}, max_jump={float(row.get('spice_max_phase_jump', 0.0)):.6g}."
             )
         else:
-            lines.append(f"  Execution note: {row['ngspice_run_message']}.")
+            lines.append(f"  Execution note: {row['failure_reason'] or row['ngspice_run_message']}.")
     lines.extend([
         "",
         "## Circuit Notes",
         "",
         "- Each resonator is a capacitor in parallel with an inductor branch whose series resistance matches the physical Q.",
         "- Weak linear coupling is exported as mutual inductive coupling between adjacent resonators.",
-        "- Varactor-like behavior is exported with behavioral current sources using `ddt(V(node))`.",
-        "- Nonlinear mixing is exported as behavioral current injection scaled from the normalized Python LC model.",
-        "- The soft limiter is a passive voltage-drop-dependent conductance between resonators.",
-        "- These behavioral nonlinear elements are deliberately marked aggressive: they preserve the bridge mechanism for SPICE testing but are not yet a bill of materials.",
+        "- Nonlinear variants include behavioral current mixing, voltage-dependent capacitance, diode pairs, varactor-diode models, saturable-inductor proxies, and a linear no-nonlinearity control.",
+        "- The behavioral current variant remains the most aggressive and closest to the Python LC abstraction.",
+        "- The diode/varactor/saturable variants are first-pass realism checks, not yet tuned component implementations.",
     ])
     (out_dir / "README_SPICE_412_EXPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def parse_variants(raw: str) -> List[str]:
+    if raw.strip().lower() == "all":
+        return list(NONLINEAR_VARIANTS.keys())
+    names = [part.strip() for part in raw.split(",") if part.strip()]
+    unknown = [name for name in names if name not in NONLINEAR_VARIANTS]
+    if unknown:
+        raise ValueError(f"Unknown nonlinear variant(s): {', '.join(unknown)}. Valid: {', '.join(NONLINEAR_VARIANTS)}")
+    return names
+
+
+def resolve_ngspice_path(raw_path: str | None) -> str | None:
+    if raw_path:
+        if raw_path.startswith("wsl:"):
+            tool = raw_path.split(":", 1)[1] or "ngspice"
+            probe = subprocess.run(
+                ["wsl", "-e", "sh", "-lc", f"command -v {sh_quote(tool)} >/dev/null 2>&1"],
+                text=True,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+            return raw_path if probe.returncode == 0 else None
+        candidate = Path(raw_path)
+        if candidate.exists():
+            return str(candidate)
+        found = shutil.which(raw_path)
+        return found
+    native = shutil.which("ngspice")
+    if native:
+        return native
+    probe = subprocess.run(
+        ["wsl", "-e", "sh", "-lc", "command -v ngspice >/dev/null 2>&1"],
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if probe.returncode == 0:
+        return "wsl:ngspice"
+    return None
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export and optionally run ngspice validation for the physical 4->8->12 bridge.")
     parser.add_argument("--out", default=str(OUT_DIR), help="Output directory.")
-    parser.add_argument("--run", action="store_true", help="Run ngspice if installed. By default the script also runs if ngspice is present unless --no-run is used.")
-    parser.add_argument("--no-run", action="store_true", help="Only export netlists, even if ngspice is installed.")
+    parser.add_argument("--run", action="store_true", help="Run ngspice. Export only unless this flag is set.")
+    parser.add_argument("--ngspice-path", default="", help="Explicit path to ngspice executable.")
     parser.add_argument("--timeout", type=int, default=120, help="Timeout per ngspice netlist in seconds.")
+    parser.add_argument("--variants", default="all", help="Comma-separated nonlinear variants or 'all'.")
     args = parser.parse_args()
 
     out_dir = ensure_dir(Path(args.out))
-    exports = export_netlists(out_dir)
-    ngspice_path = shutil.which("ngspice")
+    variant_names = parse_variants(args.variants)
+    exports = export_netlists(out_dir, variant_names)
+    ngspice_path = resolve_ngspice_path(args.ngspice_path or None)
     ngspice_available = ngspice_path is not None
-    should_run = ngspice_available and not args.no_run
 
     parsed_data: Dict[str, Dict[str, np.ndarray]] = {}
-    run_results: Dict[str, Tuple[bool, str]] = {}
-    if should_run:
+    run_results: Dict[str, RunResult] = {}
+    if args.run and not ngspice_available:
         for export in exports:
-            run_results[export.circuit_name] = run_ngspice(export, ngspice_path or "ngspice", args.timeout)
-            if run_results[export.circuit_name][0]:
+            run_results[export.circuit_name] = RunResult("skipped_no_ngspice", False, "ngspice not found; pass --ngspice-path or add ngspice to PATH")
+    elif args.run and ngspice_path:
+        for export in exports:
+            result = run_ngspice(export, ngspice_path, args.timeout)
+            if result.success:
                 try:
                     parsed_data[export.circuit_name] = read_ngspice_csv(export.csv_path)
                 except Exception as exc:
-                    run_results[export.circuit_name] = (False, f"parse_failed: {type(exc).__name__}: {exc}")
+                    result = RunResult("parser_failed", False, f"{type(exc).__name__}: {exc}", result.log_path)
+            run_results[export.circuit_name] = result
     else:
-        reason = "ngspice not installed on PATH" if not ngspice_available else "run disabled by --no-run"
         for export in exports:
-            run_results[export.circuit_name] = (False, reason)
+            run_results[export.circuit_name] = RunResult("exported", False, "export only; use --run to execute ngspice")
 
     reference_data = parsed_data.get("reference_direct_4plus8")
     summary_rows: List[Dict[str, float | str]] = []
     timeseries_rows: List[Dict[str, float | str]] = []
     for export in exports:
-        run_ok, run_message = run_results[export.circuit_name]
+        variant = NONLINEAR_VARIANTS[export.nonlinear_variant]
+        result = run_results[export.circuit_name]
         metrics: Dict[str, float | str] | None = None
         phase_rows: List[Dict[str, float | str]] = []
-        if run_ok and export.circuit_name in parsed_data:
+        if result.success and export.circuit_name in parsed_data:
             metrics, phase_rows = spice_metrics(export, parsed_data[export.circuit_name], reference_data)
             data = parsed_data[export.circuit_name]
             for idx in range(len(data["time"])):
@@ -619,6 +1002,7 @@ def main() -> None:
                     "row_type": "spice_timeseries",
                     "circuit": export.circuit_name,
                     "scale_preset": export.scale_name,
+                    "nonlinear_variant": export.nonlinear_variant,
                     "time_s": float(data["time"][idx]),
                     "v_source": float(data["v1"][idx]),
                     "v_generated": float(data["v2"][idx]),
@@ -632,18 +1016,24 @@ def main() -> None:
                     })
                 timeseries_rows.append(item)
             timeseries_rows.extend(phase_rows)
-        summary_rows.append(summarize_export(export, ngspice_available, ngspice_path, run_ok, run_message, metrics))
+        summary_rows.append(summarize_export(export, variant, args.run, ngspice_available, ngspice_path, result, metrics))
 
-    aggregate = aggregate_summary(summary_rows, ngspice_available)
+    aggregate = aggregate_summary(summary_rows, args.run, ngspice_available)
     all_summary_rows = [aggregate] + summary_rows
     write_csv(out_dir / "spice_412_summary.csv", all_summary_rows)
+    timeseries_path = out_dir / "spice_412_timeseries.csv"
     if timeseries_rows:
-        write_csv(out_dir / "spice_412_timeseries.csv", timeseries_rows)
+        write_csv(timeseries_path, timeseries_rows)
+    elif timeseries_path.exists():
+        timeseries_path.unlink()
     (out_dir / "spice_412_summary.json").write_text(json.dumps({
         "aggregate": aggregate,
         "rows": all_summary_rows,
         "python_lc_baseline": PYTHON_BASELINE,
-        "netlists": [asdict(export) | {
+        "execution_statuses": EXECUTION_STATUSES,
+        "nonlinear_variants": {name: asdict(variant) for name, variant in NONLINEAR_VARIANTS.items()},
+        "netlists": [{
+            **asdict(export),
             "netlist_path": str(export.netlist_path),
             "csv_path": str(export.csv_path),
             "raw_path": str(export.raw_path),
@@ -653,8 +1043,9 @@ def main() -> None:
 
     print(f"SPICE 4->8->12 export written to: {out_dir.resolve()}")
     print(f"valid_spice_netlists_generated={aggregate['valid_spice_netlists_generated']}")
+    print(f"run_requested={aggregate['run_requested']}")
     print(f"ngspice_available={aggregate['ngspice_available']}")
-    print(f"ngspice_runs_completed={aggregate['ngspice_runs_completed']}")
+    print(f"execution_statuses={aggregate['execution_statuses']}")
     print(f"discovery_rows_source_only={aggregate['discovery_rows_source_only']}")
 
 

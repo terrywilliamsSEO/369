@@ -37,7 +37,7 @@ What has not survived yet:
 - Harmonic budget-ledger forensics shows that 4 -> 8 -> 12 budget residual converges away strongly through eighth dt and no single ledger component matches the residual magnitude; it is currently classified as numerical ledger sensitivity, not promotion.
 - Harmonic substep quadrature independently validates the 4 -> 8 -> 12 near-candidate as trajectory-integration sensitive: trajectory-preserving quadrature does not close baseline budget, but substep-4 re-integration closes baseline/half/quarter/eighth dt while preserving lock, bridge ratio, purity, envelope CV, and phase-jump gates.
 - Independent validation and the first LC physicalization now preserve the strict 4 -> 8 -> 12 result outside the main harness. The LC track keeps audio, low-RF, and normalized scale presets source-only with no direct 8 drive, no direct 12 drive, and no target-frequency injection.
-- The first SPICE export track now emits ngspice-compatible audio, low-RF, normalized, and direct 4+8 reference netlists. Local execution was skipped because `ngspice` is not installed on PATH.
+- The SPICE export track now emits CI-friendly ngspice netlists for audio, low-RF, normalized, five nonlinear realism variants, a linear no-nonlinearity control, and the direct 4+8 reference. Local execution remains skipped because native ngspice is not on PATH and WSL install requires sudo password.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
@@ -121,6 +121,9 @@ python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick --swe
 python independent_validate_412.py
 python physical_412_lc_bridge.py
 python spice_412_export.py
+python spice_412_export.py --run
+python spice_412_export.py --run --ngspice-path "C:/path/to/ngspice.exe"
+python spice_412_export.py --run --ngspice-path wsl:ngspice
 ```
 
 Key bridge modes:
@@ -361,11 +364,12 @@ Standalone result from `python physical_412_lc_bridge.py`:
 
 ## Latest SPICE 4->8->12 Export Read
 
-Standalone result from `python spice_412_export.py`:
+Standalone result from `python spice_412_export.py --run`:
 
-- Generated ngspice-compatible netlists for `audio_412_bridge.cir`, `low_rf_412_bridge.cir`, `normalized_412_bridge.cir`, and the separated ceiling/reference `reference_direct_4plus8.cir`.
+- Generated ngspice-compatible netlists for `audio_412_bridge.cir`, `low_rf_412_bridge.cir`, `normalized_412_bridge.cir`, five nonlinear realism variants per scale, the `linear_no_nonlinearity_control`, and the separated ceiling/reference `reference_direct_4plus8.cir`.
 - Outputs are written to `runs/spice_412_bridge/spice_412_summary.json`, `spice_412_summary.csv`, and `README_SPICE_412_EXPORT.md`. `spice_412_timeseries.csv` is only written when ngspice execution succeeds.
-- Local ngspice execution did not run because `ngspice` was not installed on PATH.
+- Local ngspice execution was requested but skipped per netlist with `execution_status=skipped_no_ngspice`. Native `ngspice` is not on PATH, `winget search ngspice` found no matching package, WSL Ubuntu is present but `sudo apt-get install ngspice` requires a password, and Docker is unavailable.
 - Discovery netlists remain source-only: no direct generated-mode drive, no direct target-mode drive, and no target-frequency injection. The direct 4+8 netlist is marked `ceiling_reference`.
-- Circuit form: three lossy LC tanks with Q-matched inductor-branch resistance, weak mutual inductive coupling, behavioral varactor-like capacitance, behavioral nonlinear mixing, and passive soft-limiter conductance.
-- Current recommendation: install/run ngspice, then refine nonlinear component implementation, run parameter sweeps, and add spatial phase-matching modeling.
+- Circuit variants now include `behavioral_proxy_current`, `voltage_dependent_capacitance_proxy`, `diode_pair_proxy`, `varactor_diode_model_proxy`, `saturable_inductor_proxy`, and `linear_no_nonlinearity_control`.
+- Parser and metric path are implemented for ngspice CSV output: target voltage growth, FFT peaks, approximate target phase lock, target spectral purity, generated-envelope CV, max phase jump, and bridge ratio using the separated direct 4+8 reference.
+- Current recommendation: install/run ngspice using a native path or `--ngspice-path wsl:ngspice`, then refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.

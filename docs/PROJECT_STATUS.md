@@ -35,7 +35,7 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Harmonic 4 -> 8 -> 12 detuning refinement finds strict substep-4 rows: the best quick row uses target detuning `-0.08` and limiter `0.03`, with all-dt lock 0.992, bridge ratio 1.589, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, and near slips 0.
 - The standalone `independent_validate_412.py` script independently reproduces the strict 4 -> 8 -> 12 candidate without importing the main harness: baseline/half/quarter dt all pass, worst lock 0.992, bridge ratio 1.607, purity 0.923, budget 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, near slips 0, and `independent_validation_passed=True`.
 - The standalone `physical_412_lc_bridge.py` script expresses that independent 4 -> 8 -> 12 bridge as three coupled nonlinear LC resonators under audio, low-RF, and normalized scale presets. All scale presets pass baseline/half/quarter dt gates with worst lock 0.992108, bridge ratio 1.606971, purity 0.922789, budget 0.0000510, generated-envelope CV 0.134693, max jump 0.971944 rad, and no direct 8/12 drive or target-frequency injection.
-- The standalone `spice_412_export.py` script now exports ngspice-compatible audio, low-RF, normalized, and direct 4+8 reference netlists for the physical LC bridge. Local execution was skipped because `ngspice` was not installed on PATH, so SPICE transient matching remains untested locally.
+- The standalone `spice_412_export.py` script now exports ngspice-compatible audio, low-RF, normalized, nonlinear-variant, linear-control, and direct 4+8 reference netlists for the physical LC bridge. Local execution was requested with `--run` but skipped per netlist because native ngspice is not on PATH and WSL installation requires sudo password, so SPICE transient matching remains untested locally.
 
 ## Current Blocker
 
@@ -536,6 +536,7 @@ Outputs:
 - `runs/spice_412_bridge/low_rf_412_bridge.cir`
 - `runs/spice_412_bridge/normalized_412_bridge.cir`
 - `runs/spice_412_bridge/reference_direct_4plus8.cir`
+- variant netlists for `voltage_dependent_capacitance_proxy`, `diode_pair_proxy`, `varactor_diode_model_proxy`, `saturable_inductor_proxy`, and `linear_no_nonlinearity_control`
 - `runs/spice_412_bridge/spice_412_summary.json`
 - `runs/spice_412_bridge/spice_412_summary.csv`
 - `runs/spice_412_bridge/README_SPICE_412_EXPORT.md`
@@ -543,15 +544,20 @@ Outputs:
 What it tests:
 
 - Exports the physical 4 -> 8 -> 12 LC bridge into ngspice-compatible netlists.
+- Execution is explicit: use `python spice_412_export.py --run`; pass native Windows ngspice with `--ngspice-path "C:/path/to/ngspice.exe"` or WSL ngspice with `--ngspice-path wsl:ngspice`.
+- Per-netlist execution statuses are now `exported`, `skipped_no_ngspice`, `ran_successfully`, `failed_to_converge`, and `parser_failed`.
 - Discovery netlists drive only resonator 1 and keep direct resonator 2 drive, direct resonator 3 drive, and target-frequency injection absent.
 - The direct 4+8 netlist is separated as `reference_direct_4plus8.cir` with role `ceiling_reference`.
 - Circuit elements include three lossy LC tanks, Q-matched inductor-branch resistance, weak mutual inductive coupling, behavioral varactor-like capacitance, behavioral nonlinear mixing, and passive soft-limiter conductance.
-- If ngspice is installed, the script runs transient simulations, writes ngspice CSV/raw outputs, parses voltages/currents, and computes approximate lock, bridge ratio, purity, envelope CV, and max jump.
+- Nonlinear realism variants include `behavioral_proxy_current`, `voltage_dependent_capacitance_proxy`, `diode_pair_proxy`, `varactor_diode_model_proxy`, `saturable_inductor_proxy`, and `linear_no_nonlinearity_control`.
+- If ngspice is installed, the script runs transient simulations, writes ngspice CSV/raw outputs, parses voltages/currents, and computes target voltage growth, source/generated/target FFT peaks, approximate lock, bridge ratio, purity near 12, generated-envelope CV, and max jump.
 
 Standalone result:
 
 - `valid_spice_netlists_generated=True`.
-- `ngspice_available=False` in the current local environment, so transient execution and Python-vs-SPICE metric comparison were skipped.
+- Run command tested: `python spice_412_export.py --run`.
+- `ngspice_available=False` in the current local environment, so every netlist row has `execution_status=skipped_no_ngspice`.
+- Environment checks: native `ngspice` is not on PATH; `winget search ngspice` found no matching package; WSL Ubuntu is available, but `sudo -n apt-get install -y ngspice` failed because sudo requires a password; Docker is not installed.
 - `discovery_rows_source_only=True`; the audio, low-RF, and normalized discovery netlists have no direct 8 drive, no direct 12 drive, and no target-frequency injection.
 - Nonlinear element assessment: aggressive behavioral varactor/mixing proxy; useful for circuit validation but not yet a component-level implementation.
 - Current next fix: install/run ngspice, then refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.
@@ -562,7 +568,7 @@ Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run the exported `runs/spice_412_bridge/*.cir` netlists with ngspice and compare transient metrics to the Python LC model.
+1. Install ngspice or provide a working path, then run `python spice_412_export.py --run` or `python spice_412_export.py --run --ngspice-path wsl:ngspice`.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
 3. Refine physical component ranges, nonlinear capacitance/mixing implementation, coupling implementation, and spatial phase matching.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
