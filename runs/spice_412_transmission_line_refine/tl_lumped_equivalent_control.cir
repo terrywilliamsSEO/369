@@ -1,0 +1,88 @@
+* tl_lumped_equivalent_control
+* Normalized LC transmission-line / waveguide-like 4->8->12 ladder.
+* topology=tl_lumped_equivalent_control role=control
+.options reltol=3e-4 abstol=1e-8 chgtol=1e-12 method=gear maxord=2
+
+Cs0 s0 0 1
+Lress0 s0 0 0.00158314349441
+Rlosss0 s0 0 14.2857142857
+Ls0_1 s0 s1 0.000677942380343
+Cs1 s1 0 1
+Lress1 s1 0 0.00158314349441
+Rlosss1 s1 0 14.2857142857
+Ls1_2 s1 s2 0.000677942380343
+Cs2 s2 0 1
+Lress2 s2 0 0.00158314349441
+Rlosss2 s2 0 14.2857142857
+Ls2_3 s2 s3 0.000677942380343
+Cs3 s3 0 1
+Lress3 s3 0 0.00158314349441
+Rlosss3 s3 0 14.2857142857
+Rterms s3 0 0.156223960046
+Cg0 g0 0 1
+Lresg0 g0 0 0.000395785873603
+Rlossg0 g0 0 14.2857142857
+Lg0_1 g0 g1 0.00116819948141
+Cg1 g1 0 1
+Lresg1 g1 0 0.000395785873603
+Rlossg1 g1 0 14.2857142857
+Lg1_2 g1 g2 0.00116819948141
+Cg2 g2 0 1
+Lresg2 g2 0 0.000395785873603
+Rlossg2 g2 0 14.2857142857
+Lg2_3 g2 g3 0.00116819948141
+Cg3 g3 0 1
+Lresg3 g3 0 0.000395785873603
+Rlossg3 g3 0 14.2857142857
+Rtermg g3 0 0.20507359979
+Ct0 t0 0 1
+Lrest0 t0 0 0.000175904832712
+Rlosst0 t0 0 14.2857142857
+Lt0_1 t0 t1 0.000235327509259
+Ct1 t1 0 1
+Lrest1 t1 0 0.000175904832712
+Rlosst1 t1 0 14.2857142857
+Lt1_2 t1 t2 0.000235327509259
+Ct2 t2 0 1
+Lrest2 t2 0 0.000175904832712
+Rlosst2 t2 0 14.2857142857
+Lt2_3 t2 t3 0.000235327509259
+Ct3 t3 0 1
+Lrest3 t3 0 0.000175904832712
+Rlosst3 t3 0 14.2857142857
+Rtermt t3 0 0.0920423290304
+Ccsg0 s0 g0 0.012
+Ccgt0 g0 t0 0.009
+Ccsg1 s1 g1 0.012
+Ccgt1 g1 t1 0.009
+Ccsg2 s2 g2 0.012
+Ccgt2 g2 t2 0.009
+Ccsg3 s3 g3 0.012
+Ccgt3 g3 t3 0.009
+Bmix8_0 g0 0 I={-(1*V(s0)*V(s0)*cos(0))}
+Bmix12_0 t0 0 I={-(6*V(s0)*V(g0)*cos(0))}
+Bsat0 t0 0 I={ 0.01*V(t0)*(V(s0)*V(s0)+V(g0)*V(g0)+V(t0)*V(t0)) }
+Bmix8_1 g1 0 I={-(1*V(s1)*V(s1)*cos(0.366666666667))}
+Bmix12_1 t1 0 I={-(6*V(s1)*V(g1)*cos(0.466666666667))}
+Bsat1 t1 0 I={ 0.01*V(t1)*(V(s1)*V(s1)+V(g1)*V(g1)+V(t1)*V(t1)) }
+Bmix8_2 g2 0 I={-(1*V(s2)*V(s2)*cos(0.733333333333))}
+Bmix12_2 t2 0 I={-(6*V(s2)*V(g2)*cos(0.933333333333))}
+Bsat2 t2 0 I={ 0.01*V(t2)*(V(s2)*V(s2)+V(g2)*V(g2)+V(t2)*V(t2)) }
+Bmix8_3 g3 0 I={-(1*V(s3)*V(s3)*cos(1.1))}
+Bmix12_3 t3 0 I={-(6*V(s3)*V(g3)*cos(1.4))}
+Bsat3 t3 0 I={ 0.01*V(t3)*(V(s3)*V(s3)+V(g3)*V(g3)+V(t3)*V(t3)) }
+
+Vdrive4 vin4 0 SIN(0 0.7 4)
+Rdrive4 vin4 s0 0.0260373266743
+Bobs4 obs4 0 V={(2.45728040651e-05*V(s0)+0.00763769083884*V(s1)+0.239037748283*V(s2)+0.753299988074*V(s3))}
+Bobs8 obs8 0 V={(2.45728040651e-05*V(g0)+0.00763769083884*V(g1)+0.239037748283*V(g2)+0.753299988074*V(g3))}
+Bobs12 obs12 0 V={(2.45728040651e-05*V(t0)+0.00763769083884*V(t1)+0.239037748283*V(t2)+0.753299988074*V(t3))}
+
+.control
+set noaskquit
+set filetype=ascii
+tran 0.002 32 0 0.002 uic
+wrdata tl_lumped_equivalent_control_tran.csv time v(obs4) v(obs8) v(obs12)
+quit
+.endc
+.end

@@ -496,3 +496,26 @@ Standalone result:
 - QPM helped relative to mismatch with lock `0.620977` and bridge ratio `5.746898`, but did not promote because purity stayed at `0.718200`.
 - Linear, detuned, and shuffled controls stayed dead with max coherent leakage score `0.0`.
 - Current next fix: physical waveguide modeling and transmission-line ladder refinement.
+
+## SPICE 4->8->12 Transmission-Line Refinement
+
+Added `spice_412_transmission_line_refine.py`:
+
+- Refines the distributed SPICE envelope ladder into a normalized LC transmission-line ladder with explicit source/generated/target band sections.
+- Netlists generated: `tl_phase_matched_ladder.cir`, `tl_qpm_ladder.cir`, `tl_mismatched_ladder_control.cir`, `tl_lumped_equivalent_control.cir`, `tl_linear_no_nonlinearity_control.cir`, `tl_detuned_target_control.cir`, `tl_shuffled_frequency_control.cir`, and `tl_direct_4plus8_reference.cir`.
+- Uses per-cell series inductors, shunt capacitors, tuned shunt band resonators, shunt losses, terminal loads, capacitive inter-band coupling, and distributed nonlinear mixing proxies.
+- Discovery rows remain source-only: no direct 8 drive, no direct 12 drive, and no target-frequency injection. Direct 4+8 remains only a separated ceiling reference.
+- Reports `behavioral_dependency_score`, transmission-line realism, effective phase velocity estimate, accumulated phase mismatch, energy budget proxy, component stress proxy, and coherent-control leakage scores.
+- Outputs go to `runs/spice_412_transmission_line_refine/spice_412_tl_summary.json`, `spice_412_tl_summary.csv`, `spice_412_tl_timeseries.csv`, and `README_SPICE_412_TRANSMISSION_LINE_REFINE.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_transmission_line_refine.py --run --ngspice-path wsl:ngspice`.
+- All eight netlists ran successfully under WSL `ngspice-42`.
+- One source-only TL row promoted as `spice_tl_phase_candidate`: `t001 tl_phase_matched_ladder`.
+- Promoted metrics: lock `0.997206`, bridge ratio `8.261740`, purity `0.961441`, target coherent growth `3.955957`, generated-envelope CV `0.070890`, target-envelope CV `0.144193`, max phase jump `0.057316`, near slips `0`.
+- Behavioral dependency fell to `0.36`, below the previous envelope-ladder baseline `0.65`; the bridge strengthened rather than weakened.
+- QPM helped relative to dead controls with lock `0.961919`, purity `0.880158`, and target coherent growth `1.583010`, but did not promote because bridge ratio was only `0.006003`.
+- The deliberate mismatch control kept a high raw phase metric on tiny residual target response, but material bridge ratio fell to `0.002707`, so it stayed dead.
+- Linear/no-nonlinearity, detuned, shuffled, lumped, and mismatched controls stayed dead with max coherent leakage score `0.0`.
+- Current next fix: build a physical waveguide/phase-matching model, then explore PCB/transmission-line or acoustic waveguide approximations.
