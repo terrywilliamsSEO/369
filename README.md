@@ -37,11 +37,12 @@ What has not survived yet:
 - Harmonic budget-ledger forensics shows that 4 -> 8 -> 12 budget residual converges away strongly through eighth dt and no single ledger component matches the residual magnitude; it is currently classified as numerical ledger sensitivity, not promotion.
 - Harmonic substep quadrature independently validates the 4 -> 8 -> 12 near-candidate as trajectory-integration sensitive: trajectory-preserving quadrature does not close baseline budget, but substep-4 re-integration closes baseline/half/quarter/eighth dt while preserving lock, bridge ratio, purity, envelope CV, and phase-jump gates.
 - Independent validation and the first LC physicalization now preserve the strict 4 -> 8 -> 12 result outside the main harness. The LC track keeps audio, low-RF, and normalized scale presets source-only with no direct 8 drive, no direct 12 drive, and no target-frequency injection.
+- The first SPICE export track now emits ngspice-compatible audio, low-RF, normalized, and direct 4+8 reference netlists. Local execution was skipped because `ngspice` is not installed on PATH.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Validate the physicalized 4 -> 8 -> 12 bridge in SPICE/ngspice, then refine physical parameters and spatial phase matching before trying geometry/evolve or a 369-specific stronger target servo.
+- Run the exported 4 -> 8 -> 12 netlists under ngspice, then refine nonlinear components, sweep physical parameters, and model spatial phase matching before trying geometry/evolve or a 369-specific stronger target servo.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -119,6 +120,7 @@ python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick
 python tesla_369_lab.py --mode harmonic_bridge_412_detuning_refine --quick --sweeps
 python independent_validate_412.py
 python physical_412_lc_bridge.py
+python spice_412_export.py
 ```
 
 Key bridge modes:
@@ -356,3 +358,14 @@ Standalone result from `python physical_412_lc_bridge.py`:
 - Representative audio-scale parameters: f=(440, 883.894, 1309.862) Hz, L=(13.08 mH, 6.90 mH, 4.47 mH), C=(10 uF, 4.7 uF, 3.3 uF), R=(0.912, 0.901, 0.480) ohm, Q=(39.7, 42.5, 76.8), all mild. Peak voltages were about 8.70 V, 7.45 V, and 10.39 V.
 - The LC read remains source-only: no direct 8 drive, no direct 12 drive, and no target-frequency injection. The direct 4+8 row is still only a ceiling denominator.
 - Current recommendation: SPICE/ngspice validation first, then physical parameter refinement and spatial phase-matching modeling.
+
+## Latest SPICE 4->8->12 Export Read
+
+Standalone result from `python spice_412_export.py`:
+
+- Generated ngspice-compatible netlists for `audio_412_bridge.cir`, `low_rf_412_bridge.cir`, `normalized_412_bridge.cir`, and the separated ceiling/reference `reference_direct_4plus8.cir`.
+- Outputs are written to `runs/spice_412_bridge/spice_412_summary.json`, `spice_412_summary.csv`, and `README_SPICE_412_EXPORT.md`. `spice_412_timeseries.csv` is only written when ngspice execution succeeds.
+- Local ngspice execution did not run because `ngspice` was not installed on PATH.
+- Discovery netlists remain source-only: no direct generated-mode drive, no direct target-mode drive, and no target-frequency injection. The direct 4+8 netlist is marked `ceiling_reference`.
+- Circuit form: three lossy LC tanks with Q-matched inductor-branch resistance, weak mutual inductive coupling, behavioral varactor-like capacitance, behavioral nonlinear mixing, and passive soft-limiter conductance.
+- Current recommendation: install/run ngspice, then refine nonlinear component implementation, run parameter sweeps, and add spatial phase-matching modeling.

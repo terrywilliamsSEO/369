@@ -368,3 +368,22 @@ Standalone result:
 - Audio-scale representative values: f=(440, 883.894, 1309.862) Hz, L=(13.08 mH, 6.90 mH, 4.47 mH), C=(10 uF, 4.7 uF, 3.3 uF), R=(0.912, 0.901, 0.480) ohm, Q=(39.7, 42.5, 76.8), all mild.
 - Low-RF representative values: f=(1.0 MHz, 2.009 MHz, 2.977 MHz), L=(25.33 uH, 13.36 uH, 8.66 uH), C=(1 nF, 470 pF, 330 pF), R=(4.01, 3.97, 2.11) ohm, Q=(39.7, 42.5, 76.8), all mild.
 - Current next fix: SPICE/ngspice validation, then physical parameter refinement and spatial phase-matching modeling.
+
+## SPICE 4->8->12 Export
+
+Added `spice_412_export.py`:
+
+- Exports the physical 4 -> 8 -> 12 LC bridge into ngspice-compatible netlists for audio-scale, low-RF-scale, and normalized-scale.
+- Exports a separated `reference_direct_4plus8.cir` ceiling denominator using direct 4+8 drive; it is not a discovery row.
+- Discovery netlists drive only resonator 1/source mode and keep direct generated-mode drive, direct target-mode drive, and target-frequency injection absent.
+- Circuit model includes three lossy LC resonators, Q-matched inductor-branch resistance, weak mutual inductive coupling, behavioral varactor-like capacitance, behavioral nonlinear mixing, and passive soft-limiter conductance.
+- If ngspice is installed, the script runs transient simulations, exports ngspice CSV/raw output, parses resonator voltages/currents, and computes approximate lock, bridge ratio, purity, generated-envelope CV, and max phase jump.
+- Outputs go to `runs/spice_412_bridge/audio_412_bridge.cir`, `low_rf_412_bridge.cir`, `normalized_412_bridge.cir`, `reference_direct_4plus8.cir`, `spice_412_summary.json`, `spice_412_summary.csv`, and `README_SPICE_412_EXPORT.md`.
+
+Standalone result:
+
+- Valid SPICE netlists were generated.
+- Local ngspice execution was skipped because `ngspice` was not installed on PATH.
+- No SPICE transient target build-up or Python-vs-SPICE metric comparison has been measured locally yet.
+- The nonlinear element is classified as an aggressive behavioral varactor/mixing proxy: suitable for a first ngspice validation track, but not yet a physically refined component implementation.
+- Current next fix: install/run ngspice, then refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.

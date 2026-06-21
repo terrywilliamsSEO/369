@@ -35,12 +35,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - Harmonic 4 -> 8 -> 12 detuning refinement finds strict substep-4 rows: the best quick row uses target detuning `-0.08` and limiter `0.03`, with all-dt lock 0.992, bridge ratio 1.589, purity 0.923, budget error 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, and near slips 0.
 - The standalone `independent_validate_412.py` script independently reproduces the strict 4 -> 8 -> 12 candidate without importing the main harness: baseline/half/quarter dt all pass, worst lock 0.992, bridge ratio 1.607, purity 0.923, budget 0.0000510, generated-envelope CV 0.135, max jump 0.972 rad, near slips 0, and `independent_validation_passed=True`.
 - The standalone `physical_412_lc_bridge.py` script expresses that independent 4 -> 8 -> 12 bridge as three coupled nonlinear LC resonators under audio, low-RF, and normalized scale presets. All scale presets pass baseline/half/quarter dt gates with worst lock 0.992108, bridge ratio 1.606971, purity 0.922789, budget 0.0000510, generated-envelope CV 0.134693, max jump 0.971944 rad, and no direct 8/12 drive or target-frequency injection.
+- The standalone `spice_412_export.py` script now exports ngspice-compatible audio, low-RF, normalized, and direct 4+8 reference netlists for the physical LC bridge. Local execution was skipped because `ngspice` was not installed on PATH, so SPICE transient matching remains untested locally.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, and a first LC physicalization, so the blocker for that branch is circuit-level validation, physical parameter refinement, and broader family-law replication, not the earlier baseline ledger residual.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, and exported ngspice netlists. The blocker for that branch is running circuit-level validation, refining physical nonlinear components, and broader family-law replication, not the earlier baseline ledger residual.
 
 ## Latest Magnetic Autolock Summary
 
@@ -521,15 +522,49 @@ Standalone result:
 - Linear coupling fractions are weak at about 0.00427 and 0.00420. The aggressive assumption is the nonlinear mixing strength, not the LC/Q values.
 - Current next fix: SPICE/ngspice validation first, then physical parameter refinement and spatial phase-matching modeling.
 
+## Latest SPICE 4->8->12 Export Summary
+
+Script added:
+
+```bash
+python spice_412_export.py
+```
+
+Outputs:
+
+- `runs/spice_412_bridge/audio_412_bridge.cir`
+- `runs/spice_412_bridge/low_rf_412_bridge.cir`
+- `runs/spice_412_bridge/normalized_412_bridge.cir`
+- `runs/spice_412_bridge/reference_direct_4plus8.cir`
+- `runs/spice_412_bridge/spice_412_summary.json`
+- `runs/spice_412_bridge/spice_412_summary.csv`
+- `runs/spice_412_bridge/README_SPICE_412_EXPORT.md`
+
+What it tests:
+
+- Exports the physical 4 -> 8 -> 12 LC bridge into ngspice-compatible netlists.
+- Discovery netlists drive only resonator 1 and keep direct resonator 2 drive, direct resonator 3 drive, and target-frequency injection absent.
+- The direct 4+8 netlist is separated as `reference_direct_4plus8.cir` with role `ceiling_reference`.
+- Circuit elements include three lossy LC tanks, Q-matched inductor-branch resistance, weak mutual inductive coupling, behavioral varactor-like capacitance, behavioral nonlinear mixing, and passive soft-limiter conductance.
+- If ngspice is installed, the script runs transient simulations, writes ngspice CSV/raw outputs, parses voltages/currents, and computes approximate lock, bridge ratio, purity, envelope CV, and max jump.
+
+Standalone result:
+
+- `valid_spice_netlists_generated=True`.
+- `ngspice_available=False` in the current local environment, so transient execution and Python-vs-SPICE metric comparison were skipped.
+- `discovery_rows_source_only=True`; the audio, low-RF, and normalized discovery netlists have no direct 8 drive, no direct 12 drive, and no target-frequency injection.
+- Nonlinear element assessment: aggressive behavioral varactor/mixing proxy; useful for circuit validation but not yet a component-level implementation.
+- Current next fix: install/run ngspice, then refine nonlinear components, run parameter sweeps, and add spatial phase-matching modeling.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Run SPICE/ngspice validation of the physicalized 4 -> 8 -> 12 LC bridge.
+1. Run the exported `runs/spice_412_bridge/*.cir` netlists with ngspice and compare transient metrics to the Python LC model.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
-3. Refine physical component ranges, nonlinear capacitance strength, coupling implementation, and spatial phase matching.
+3. Refine physical component ranges, nonlinear capacitance/mixing implementation, coupling implementation, and spatial phase matching.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 5. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 6. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.
