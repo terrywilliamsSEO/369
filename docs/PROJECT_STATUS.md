@@ -40,12 +40,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `spice_412_component_realism.py` script removes behavioral current mixing from discovery and sweeps component-plausible diode, varactor, saturable, hybrid, and trap networks. Six component rows crossed bridge ratio 1.5, but none phase-locked; the closest behavioral-proxy row had lock 0.017518, purity 0.989155, bridge ratio 1.647442, and no promotion. Weak-nonlinearity and detuned controls also leaked target-band response, so controls did not all stay dead.
 - The standalone `spice_412_component_phase_lock.py` script sweeps detuning, coupling orientation/sign, coupling strength, Q/load shaping, trap phase shapers, and limiter/loss around the six component bridge crossers. It preserved many high bridge ratios but found no row above phase lock 0.50; weak and detuned controls still leaked under coherent-growth scoring.
 - The standalone `spatial_phase_matching_412.py` script models a distributed 1D phase-matched topology for 4 -> 8 -> 12. It promoted 17 source-only spatial bridge candidates with clean controls; the best row had lock 0.999128, bridge ratio 4.748881, purity 0.997300, generated-envelope CV 0.053898, max phase jump 0.000683, and clean energy budget.
+- The standalone `spice_412_distributed_ladder.py` script exports the distributed topology as normalized ngspice envelope-ladder netlists. The phase-matched source-only ladder promoted with lock 0.915421, bridge ratio 3.718438, purity 0.970030, generated-envelope CV 0.032846, max phase jump 0.003169, and clean coherent controls.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, and a distributed phase-matching topology model. The blocker has narrowed: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model can recover lock with clean controls. The next question is whether that distributed mechanism survives SPICE ladder export and a physically plausible waveguide/phase-matching realization.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, and a first distributed SPICE ladder export. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model and its SPICE envelope ladder both recover coherent lock with clean controls. The next question is whether that mechanism survives a less behavioral transmission-line ladder and a physically plausible waveguide/phase-matching realization.
 
 ## Latest Magnetic Autolock Summary
 
@@ -696,15 +697,57 @@ Standalone result:
 - Current interpretation: a plausible next physical path is distributed or waveguide-like phase matching rather than the current lumped LC component topology. This is topology-screening evidence, not hardware proof.
 - Current next fix: SPICE distributed ladder export, then physical waveguide/phase-matching refinement.
 
+## Latest SPICE 4->8->12 Distributed Ladder
+
+Script added:
+
+```bash
+python spice_412_distributed_ladder.py --run --ngspice-path wsl:ngspice
+```
+
+Outputs:
+
+- `runs/spice_412_distributed_ladder/phase_matched_codirectional_ladder.cir`
+- `runs/spice_412_distributed_ladder/qpm_ladder.cir`
+- `runs/spice_412_distributed_ladder/mismatched_ladder_control.cir`
+- `runs/spice_412_distributed_ladder/lumped_equivalent_control.cir`
+- `runs/spice_412_distributed_ladder/linear_no_nonlinearity_control.cir`
+- `runs/spice_412_distributed_ladder/detuned_target_control.cir`
+- `runs/spice_412_distributed_ladder/shuffled_frequency_control.cir`
+- `runs/spice_412_distributed_ladder/direct_4plus8_ceiling_reference.cir`
+- `runs/spice_412_distributed_ladder/spice_412_distributed_ladder_summary.json`
+- `runs/spice_412_distributed_ladder/spice_412_distributed_ladder_summary.csv`
+- `runs/spice_412_distributed_ladder/spice_412_distributed_ladder_timeseries.csv`
+- `runs/spice_412_distributed_ladder/README_SPICE_412_DISTRIBUTED_LADDER.md`
+
+What it tests:
+
+- A normalized ngspice envelope ladder corresponding to the distributed phase-matched 4 -> 8 -> 12 topology.
+- Each cell stores source/generated/target real and quadrature envelopes on unit capacitors; behavioral current sources implement propagation, phase mismatch, QPM signs, nonlinear 4+4 and 4+8 mixing, per-cell loss, and passive saturation loss.
+- Discovery rows keep source-only drive at the first/source section with no direct 8 drive, no direct 12 drive, and no target-frequency injection.
+- Direct 4+8 remains a separated ceiling denominator only.
+
+Standalone result:
+
+- All eight netlists ran successfully under WSL `ngspice-42`.
+- One SPICE distributed candidate promoted: `d001 phase_matched_codirectional_ladder`.
+- Promoted row metrics: lock `0.915421`, bridge ratio `3.718438`, purity `0.970030`, target coherent growth `18.063953`, generated-envelope CV `0.032846`, target-envelope CV `0.027283`, max phase jump `0.003169`, near slips `0`.
+- The phase-matched ladder beat the compact lumped control on coherent lock. The lumped row had large target amplitude but low lock `0.453307`, so it was rejected for phase mismatch.
+- Deliberate phase mismatch killed lock: mismatched lock `0.013550`.
+- QPM helped relative to mismatch with lock `0.620977` and bridge ratio `5.746898`, but it did not promote because purity was `0.718200`.
+- Linear, detuned, and shuffled controls stayed dead; max coherent leakage score was `0.0`.
+- Current interpretation: SPICE can reproduce the distributed phase-matched lock in a normalized envelope ladder. This is still not a hardware-realistic circuit.
+- Current next fix: physical waveguide modeling and transmission-line ladder refinement.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Export a SPICE distributed ladder for the 4 -> 8 -> 12 phase-matched topology, then compare it to the normalized spatial model.
+1. Refine the 4 -> 8 -> 12 distributed SPICE ladder toward a less behavioral transmission-line model and compare it to the normalized envelope ladder.
 2. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
-3. Refine physical waveguide/phase-matching parameters before returning to lumped component ranges.
+3. Build physical waveguide/phase-matching parameter models before returning to lumped component ranges.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 5. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
 6. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

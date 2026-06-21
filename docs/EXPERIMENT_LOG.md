@@ -474,3 +474,25 @@ Standalone result:
 - QPM outperformed compact lumped and mismatched rows but stayed a near miss: best QPM lock `0.744986`, bridge ratio `9.413271`, purity `0.970969`.
 - Controls stayed dead under coherent-growth leakage scoring; max leakage score was `0.064712`.
 - Current next fix: SPICE distributed ladder export, then a physical waveguide/phase-matching model.
+
+## SPICE 4->8->12 Distributed Ladder
+
+Added `spice_412_distributed_ladder.py`:
+
+- Exports the successful distributed phase-matching topology as normalized ngspice envelope-ladder netlists.
+- Netlists generated: `phase_matched_codirectional_ladder.cir`, `qpm_ladder.cir`, `mismatched_ladder_control.cir`, `lumped_equivalent_control.cir`, `linear_no_nonlinearity_control.cir`, `detuned_target_control.cir`, `shuffled_frequency_control.cir`, and `direct_4plus8_ceiling_reference.cir`.
+- The ladder stores source/generated/target real and quadrature envelopes on unit capacitors. Behavioral current sources implement distributed propagation, phase mismatch, nonlinear 4+4 and 4+8 mixing, QPM signs, loss, and passive saturation.
+- Discovery rows remain source-only: no direct 8 drive, no direct 12 drive, and no target-frequency injection.
+- Outputs go to `runs/spice_412_distributed_ladder/spice_412_distributed_ladder_summary.json`, `spice_412_distributed_ladder_summary.csv`, `spice_412_distributed_ladder_timeseries.csv`, and `README_SPICE_412_DISTRIBUTED_LADDER.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_distributed_ladder.py --run --ngspice-path wsl:ngspice`.
+- All eight netlists ran successfully under WSL `ngspice-42`.
+- One source-only SPICE distributed row promoted: `d001 phase_matched_codirectional_ladder`.
+- Promoted metrics: lock `0.915421`, bridge ratio `3.718438`, purity `0.970030`, target coherent growth `18.063953`, generated-envelope CV `0.032846`, target-envelope CV `0.027283`, max phase jump `0.003169`, near slips `0`.
+- The compact lumped control produced large target amplitude but low coherent lock `0.453307`, so it was rejected for phase mismatch.
+- Deliberate phase mismatch killed lock: mismatched lock `0.013550`.
+- QPM helped relative to mismatch with lock `0.620977` and bridge ratio `5.746898`, but did not promote because purity stayed at `0.718200`.
+- Linear, detuned, and shuffled controls stayed dead with max coherent leakage score `0.0`.
+- Current next fix: physical waveguide modeling and transmission-line ladder refinement.
