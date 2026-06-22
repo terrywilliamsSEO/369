@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-06-21
+Last updated: 2026-06-22
 
 ## Scientific Status
 
@@ -50,12 +50,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `spice_412_hybrid_magnetic_refine.py` script refines that hybrid varactor-plus-magnetic electrical route. The run evaluated 37 rows; 28 ran successfully and 9 aggressive discovery rows failed convergence. No full candidate promoted, but three near misses crossed the 0.30 purity gate. Best was `h024` with lock 0.951055, bridge ratio 57.258300, purity 0.450171, generated CV 0.174921, max jump 0.103864, aggressive-but-testable stress, and dead controls.
 - The standalone `spice_412_hybrid_purity_lockin.py` script attempts to lock in the h024/h025 hybrid basin with cascaded/distributed 150 MHz extraction and phase-delay sections. It did not promote: best row `p033` reached lock 0.979215, bridge ratio 2.155639, purity 0.457178, target growth 1.171057, generated CV 0.059788, and aggressive-but-testable stress, but no row exceeded 0.60 purity. The tuned pure-varactor control leaked strongly with purity 0.570001, so controls did not stay dead.
 - The standalone `spice_412_electrical_control_forensics.py` script re-instruments the hybrid/varactor electrical route before and after extraction. All 12 ngspice rows ran. Hybrid rows produced more pre-extraction 150 MHz than pure varactor, and generated-path suppression plus phase mismatch reduced the signal, but extraction dominated apparent purity and tuned pure-varactor/target-detuned controls leaked, so the current electrical topology is classified as `electrical_filter_artifact_likely`.
+- The standalone `spice_412_differential_witness_line.py` script builds paired OBJECT / matched REFERENCE witness trials with internal eighth-line taps and raw pre-extraction scoring. Ten of 15 paired trials ran successfully, no candidate or near miss promoted, and the aggregate stayed conservative: `electrical_bridge_real_signal=False`, `extraction_artifact_likely=True`.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, a promoted acoustic/phononic waveguide analog, an electrical candidate race across realistic line families, a focused hybrid magnetic electrical refinement, a hybrid purity lock-in pass, and a strict electrical control-forensics pass. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, and acoustic waveguide analog recover coherent lock with clean controls. Realistic hybrid electrical rows can recover lock, bridge gain, and moderate 150 MHz purity, and forensics confirms some pre-extraction 150 MHz is real. However, the tested electrical topology still fails as a clean proof because extraction dominates apparent purity and tuned pure-varactor/target-detuned controls leak.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, a promoted acoustic/phononic waveguide analog, an electrical candidate race across realistic line families, a focused hybrid magnetic electrical refinement, a hybrid purity lock-in pass, a strict electrical control-forensics pass, and a paired differential witness-line pass. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, and acoustic waveguide analog recover coherent lock with clean controls. Realistic hybrid electrical rows can recover lock, bridge gain, and moderate 150 MHz purity, and forensics confirms some pre-extraction 150 MHz is real. However, the tested electrical topology still fails as a clean proof because extraction dominates apparent purity, tuned pure-varactor/target-detuned controls leak, and paired witness rows do not beat their hardest matched shadows with stable pre-extraction lock and coherent growth.
 
 ## Latest Magnetic Autolock Summary
 
@@ -1059,6 +1060,41 @@ Standalone result:
 - Current interpretation: the tested electrical topology contains real pre-extraction harmonic content, but not a clean bridge proof because the readout/filter network and varactor-only extraction control can manufacture high apparent purity. Classify the branch as `electrical_filter_artifact_likely`.
 - Recommendation: pause this electrical topology behind the acoustic branch unless testing a different topology or a more independent readout/component-realistic magnetic route.
 
+## SPICE 4->8->12 Differential Witness Line
+
+Run command:
+
+```bash
+python spice_412_differential_witness_line.py --run --ngspice-path wsl:ngspice --timeout 180
+```
+
+Outputs:
+
+- `runs/spice_412_differential_witness_line/spice_412_differential_witness_line_summary.json`
+- `runs/spice_412_differential_witness_line/spice_412_differential_witness_line_summary.csv`
+- `runs/spice_412_differential_witness_line/spice_412_differential_witness_line_node_metrics.csv`
+- `runs/spice_412_differential_witness_line/spice_412_differential_witness_line_tap_timeseries.csv`
+- `runs/spice_412_differential_witness_line/README_SPICE_412_DIFFERENTIAL_WITNESS_LINE.md`
+
+What it tests:
+
+- A paired OBJECT / matched REFERENCE nonlinear electrical-magnetic transmission-line witness experiment.
+- Candidate object families include braided QPM varactor/magnetic, varactor-first, magnetic-first, chirped QPM bias, alternating varactor polarity, alternating magnetic bias, dual-lane proxy, generated/target velocity trims, low-frequency magnetic-line surrogate, standard 50/100/150 MHz, and no-QPM baseline rows.
+- Reference shadows implement shuffled QPM, phase mismatch, generated-path suppression, target-velocity detuning, linear/no-nonlinearity, pure-varactor, pure-magnetic, too-short, too-lossy, and a separated direct 50+100 MHz ceiling denominator.
+- Every paired object/control row remains source-only at 50 MHz with no direct 100 MHz drive, no direct 150 MHz drive, no target-frequency injection, and no hidden behavioral target-band source.
+- The script writes input, 1/8, 1/4, 3/8, 1/2, 5/8, 3/4, 7/8, raw output, diagnostic post node, source current, and bias current for each row.
+
+Standalone result:
+
+- The run generated 15 paired trials plus one separated direct 50+100 MHz ceiling reference.
+- Ten paired trials ran successfully; five aggressive object/shadow trials failed convergence and were kept as failed metadata.
+- No `electromagnetic_differential_witness_candidate` and no `electromagnetic_differential_witness_near_miss` promoted.
+- The strongest raw object/reference pre-extraction gain was `70816.74618476344`, from `no_qpm_baseline__vs__linear_no_nonlinearity_shadow`, but target phase lock was only `0.5196591492317262`, so it did not support the RSG mechanism.
+- The best braided-object generated-path suppression pair reached gain `69502.15593084165`, but target lock was only `0.7577556352027773` and coherent growth was `0.7942328325258395`, below the near-miss gates.
+- The line did produce measurable pre-extraction 150 MHz in some rows, and aggregate hybrid-vs-pure-varactor pre-filter ratio was `6.990054873358319`, but max differential control leakage was `1.0`.
+- Aggregate status: `electrical_bridge_real_signal=False`, `extraction_artifact_likely=True`, promoted count `0`, near-miss count `0`.
+- Current interpretation: paired witness scoring blocks the current electrical topology. Absolute 150 MHz power or purity does not win unless the object beats its own matched shadow before extraction while preserving phase lock, coherent growth, envelope stability, and clean controls.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
@@ -1066,7 +1102,7 @@ Do not promote to `geometry369` yet.
 Next options:
 
 1. Convert the promoted acoustic/phononic waveguide analog into a bench-oriented nonlinear drive/readout design.
-2. Pause the current electrical topology behind the acoustic branch; only continue electrical work through a different topology, independent readout, or more physical nonlinear magnetic-line model.
+2. Pause the current electrical topology behind the acoustic branch; only continue electrical work through a different topology, independent readout, or more physical nonlinear magnetic-line model that can beat its matched witness shadow before extraction.
 3. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
 5. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.

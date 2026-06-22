@@ -52,12 +52,14 @@ What has not survived yet:
 - The hybrid varactor-plus-magnetic refinement improves the best electrical 150 MHz purity to 0.450171 and promotes three near misses, but no full electrical candidate. Best row `h024` keeps lock 0.951055 and bridge ratio 57.258300 with aggressive-but-testable stress; controls stayed dead.
 - The hybrid purity lock-in pass did not promote: best purity reached 0.457178 with lock 0.979215, bridge ratio 2.155639, target growth 1.171057, and aggressive-but-testable stress, but no row exceeded 0.60 purity and the tuned pure-varactor control leaked to 0.570001 purity.
 - The electrical control-forensics pass shows why that lock-in result is not a clean physical proof. All 12 ngspice rows ran; hybrid rows do produce more pre-extraction 150 MHz than pure varactor, and generated-path suppression plus phase mismatch strongly reduce it. However, passive extraction dominates apparent purity, the tuned pure-varactor extraction control leaks badly, and controls are not clean overall, so the current electrical topology is classified as `electrical_filter_artifact_likely`.
+- The differential witness-line pass tested paired OBJECT / matched REFERENCE shadows at raw internal taps before extraction. Ten of 15 paired trials ran successfully, no `electromagnetic_differential_witness_candidate` or near miss promoted, and the aggregate remained `electrical_bridge_real_signal=False`, `extraction_artifact_likely=True`.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
 - Convert the acoustic waveguide candidate into a bench/readout design; it is currently the only clean physical proof route under the tested electrical topology.
 - Pause this electrical topology behind the acoustic branch unless testing a different electrical topology, stronger independent readout, or a component-realistic magnetic route.
+- Treat the paired witness result as another blocker for the current electrical topology: object/reference pre-extraction separation can be large, but phase lock/coherent growth gates and shadow leakage still prevent promotion.
 - Treat tuned pure-varactor extraction leakage and filter-created purity as hard blockers before any PCB/BOM commitment.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
@@ -153,6 +155,8 @@ python acoustic_waveguide_412.py
 python spice_412_electrical_candidate_race.py --run --ngspice-path wsl:ngspice
 python spice_412_hybrid_magnetic_refine.py --run --ngspice-path wsl:ngspice
 python spice_412_hybrid_purity_lockin.py --run --ngspice-path wsl:ngspice --timeout 180
+python spice_412_electrical_control_forensics.py --run --ngspice-path wsl:ngspice --timeout 180
+python spice_412_differential_witness_line.py --run --ngspice-path wsl:ngspice --timeout 180
 ```
 
 Key bridge modes:
@@ -579,3 +583,16 @@ Standalone result from `python spice_412_hybrid_purity_lockin.py --run --ngspice
 - Phase-delay rows did not help: best phase-delay purity was `0.330958` versus no-delay best `0.457178`.
 - Controls did not stay dead because the tuned pure-varactor extraction control reached purity `0.570001`; pure magnetic remained effectively zero.
 - Current read: passive extraction lock-in improves hybrid purity only marginally and reveals pure-varactor tuned extraction as a serious control spoiler. The next electrical step should not be PCB/BOM; it should be another topology refinement or a more physical magnetic-line model, while the acoustic bench demo remains the cleaner path.
+
+## Latest SPICE 4->8->12 Differential Witness Line
+
+Standalone result from `python spice_412_differential_witness_line.py --run --ngspice-path wsl:ngspice --timeout 180`:
+
+- Added `spice_412_differential_witness_line.py`, a paired OBJECT / matched REFERENCE witness experiment that measures raw internal taps before any diagnostic extraction/readout.
+- Outputs are written locally to `runs/spice_412_differential_witness_line/spice_412_differential_witness_line_summary.json`, `spice_412_differential_witness_line_summary.csv`, `spice_412_differential_witness_line_node_metrics.csv`, `spice_412_differential_witness_line_tap_timeseries.csv`, and `README_SPICE_412_DIFFERENTIAL_WITNESS_LINE.md`.
+- The run generated 15 paired trials plus one separated direct 50+100 MHz ceiling reference. Ten paired trials ran successfully; five aggressive object/shadow rows failed convergence and were kept as failed metadata rather than candidates.
+- No `electromagnetic_differential_witness_candidate` and no `electromagnetic_differential_witness_near_miss` promoted.
+- The strongest raw object/reference pre-extraction gain was `70816.746`, but it came from `no_qpm_baseline__vs__linear_no_nonlinearity_shadow` with weak target phase lock `0.519659`, so it did not support the RSG mechanism.
+- The best braided-object suppression pair reached gain `69502.156`, but target lock was only `0.757756` and coherent growth was only `0.794233`, below the near-miss gates.
+- Aggregate diagnostics: `line_itself_produced_coherent_150mhz_before_extraction=True`, `differential_readout_separated_hybrid_from_pure_varactor=True`, but `max_differential_control_leakage_score=1.0`, `electrical_bridge_real_signal=False`, and `extraction_artifact_likely=True`.
+- Current read: paired witness scoring confirms that absolute or filtered 150 MHz purity is not enough. The current electrical topology remains blocked until a new magnetic/electrical topology beats its hardest matched shadow with stable pre-extraction phase lock and coherent growth.

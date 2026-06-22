@@ -702,3 +702,24 @@ Standalone result:
 - Controls did not stay dead overall: tuned pure-varactor leakage score `0.817293`; target-velocity detuned leakage score `0.315297`.
 - Current interpretation: the electrical topology does contain real pre-extraction harmonic content, but the readout/filter network and tuned pure-varactor control make it unsuitable as a clean bridge proof. The branch is classified as `electrical_filter_artifact_likely`.
 - Current recommendation: pause this electrical topology behind the acoustic branch unless testing a different topology, independent readout, or component-realistic nonlinear magnetic route.
+
+## SPICE 4->8->12 Differential Witness Line
+
+Added `spice_412_differential_witness_line.py`:
+
+- Builds paired OBJECT / matched REFERENCE witness trials so object rows do not compete against unrelated controls.
+- Scores raw/internal nodes before extraction using input, 1/8, 1/4, 3/8, 1/2, 5/8, 3/4, 7/8, and raw output taps.
+- Computes complex 50/100/150 MHz projections per tap, internal 100/150 MHz growth, distributed 150 MHz growth slope, coherent growth, generated/target phase locks, envelope CV, phase jumps, extraction dependency, control leakage, dependency kill scores, stress class, behavioral dependency, and direct-drive contamination flags.
+- Implements shuffled-QPM, phase-mismatched, generated-path-suppressed, target-velocity-detuned, linear/no-nonlinearity, pure-varactor, pure-magnetic, too-short, too-lossy, and separated direct 50+100 MHz reference transforms.
+- Keeps paired discovery/control rows source-only at 50 MHz: no direct 100 MHz drive, no direct 150 MHz drive, no target-frequency injection, and no hidden behavioral target source.
+- Outputs go to `runs/spice_412_differential_witness_line/spice_412_differential_witness_line_summary.json`, `spice_412_differential_witness_line_summary.csv`, `spice_412_differential_witness_line_node_metrics.csv`, `spice_412_differential_witness_line_tap_timeseries.csv`, and `README_SPICE_412_DIFFERENTIAL_WITNESS_LINE.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_differential_witness_line.py --run --ngspice-path wsl:ngspice --timeout 180`.
+- The run generated 15 paired trials plus one direct 50+100 MHz ceiling reference. Ten paired trials ran successfully; five aggressive paired trials failed convergence.
+- No `electromagnetic_differential_witness_candidate` and no `electromagnetic_differential_witness_near_miss` promoted.
+- Best object/reference pre-extraction gain was `70816.74618476344`, but it came from `no_qpm_baseline__vs__linear_no_nonlinearity_shadow` with target lock only `0.5196591492317262`.
+- The best braided-object generated-path suppression pair reached gain `69502.15593084165`, but target lock was `0.7577556352027773` and coherent growth was `0.7942328325258395`, below near-miss gates.
+- Aggregate metrics showed pre-extraction 150 MHz can appear inside the line and hybrid-vs-pure-varactor pre-filter ratio was `6.990054873358319`, but max differential control leakage was `1.0`.
+- Current interpretation: paired witness scoring keeps the electrical route blocked. A row must beat its own matched shadow before extraction with stable phase lock and coherent growth; none did.
