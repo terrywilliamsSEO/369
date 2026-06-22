@@ -51,13 +51,14 @@ What has not survived yet:
 - The electrical candidate race runs 26 ngspice rows across varactor, step-recovery, magnetic, hybrid, high-Q extraction, distributed bandpass, and dual-path line families. No realistic electrical candidate or near miss promoted; the strongest row was hybrid varactor-plus-magnetic with lock 0.964163, bridge ratio 13.199504, purity 0.102689, plausible/aggressive stress, and dead controls.
 - The hybrid varactor-plus-magnetic refinement improves the best electrical 150 MHz purity to 0.450171 and promotes three near misses, but no full electrical candidate. Best row `h024` keeps lock 0.951055 and bridge ratio 57.258300 with aggressive-but-testable stress; controls stayed dead.
 - The hybrid purity lock-in pass did not promote: best purity reached 0.457178 with lock 0.979215, bridge ratio 2.155639, target growth 1.171057, and aggressive-but-testable stress, but no row exceeded 0.60 purity and the tuned pure-varactor control leaked to 0.570001 purity.
+- The electrical control-forensics pass shows why that lock-in result is not a clean physical proof. All 12 ngspice rows ran; hybrid rows do produce more pre-extraction 150 MHz than pure varactor, and generated-path suppression plus phase mismatch strongly reduce it. However, passive extraction dominates apparent purity, the tuned pure-varactor extraction control leaks badly, and controls are not clean overall, so the current electrical topology is classified as `electrical_filter_artifact_likely`.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Convert the acoustic waveguide candidate into a bench/readout design, and shift the electrical route toward hybrid varactor-plus-magnetic refinement before PCB layout.
-- For the electrical route, focus next on hybrid magnetic component realism and target extraction, not pure varactor NLTL alone.
-- Treat tuned pure-varactor leakage as a serious electrical-control blocker before any PCB/BOM commitment.
+- Convert the acoustic waveguide candidate into a bench/readout design; it is currently the only clean physical proof route under the tested electrical topology.
+- Pause this electrical topology behind the acoustic branch unless testing a different electrical topology, stronger independent readout, or a component-realistic magnetic route.
+- Treat tuned pure-varactor extraction leakage and filter-created purity as hard blockers before any PCB/BOM commitment.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.

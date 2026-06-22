@@ -680,3 +680,25 @@ Standalone result:
 - Phase-delay sections did not help: best phase-delay purity was `0.330958`, versus no-delay best `0.457178`.
 - Controls did not stay dead. The tuned pure-varactor extraction control reached purity `0.570001`, higher than the best hybrid row; pure magnetic remained effectively zero.
 - Current interpretation: passive lock-in does not solve the electrical 150 MHz purity problem and reveals a stronger pure-varactor tuned-control leak. Do not move to PCB/BOM from this branch yet; either run another topology-level hybrid/magnetic refinement or keep the acoustic bench demo as the primary physical path.
+
+## SPICE 4->8->12 Electrical Control Forensics
+
+Added `spice_412_electrical_control_forensics.py`:
+
+- Runs a strict 12-row control-forensics study on the hybrid/varactor electrical 50/100/150 MHz route.
+- Re-instruments the best lock-in hybrid row `p033`, previous hybrid near misses `h024/h025`, pure-varactor with and without extraction, pure magnetic with extraction, hybrid without extraction, generated-path suppression, target-velocity detuning, phase mismatch, linear fixed-component extraction, and a separated direct 50+100 MHz ceiling reference.
+- Forces wider ngspice output: source input, quarter-line, mid-line, three-quarter-line, raw pre-extraction output, post-extraction output, source current, and bias current.
+- Computes pre/post 150 MHz purity and growth, extraction gain, 50/100 MHz rejection, filter selectivity, bridge-before/after-filter scores, internal 100/150 MHz growth, phase locks, leakage scores, dependency scores, and stress/behavioral scores.
+- Keeps all discovery/control rows source-only at 50 MHz: no direct 100 MHz drive, no direct 150 MHz drive, no target-frequency injection, and no hidden target-band behavioral source.
+- Outputs go to `runs/spice_412_electrical_control_forensics/spice_412_electrical_control_forensics_summary.json`, `spice_412_electrical_control_forensics_summary.csv`, `spice_412_electrical_control_forensics_timeseries.csv`, and `README_SPICE_412_ELECTRICAL_CONTROL_FORENSICS.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_electrical_control_forensics.py --run --ngspice-path wsl:ngspice --timeout 180`.
+- All 12 rows ran successfully under WSL `ngspice-42`.
+- Hybrid rows produced more pre-extraction 150 MHz than pure varactor: best hybrid pre-extraction purity `0.703380` versus tuned pure-varactor `0.229162`.
+- Generated-path suppression killed the target response with dependency score `0.999999825`; deliberate phase mismatch also killed it with score `0.886001`.
+- Extraction dominated apparent purity. The best post-extraction hybrid row `f001` reached purity `0.996095` with filter selectivity `55.681793`, while the tuned pure-varactor extraction control reached post-extraction purity `0.948335`.
+- Controls did not stay dead overall: tuned pure-varactor leakage score `0.817293`; target-velocity detuned leakage score `0.315297`.
+- Current interpretation: the electrical topology does contain real pre-extraction harmonic content, but the readout/filter network and tuned pure-varactor control make it unsuitable as a clean bridge proof. The branch is classified as `electrical_filter_artifact_likely`.
+- Current recommendation: pause this electrical topology behind the acoustic branch unless testing a different topology, independent readout, or component-realistic nonlinear magnetic route.
