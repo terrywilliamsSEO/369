@@ -52,12 +52,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `spice_412_electrical_control_forensics.py` script re-instruments the hybrid/varactor electrical route before and after extraction. All 12 ngspice rows ran. Hybrid rows produced more pre-extraction 150 MHz than pure varactor, and generated-path suppression plus phase mismatch reduced the signal, but extraction dominated apparent purity and tuned pure-varactor/target-detuned controls leaked, so the current electrical topology is classified as `electrical_filter_artifact_likely`.
 - The standalone `spice_412_differential_witness_line.py` script builds paired OBJECT / matched REFERENCE witness trials with internal eighth-line taps and raw pre-extraction scoring. Ten of 15 paired trials ran successfully, no candidate or near miss promoted, and the aggregate stayed conservative: `electrical_bridge_real_signal=False`, `extraction_artifact_likely=True`.
 - The standalone `spice_412_phase_slip_tomography.py` script reads the existing differential witness artifacts and locates the coherence break. It found dominant failure mode `raw_gain_without_coherence`: the closest raw-gain pair fails 100 MHz and 150 MHz coherence by the 1/8 tap. No full rescue candidate promoted; one relaxed low-frequency magnetic-line surrogate near miss appeared but does not unblock the topology.
+- The standalone `acoustic_412_bench_physicalization.py` script turns the promoted acoustic analog into a bench-oriented raw-tap design. One source-only compact guide promoted under strict bench gates: 36 cells, 0.041 m guide length, 1.139 mm segment spacing, 120 kHz lock 0.999478, 80 kHz lock 0.998887, raw pre-readout 120 kHz purity 0.732032, distributed coherent growth 4.432654, object/reference gain 22.190921, plausible pressure stress, and all controls dead.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, a promoted acoustic/phononic waveguide analog, an electrical candidate race across realistic line families, a focused hybrid magnetic electrical refinement, a hybrid purity lock-in pass, a strict electrical control-forensics pass, a paired differential witness-line pass, and a phase-slip tomography pass over that result. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, and acoustic waveguide analog recover coherent lock with clean controls. Realistic hybrid electrical rows can recover lock, bridge gain, and moderate 150 MHz purity, and forensics confirms some pre-extraction 150 MHz is real. However, the tested electrical topology still fails as a clean proof because extraction dominates apparent purity, tuned pure-varactor/target-detuned controls leak, paired witness rows do not beat their hardest matched shadows with stable pre-extraction lock and coherent growth, and tomography shows raw gain without coherent phase accumulation by early taps.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, a promoted acoustic/phononic waveguide analog, an electrical candidate race across realistic line families, a focused hybrid magnetic electrical refinement, a hybrid purity lock-in pass, a strict electrical control-forensics pass, a paired differential witness-line pass, a phase-slip tomography pass over that result, and a bench-oriented acoustic physicalization candidate. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, acoustic waveguide analog, and now a compact acoustic bench model recover coherent lock with clean controls. Realistic hybrid electrical rows can recover lock, bridge gain, and moderate 150 MHz purity, and forensics confirms some pre-extraction 150 MHz is real. However, the tested electrical topology still fails as a clean proof because extraction dominates apparent purity, tuned pure-varactor/target-detuned controls leak, paired witness rows do not beat their hardest matched shadows with stable pre-extraction lock and coherent growth, and tomography shows raw gain without coherent phase accumulation by early taps.
 
 ## Latest Magnetic Autolock Summary
 
@@ -1138,13 +1139,48 @@ Standalone result:
 - Rescue planner estimated very short 100 MHz coherence length around `0.031 m` for the top raw-gain rows. It recommends only bounded QPM retiming / velocity trim / load taper mini-validation, not a broad sweep.
 - Current interpretation: the current electrical topology remains blocked behind acoustic/waveguide physicalization. The measured problem is not raw 150 MHz gain; it is early loss of coherent 50 -> 100 -> 150 phase accumulation.
 
+## Acoustic 4->8->12 Bench Physicalization
+
+Run command:
+
+```bash
+python acoustic_412_bench_physicalization.py --run
+```
+
+Outputs:
+
+- `runs/acoustic_412_bench_physicalization/summary.json`
+- `runs/acoustic_412_bench_physicalization/summary.csv`
+- `runs/acoustic_412_bench_physicalization/tap_metrics.csv`
+- `runs/acoustic_412_bench_physicalization/candidate_geometry.csv`
+- `runs/acoustic_412_bench_physicalization/bench_readout_plan.json`
+- `runs/acoustic_412_bench_physicalization/bench_readout_plan.md`
+- `runs/acoustic_412_bench_physicalization/README_ACOUSTIC_412_BENCH_PHYSICALIZATION.md`
+
+What it tests:
+
+- Bench-oriented acoustic/phononic 40 kHz -> generated 80 kHz -> generated 120 kHz physicalization.
+- Source-only drive: no direct 80 kHz drive, no direct 120 kHz drive, and no target-frequency injection in discovery rows.
+- Finite guide length, realistic speed/loss, nonlinear 40->80 and 40+80->120 coupling, QPM/shuffled controls, impedance/load variants, absorber/load variants, and raw taps at input, 1/8, 1/4, 3/8, 1/2, 5/8, 3/4, 7/8, and raw output.
+- Promotion uses raw tap phasors and pre-readout purity. Weak broadband readout is diagnostic only; high-Q 120 kHz extraction is not promotion evidence.
+
+Standalone result:
+
+- Nineteen rows were evaluated: 10 discovery rows, 8 controls, and one separated direct 40+80 kHz ceiling denominator.
+- One full `acoustic_bench_physicalization_candidate` promoted: `b007 acoustic_compact_short_guide`.
+- Promoted metrics: 120 kHz phase lock `0.999478`, 80 kHz phase lock `0.998887`, distributed 120 kHz coherent growth `4.432654`, growth slope `0.961162`, raw pre-readout 120 kHz purity `0.732032`, and object/reference gain `22.190921`.
+- Dependency and artifact checks passed: generated-path dependency `0.999999901`, phase-mismatch kill `0.999999999995`, QPM/shuffled dependency `0.999998668`, sensor-artifact score `0.0`, max control leakage `0.045063`, and all controls stayed dead.
+- Bench geometry: compact source-only guide, 36 cells, `0.041 m` length, segment spacing about `0.001139 m`, no QPM needed for the promoted row.
+- Bench estimates: pressure `3859.98 Pa`, displacement `1.60e-8 m`, drive about `85.78 V` and `0.0233 W`, and sensor bandwidth at least `250 kHz`.
+- Current interpretation: acoustic/waveguide physicalization now has a compact raw-tap bench candidate. The current electrical topology remains blocked; next physical work should be the compact acoustic tap prototype and controls.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Convert the promoted acoustic/phononic waveguide analog into a bench-oriented nonlinear drive/readout design.
+1. Build and bench-validate the compact source-only acoustic tap prototype from `acoustic_412_bench_physicalization.py`.
 2. Pause the current electrical topology behind the acoustic branch; only continue electrical work through a different topology, independent readout, or more physical nonlinear magnetic-line model that can beat its matched witness shadow before extraction and preserve tap-level coherence.
 3. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
 4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.

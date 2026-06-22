@@ -746,3 +746,25 @@ Standalone result:
 - The best braided-object rows also failed early at `tap_1_8`, with target lock around `0.757` and coherent growth below `0.80`.
 - Rescue planner estimated top-row 100 MHz coherence length around `0.031 m`; measured QPM retiming is only worth bounded mini-validation, not another broad extraction or topology sweep.
 - Current interpretation: the electrical route is not blocked by raw 150 MHz gain. It is blocked by early loss of coherent 50 -> 100 -> 150 phase accumulation, with shadow leakage and convergence limits still present.
+
+## Acoustic 4->8->12 Bench Physicalization
+
+Added `acoustic_412_bench_physicalization.py`:
+
+- Converts the promoted 40/80/120 kHz acoustic waveguide analog into a bench-oriented physicalization screen.
+- Keeps discovery rows source-only at 40 kHz: no direct 80 kHz drive, no direct 120 kHz drive, and no target-frequency injection.
+- Scores raw distributed taps at input, 1/8, 1/4, 3/8, 1/2, 5/8, 3/4, 7/8, and raw output before any readout cleanup.
+- Tracks complex 40/80/120 kHz projections, 80/120 tap growth, 80 and 120 phase locks, distributed 120 kHz growth slope/coherent growth, raw pre-readout purity, object/reference gain, dependency scores, sensor artifact score, control leakage, pressure/stress estimates, transducer voltage/power, sensor bandwidth, and buildability.
+- Includes the required candidate rows plus linear/no-nonlinearity, shuffled QPM, phase-mismatched 120, generated-path-suppressed 80, target-velocity-detuned 120, too-short, too-lossy, sensor-only artifact, and direct 40+80 ceiling-denominator controls.
+- Outputs go to `runs/acoustic_412_bench_physicalization/summary.json`, `summary.csv`, `tap_metrics.csv`, `candidate_geometry.csv`, `bench_readout_plan.json`, `bench_readout_plan.md`, and `README_ACOUSTIC_412_BENCH_PHYSICALIZATION.md`.
+
+Standalone result:
+
+- Run command tested: `python acoustic_412_bench_physicalization.py --run`.
+- Nineteen rows were evaluated: 10 discovery rows, 8 controls, and one direct 40+80 kHz ceiling denominator.
+- One full candidate promoted: `b007 acoustic_compact_short_guide` as `acoustic_bench_physicalization_candidate`.
+- Promoted metrics: 120 kHz phase lock `0.999478`, 80 kHz phase lock `0.998887`, distributed 120 kHz coherent growth `4.432654`, growth slope `0.961162`, raw pre-readout 120 kHz purity `0.732032`, object/reference gain `22.190921`, buildability `0.901806`, and plausible pressure stress.
+- Dependency controls passed: generated-path dependency `0.999999901`, phase-mismatch kill `0.999999999995`, shuffled-QPM dependency `0.999998668`, sensor-artifact score `0.0`, and max control leakage `0.045063`.
+- All controls stayed dead: linear/no-nonlinearity, shuffled QPM, phase-mismatched 120, generated-path-suppressed 80, target-velocity-detuned 120, too-short, too-lossy, and sensor-only artifact.
+- Recommended first prototype: 40 kHz source-only compact bar/phononic strip, 36 cells, length `0.041 m`, segment spacing about `1.139 mm`, no direct 80/120 kHz drive, estimated pressure `3859.98 Pa`, estimated displacement `1.60e-8 m`, estimated drive `85.78 V` and `0.0233 W`, and broadband tap sensors with at least `250 kHz` bandwidth.
+- Current interpretation: the acoustic route now has a bench-realistic raw-tap candidate. The tested electrical topology remains blocked behind this acoustic prototype.

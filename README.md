@@ -54,11 +54,12 @@ What has not survived yet:
 - The electrical control-forensics pass shows why that lock-in result is not a clean physical proof. All 12 ngspice rows ran; hybrid rows do produce more pre-extraction 150 MHz than pure varactor, and generated-path suppression plus phase mismatch strongly reduce it. However, passive extraction dominates apparent purity, the tuned pure-varactor extraction control leaks badly, and controls are not clean overall, so the current electrical topology is classified as `electrical_filter_artifact_likely`.
 - The differential witness-line pass tested paired OBJECT / matched REFERENCE shadows at raw internal taps before extraction. Ten of 15 paired trials ran successfully, no `electromagnetic_differential_witness_candidate` or near miss promoted, and the aggregate remained `electrical_bridge_real_signal=False`, `extraction_artifact_likely=True`.
 - The phase-slip tomography pass reads the existing differential witness artifacts and locates the coherence break. The dominant failure is `raw_gain_without_coherence`: the closest raw-gain pair fails both 100 MHz and 150 MHz coherence by the 1/8 tap. One relaxed low-frequency magnetic-line near miss appears, but no `electrical_phase_rescue_candidate` promotes, so the current electrical topology remains blocked.
+- The acoustic bench-physicalization pass converts the 40/80/120 kHz analog into a raw-tap bench design. One source-only compact guide promotes as `acoustic_bench_physicalization_candidate`: 36 cells, 0.041 m length, 1.139 mm spacing, 120 kHz lock 0.999478, 80 kHz lock 0.998887, raw pre-readout 120 kHz purity 0.732032, coherent growth 4.432654, object/reference gain 22.190921, plausible pressure stress, and all controls dead.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Convert the acoustic waveguide candidate into a bench/readout design; it is currently the only clean physical proof route under the tested electrical topology.
+- Build and bench-validate the compact acoustic source-only tap prototype before returning to the blocked electrical topology.
 - Pause this electrical topology behind the acoustic branch unless testing a different electrical topology, stronger independent readout, or a component-realistic magnetic route.
 - Treat the paired witness result as another blocker for the current electrical topology: object/reference pre-extraction separation can be large, but phase lock/coherent growth gates and shadow leakage still prevent promotion.
 - Treat the measured QPM retiming plan as optional mini-validation only, not a reason for another broad electrical sweep.
@@ -161,6 +162,7 @@ python spice_412_electrical_control_forensics.py --run --ngspice-path wsl:ngspic
 python spice_412_differential_witness_line.py --run --ngspice-path wsl:ngspice --timeout 180
 python spice_412_phase_slip_tomography.py
 python spice_412_phase_slip_tomography.py --run-rescue --ngspice-path wsl:ngspice --timeout 180
+python acoustic_412_bench_physicalization.py --run
 ```
 
 Key bridge modes:
@@ -614,3 +616,16 @@ Standalone result from `python spice_412_phase_slip_tomography.py`:
 - The best braided-object rows also fail early: target lock about `0.757`, coherent growth below `0.80`, and first 100/150 MHz failures at `tap_1_8`.
 - Rescue planner estimates very short 100 MHz coherence lengths around `0.031 m` for the top raw-gain rows and recommends only bounded QPM/velocity/load mini-validation if explicitly requested with `--run-rescue`.
 - Current read: the electrical topology remains blocked behind acoustic/waveguide physicalization. Raw gain exists, but not coherent 50 -> 100 -> 150 phase accumulation.
+
+## Latest Acoustic 4->8->12 Bench Physicalization
+
+Standalone result from `python acoustic_412_bench_physicalization.py --run`:
+
+- Added `acoustic_412_bench_physicalization.py`, a bench-oriented acoustic/phononic 40/80/120 kHz physicalization pass.
+- Outputs are written locally to `runs/acoustic_412_bench_physicalization/summary.json`, `summary.csv`, `tap_metrics.csv`, `candidate_geometry.csv`, `bench_readout_plan.json`, `bench_readout_plan.md`, and `README_ACOUSTIC_412_BENCH_PHYSICALIZATION.md`.
+- The script evaluates 10 discovery rows, 8 strict controls, and one separated direct 40+80 kHz ceiling denominator.
+- One source-only row promoted as `acoustic_bench_physicalization_candidate`: `b007 acoustic_compact_short_guide`.
+- Promoted raw-tap metrics: 120 kHz lock `0.999478`, 80 kHz lock `0.998887`, distributed 120 kHz coherent growth `4.432654`, growth slope `0.961162`, raw pre-readout 120 kHz purity `0.732032`, and object/reference gain `22.190921`.
+- Dependency/control metrics stayed clean: generated-path dependency `0.999999901`, phase-mismatch kill `0.999999999995`, QPM/shuffled dependency `0.999998668`, sensor-artifact score `0.0`, max control leakage `0.045063`, and all controls dead.
+- Bench recommendation: build a 40 kHz source-only compact bar or phononic strip, length `0.041 m`, `36` cells, segment spacing about `1.139 mm`, no direct 80/120 kHz drive, estimated pressure `3859.98 Pa`, estimated displacement `1.60e-8 m`, estimated drive `85.78 V` and `0.0233 W`, and broadband tap sensors with at least `250 kHz` flat bandwidth.
+- Current read: this is the first bench-realistic acoustic physicalization candidate where raw taps, not a high-Q readout filter, carry the promotion. Electrical remains paused behind this acoustic prototype.
