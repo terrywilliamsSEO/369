@@ -50,12 +50,14 @@ What has not survived yet:
 - The acoustic waveguide parallel simulation promotes a low-frequency 40/80/120 kHz phase-matched analog. The best source-only row is a 48-cell, 0.058 m guide with lock 0.999352, bridge ratio 4628.598328, purity 0.999611, generated-envelope CV 0.231570, max phase jump 0.007893, plausible pressure stress, and dead controls.
 - The electrical candidate race runs 26 ngspice rows across varactor, step-recovery, magnetic, hybrid, high-Q extraction, distributed bandpass, and dual-path line families. No realistic electrical candidate or near miss promoted; the strongest row was hybrid varactor-plus-magnetic with lock 0.964163, bridge ratio 13.199504, purity 0.102689, plausible/aggressive stress, and dead controls.
 - The hybrid varactor-plus-magnetic refinement improves the best electrical 150 MHz purity to 0.450171 and promotes three near misses, but no full electrical candidate. Best row `h024` keeps lock 0.951055 and bridge ratio 57.258300 with aggressive-but-testable stress; controls stayed dead.
+- The hybrid purity lock-in pass did not promote: best purity reached 0.457178 with lock 0.979215, bridge ratio 2.155639, target growth 1.171057, and aggressive-but-testable stress, but no row exceeded 0.60 purity and the tuned pure-varactor control leaked to 0.570001 purity.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
 - Convert the acoustic waveguide candidate into a bench/readout design, and shift the electrical route toward hybrid varactor-plus-magnetic refinement before PCB layout.
 - For the electrical route, focus next on hybrid magnetic component realism and target extraction, not pure varactor NLTL alone.
+- Treat tuned pure-varactor leakage as a serious electrical-control blocker before any PCB/BOM commitment.
 - Map the f->2f->3f family law with strict budget normalization.
 - Stabilize generated 6 if continuing the 3 -> 6 -> 9 branch.
 - Repair or refine the driven nonlinear/damping ledger before promoting any Stage A tuned basin.
@@ -149,6 +151,7 @@ python spice_412_varactor_nltl_refine.py --run --ngspice-path wsl:ngspice
 python acoustic_waveguide_412.py
 python spice_412_electrical_candidate_race.py --run --ngspice-path wsl:ngspice
 python spice_412_hybrid_magnetic_refine.py --run --ngspice-path wsl:ngspice
+python spice_412_hybrid_purity_lockin.py --run --ngspice-path wsl:ngspice --timeout 180
 ```
 
 Key bridge modes:
@@ -560,3 +563,18 @@ Standalone result from `python spice_412_hybrid_magnetic_refine.py --run --ngspi
 - Best growth-preserving near miss: `h025`, lock `0.950309`, bridge ratio `62.726998`, purity `0.428616`, target coherent growth `1.055082`, generated CV `0.238262`, and aggressive-but-testable stress.
 - Controls stayed dead with max leakage score `0.0`; pure varactor control purity was `0.100477`, and pure magnetic control purity was effectively zero.
 - Current read: hybrid varactor-plus-magnetic clearly beats pure varactor and pure magnetic controls. Mild phase-velocity trim plus varactor-first placement matters most in this pass, but full electrical promotion still needs much cleaner 150 MHz spectral concentration.
+
+## Latest SPICE 4->8->12 Hybrid Purity Lock-In
+
+Standalone result from `python spice_412_hybrid_purity_lockin.py --run --ngspice-path wsl:ngspice --timeout 180`:
+
+- Added `spice_412_hybrid_purity_lockin.py` and generated a focused lock-in pass around the `h024/h025` hybrid near-miss basin.
+- Outputs are written to `runs/spice_412_hybrid_purity_lockin/spice_412_hybrid_purity_lockin_summary.json`, `spice_412_hybrid_purity_lockin_summary.csv`, `spice_412_hybrid_purity_lockin_timeseries.csv`, and `README_SPICE_412_HYBRID_PURITY_LOCKIN.md`.
+- Sweep coverage: high-Q, cascaded, and distributed 150 MHz extraction; 50/100 MHz notches; phase-delay sections; varactor block fractions; magnetic saturation settings; line length/cell count trims; stacked-varactor stress rows; and the full control set.
+- Final run evaluated 46 rows: 34 discovery rows, 11 controls, and one direct 50+100 MHz ceiling reference. 42 rows ran successfully and 4 aggressive discovery rows failed convergence.
+- No full candidate and no near miss promoted: no row exceeded the 0.60 purity near-miss gate.
+- Best row: `p033 h025 single_high_q`, lock `0.979215`, bridge ratio `2.155639`, purity `0.457178`, target growth `1.171057`, generated-envelope CV `0.059788`, max phase jump `0.176818`, aggressive-but-testable stress, and behavioral dependency `0.195`.
+- Best cascaded/distributed purity was `0.454231`; cascaded extraction helped slightly but did not solve the 150 MHz purity problem.
+- Phase-delay rows did not help: best phase-delay purity was `0.330958` versus no-delay best `0.457178`.
+- Controls did not stay dead because the tuned pure-varactor extraction control reached purity `0.570001`; pure magnetic remained effectively zero.
+- Current read: passive extraction lock-in improves hybrid purity only marginally and reveals pure-varactor tuned extraction as a serious control spoiler. The next electrical step should not be PCB/BOM; it should be another topology refinement or a more physical magnetic-line model, while the acoustic bench demo remains the cleaner path.

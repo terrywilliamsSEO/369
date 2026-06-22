@@ -659,3 +659,24 @@ Standalone result:
 - Controls stayed dead with max leakage score `0.0`.
 - Hybrid clearly beat pure controls: pure varactor control purity was `0.100477`, and pure magnetic control purity was effectively zero.
 - Current interpretation: hybrid varactor-plus-magnetic refinement can raise 150 MHz purity into near-miss territory, but not to the full candidate gate. Mild phase-velocity trim plus varactor-first placement mattered most in this pass; the next electrical work should target physical magnetic component realism and 150 MHz extraction.
+
+## SPICE 4->8->12 Hybrid Purity Lock-In
+
+Added `spice_412_hybrid_purity_lockin.py`:
+
+- Focuses on the `h024` and `h025` hybrid varactor-plus-magnetic near-miss basin.
+- Tests passive 150 MHz purity sharpening with single high-Q extraction, cascaded extraction, distributed extraction, post-filtering, 50/100 MHz notches, phase-delay sections, varactor block placement, magnetic saturation tuning, stacked varactors, line length/cell count trims, and the full control set.
+- Keeps discovery rows source-only: no direct 100 MHz drive, no direct 150 MHz drive, no target-frequency injection, and no hidden behavioral target source.
+- Outputs go to `runs/spice_412_hybrid_purity_lockin/spice_412_hybrid_purity_lockin_summary.json`, `spice_412_hybrid_purity_lockin_summary.csv`, `spice_412_hybrid_purity_lockin_timeseries.csv`, and `README_SPICE_412_HYBRID_PURITY_LOCKIN.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_hybrid_purity_lockin.py --run --ngspice-path wsl:ngspice --timeout 180`.
+- Final sweep evaluated 46 rows: 34 discovery rows, 11 controls, and one direct 50+100 MHz ceiling reference.
+- 42 rows ran successfully under WSL `ngspice-42`; 4 aggressive discovery rows failed convergence.
+- No full candidate and no near miss promoted; no discovery row crossed the 0.60 purity near-miss gate.
+- Best row: `p033 h025 single_high_q`, lock `0.979215`, bridge ratio `2.155639`, purity `0.457178`, target coherent growth `1.171057`, generated-envelope CV `0.059788`, max phase jump `0.176818`, aggressive-but-testable stress, and behavioral dependency `0.195`.
+- Best cascaded/distributed extraction purity was `0.454231`, so extra extraction stages helped only marginally.
+- Phase-delay sections did not help: best phase-delay purity was `0.330958`, versus no-delay best `0.457178`.
+- Controls did not stay dead. The tuned pure-varactor extraction control reached purity `0.570001`, higher than the best hybrid row; pure magnetic remained effectively zero.
+- Current interpretation: passive lock-in does not solve the electrical 150 MHz purity problem and reveals a stronger pure-varactor tuned-control leak. Do not move to PCB/BOM from this branch yet; either run another topology-level hybrid/magnetic refinement or keep the acoustic bench demo as the primary physical path.
