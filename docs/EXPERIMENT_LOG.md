@@ -723,3 +723,26 @@ Standalone result:
 - The best braided-object generated-path suppression pair reached gain `69502.15593084165`, but target lock was `0.7577556352027773` and coherent growth was `0.7942328325258395`, below near-miss gates.
 - Aggregate metrics showed pre-extraction 150 MHz can appear inside the line and hybrid-vs-pure-varactor pre-filter ratio was `6.990054873358319`, but max differential control leakage was `1.0`.
 - Current interpretation: paired witness scoring keeps the electrical route blocked. A row must beat its own matched shadow before extraction with stable phase lock and coherent growth; none did.
+
+## SPICE 4->8->12 Phase-Slip Tomography
+
+Added `spice_412_phase_slip_tomography.py`:
+
+- Reads the existing latest `runs/spice_412_differential_witness_line/` artifacts instead of launching another broad sweep.
+- Requires `spice_412_differential_witness_line_summary.json`, `spice_412_differential_witness_line_summary.csv`, and `spice_412_differential_witness_line_tap_timeseries.csv`; if missing, it tells the operator to run `python spice_412_differential_witness_line.py --run --ngspice-path wsl:ngspice --timeout 180`.
+- Reconstructs complex 50/100/150 MHz phasors from successful transient CSVs at input, 1/8, 1/4, 3/8, 1/2, 5/8, 3/4, 7/8, and raw output taps.
+- Computes tap phase errors, local phase jumps, local amplitude growth, local coherent-growth contribution, QPM sign alignment, reflection/standing-wave indicators, generated/target path stability, pair-level failure modes, and a measured rescue plan.
+- Optional `--run-rescue` generates at most six measured rescue netlists: QPM retimed, velocity trimmed, impedance tapered, magnetic-lag compensated, low-loss longer line, and shorter-coherence-length line.
+- Outputs go to `runs/spice_412_phase_slip_tomography/tomography_summary.json`, `tomography_summary.csv`, `tap_phase_error.csv`, `local_growth_by_tap.csv`, `rescue_plan.json`, `rescue_plan.md`, and `README_SPICE_412_PHASE_SLIP_TOMOGRAPHY.md`.
+
+Standalone result:
+
+- Run command tested: `python spice_412_phase_slip_tomography.py`.
+- The pass analyzed 15 paired trials, including 10 successful pairs and 5 convergence-limited pairs inherited from the witness run.
+- No `electrical_phase_rescue_candidate` promoted.
+- One relaxed `electrical_phase_rescue_near_miss` appeared in the low-frequency magnetic-line surrogate, but it still showed target phase walkoff, reflection/load behavior, and high target-envelope CV, so the current electrical topology remains blocked.
+- Dominant failure mode was `raw_gain_without_coherence`: 6 pairs. Other classifications were 5 convergence-limited, 3 reference-shadow leakage, and 1 target-phase-walkoff pair.
+- Closest raw-gain pair was `no_qpm_baseline__vs__linear_no_nonlinearity_shadow`: gain `70816.74618476344`, target lock `0.5196591492317262`, coherent growth `1.8407616472633157`, with both 100 MHz and 150 MHz coherence failing by `tap_1_8`.
+- The best braided-object rows also failed early at `tap_1_8`, with target lock around `0.757` and coherent growth below `0.80`.
+- Rescue planner estimated top-row 100 MHz coherence length around `0.031 m`; measured QPM retiming is only worth bounded mini-validation, not another broad extraction or topology sweep.
+- Current interpretation: the electrical route is not blocked by raw 150 MHz gain. It is blocked by early loss of coherent 50 -> 100 -> 150 phase accumulation, with shadow leakage and convergence limits still present.
