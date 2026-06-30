@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-06-22
+Last updated: 2026-06-30
 
 ## Scientific Status
 
@@ -53,12 +53,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `spice_412_differential_witness_line.py` script builds paired OBJECT / matched REFERENCE witness trials with internal eighth-line taps and raw pre-extraction scoring. Ten of 15 paired trials ran successfully, no candidate or near miss promoted, and the aggregate stayed conservative: `electrical_bridge_real_signal=False`, `extraction_artifact_likely=True`.
 - The standalone `spice_412_phase_slip_tomography.py` script reads the existing differential witness artifacts and locates the coherence break. It found dominant failure mode `raw_gain_without_coherence`: the closest raw-gain pair fails 100 MHz and 150 MHz coherence by the 1/8 tap. No full rescue candidate promoted; one relaxed low-frequency magnetic-line surrogate near miss appeared but does not unblock the topology.
 - The standalone `acoustic_412_bench_physicalization.py` script turns the promoted acoustic analog into a bench-oriented raw-tap design. One source-only compact guide promoted under strict bench gates: 36 cells, 0.041 m guide length, 1.139 mm segment spacing, 120 kHz lock 0.999478, 80 kHz lock 0.998887, raw pre-readout 120 kHz purity 0.732032, distributed coherent growth 4.432654, object/reference gain 22.190921, plausible pressure stress, and all controls dead.
+- The standalone `acoustic_412_bench_robustness_validator.py` script freezes that b007 compact guide and tries to break it across numerical, tolerance, material/load, drive/readout, and matched-control buckets. It returns `not_robust` / `no_go`: nominal lock/purity/growth survive, but a b007-matched `too_short_guide` control leaks enough to drop nominal object/reference gain to 3.564362 with nominal max control leakage 0.280555. The strict +/-1% and +/-2% tolerance pass rates are both 0.0.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, a promoted acoustic/phononic waveguide analog, an electrical candidate race across realistic line families, a focused hybrid magnetic electrical refinement, a hybrid purity lock-in pass, a strict electrical control-forensics pass, a paired differential witness-line pass, a phase-slip tomography pass over that result, and a bench-oriented acoustic physicalization candidate. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, acoustic waveguide analog, and now a compact acoustic bench model recover coherent lock with clean controls. Realistic hybrid electrical rows can recover lock, bridge gain, and moderate 150 MHz purity, and forensics confirms some pre-extraction 150 MHz is real. However, the tested electrical topology still fails as a clean proof because extraction dominates apparent purity, tuned pure-varactor/target-detuned controls leak, paired witness rows do not beat their hardest matched shadows with stable pre-extraction lock and coherent growth, and tomography shows raw gain without coherent phase accumulation by early taps.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, a promoted acoustic/phononic waveguide analog, an electrical candidate race across realistic line families, a focused hybrid magnetic electrical refinement, a hybrid purity lock-in pass, a strict electrical control-forensics pass, a paired differential witness-line pass, a phase-slip tomography pass over that result, a bench-oriented acoustic physicalization candidate, and a frozen-candidate acoustic robustness no-go. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, acoustic waveguide analog, and compact acoustic bench model recover coherent raw-tap lock. Realistic hybrid electrical rows can recover lock, bridge gain, and moderate 150 MHz purity, and forensics confirms some pre-extraction 150 MHz is real. However, the tested electrical topology still fails as a clean proof because extraction dominates apparent purity, tuned pure-varactor/target-detuned controls leak, paired witness rows do not beat their hardest matched shadows with stable pre-extraction lock and coherent growth, and tomography shows raw gain without coherent phase accumulation by early taps. The acoustic bench row is also not build-ready yet: the robustness validator found that a b007-matched shortened guide leaks too much target response, so the compact geometry needs retiming before hardware.
 
 ## Latest Magnetic Autolock Summary
 
@@ -1172,7 +1173,45 @@ Standalone result:
 - Dependency and artifact checks passed: generated-path dependency `0.999999901`, phase-mismatch kill `0.999999999995`, QPM/shuffled dependency `0.999998668`, sensor-artifact score `0.0`, max control leakage `0.045063`, and all controls stayed dead.
 - Bench geometry: compact source-only guide, 36 cells, `0.041 m` length, segment spacing about `0.001139 m`, no QPM needed for the promoted row.
 - Bench estimates: pressure `3859.98 Pa`, displacement `1.60e-8 m`, drive about `85.78 V` and `0.0233 W`, and sensor bandwidth at least `250 kHz`.
-- Current interpretation: acoustic/waveguide physicalization now has a compact raw-tap bench candidate. The current electrical topology remains blocked; next physical work should be the compact acoustic tap prototype and controls.
+- Current interpretation: acoustic/waveguide physicalization produced a compact raw-tap bench candidate. The later robustness validator supersedes the direct-build recommendation and requires acoustic retiming before hardware.
+
+## Acoustic 4->8->12 Bench Robustness Validator
+
+Run command:
+
+```bash
+python acoustic_412_bench_robustness_validator.py --run
+```
+
+Outputs:
+
+- `runs/acoustic_412_bench_robustness_validator/robustness_summary.json`
+- `runs/acoustic_412_bench_robustness_validator/robustness_summary.csv`
+- `runs/acoustic_412_bench_robustness_validator/tolerance_matrix.csv`
+- `runs/acoustic_412_bench_robustness_validator/numerical_sensitivity.csv`
+- `runs/acoustic_412_bench_robustness_validator/sensor_sensitivity.csv`
+- `runs/acoustic_412_bench_robustness_validator/matched_controls.csv`
+- `runs/acoustic_412_bench_robustness_validator/failure_modes.csv`
+- `runs/acoustic_412_bench_robustness_validator/build_go_no_go.json`
+- `runs/acoustic_412_bench_robustness_validator/build_go_no_go.md`
+- `runs/acoustic_412_bench_robustness_validator/README_ACOUSTIC_412_BENCH_ROBUSTNESS_VALIDATOR.md`
+
+What it tests:
+
+- Freezes `b007 acoustic_compact_short_guide`; no discovery sweep or replacement geometry search.
+- Replays numerical dt/window/sample sensitivity, geometry/manufacturing tolerance, material/load perturbations, drive/readout perturbations, and matched controls per bucket.
+- Keeps the same source-only 40 kHz rule: no direct 80 kHz drive, no direct 120 kHz drive, and no target-frequency injection.
+- Uses raw distributed tap metrics before any high-Q readout cleanup.
+
+Standalone result:
+
+- Final label: `not_robust`; exact go/no-go decision: `no_go`.
+- Nominal physics remained strong: 120 kHz lock `0.999478`, 80 kHz lock `0.998887`, raw pre-readout 120 kHz purity `0.732032`, and coherent growth `4.432654`.
+- The strict build gate failed because a b007-matched `too_short_guide` control leaked. Nominal object/reference gain was only `3.564362`, nominal max control leakage was `0.280555`, and explicit worst leaking control was `tolerance_too_short_guide` at `0.235147`.
+- `all_matched_controls_dead=False`, while sensor-artifact controls stayed dead.
+- Strict +/-1% and +/-2% tolerance pass rates were both `0.0` because the matched-control denominator failed across tolerance rows.
+- Dominant failure mode was `object_reference_gain_120khz_below_10`; failure counts were object/reference gain below 10 on 63 rows, coherent growth below 2 on 2 rows, and raw purity below 0.6 on 1 row.
+- Current interpretation: b007 is a real-looking compact acoustic bench candidate but not robust enough to build directly. The next acoustic task should retime or reshape the compact guide so the short-guide matched control dies while the nominal raw-tap lock, purity, and coherent growth survive.
 
 ## Recommendation
 
@@ -1180,9 +1219,10 @@ Do not promote to `geometry369` yet.
 
 Next options:
 
-1. Build and bench-validate the compact source-only acoustic tap prototype from `acoustic_412_bench_physicalization.py`.
-2. Pause the current electrical topology behind the acoustic branch; only continue electrical work through a different topology, independent readout, or more physical nonlinear magnetic-line model that can beat its matched witness shadow before extraction and preserve tap-level coherence.
-3. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
-4. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
-5. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
-6. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.
+1. Retime or reshape the compact acoustic source-only guide before hardware; rerun `acoustic_412_bench_robustness_validator.py --run` and require the matched short-guide control to stay dead.
+2. Pause direct b007 hardware build until the robustness validator returns `acoustic_bench_robust_candidate` or a clearly justified near miss.
+3. Pause the current electrical topology behind the acoustic branch; only continue electrical work through a different topology, independent readout, or more physical nonlinear magnetic-line model that can beat its matched witness shadow before extraction and preserve tap-level coherence.
+4. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
+5. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
+6. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
+7. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.

@@ -767,4 +767,23 @@ Standalone result:
 - Dependency controls passed: generated-path dependency `0.999999901`, phase-mismatch kill `0.999999999995`, shuffled-QPM dependency `0.999998668`, sensor-artifact score `0.0`, and max control leakage `0.045063`.
 - All controls stayed dead: linear/no-nonlinearity, shuffled QPM, phase-mismatched 120, generated-path-suppressed 80, target-velocity-detuned 120, too-short, too-lossy, and sensor-only artifact.
 - Recommended first prototype: 40 kHz source-only compact bar/phononic strip, 36 cells, length `0.041 m`, segment spacing about `1.139 mm`, no direct 80/120 kHz drive, estimated pressure `3859.98 Pa`, estimated displacement `1.60e-8 m`, estimated drive `85.78 V` and `0.0233 W`, and broadband tap sensors with at least `250 kHz` bandwidth.
-- Current interpretation: the acoustic route now has a bench-realistic raw-tap candidate. The tested electrical topology remains blocked behind this acoustic prototype.
+- Current interpretation: the acoustic route produced a bench-realistic raw-tap candidate. The later robustness validator supersedes the direct-build recommendation and requires acoustic retiming before hardware.
+
+## Acoustic 4->8->12 Bench Robustness Validator
+
+Added `acoustic_412_bench_robustness_validator.py`:
+
+- Freezes `b007 acoustic_compact_short_guide` from the acoustic bench physicalization pass; it does not run a discovery sweep.
+- Tests numerical dt/window/sample sensitivity, geometry/manufacturing tolerance, material/load perturbations, drive/readout perturbations, and matched controls per bucket.
+- Keeps source-only 40 kHz drive in all candidate rows: no direct 80 kHz drive, no direct 120 kHz drive, and no target-frequency injection.
+- Scores raw distributed tap metrics before readout cleanup and writes `robustness_summary.json`, `robustness_summary.csv`, `tolerance_matrix.csv`, `numerical_sensitivity.csv`, `sensor_sensitivity.csv`, `matched_controls.csv`, `failure_modes.csv`, `build_go_no_go.json`, `build_go_no_go.md`, and `README_ACOUSTIC_412_BENCH_ROBUSTNESS_VALIDATOR.md`.
+
+Standalone result:
+
+- Run command tested: `python acoustic_412_bench_robustness_validator.py --run`.
+- Final label was `not_robust`; exact decision was `no_go`.
+- Nominal b007 replay kept the core physics: 120 kHz lock `0.999478`, 80 kHz lock `0.998887`, raw pre-readout 120 kHz purity `0.732032`, and coherent growth `4.432654`.
+- The strict gate failed because a b007-matched `too_short_guide` control leaked. Nominal object/reference gain was `3.564362`, nominal max control leakage was `0.280555`, and the explicit worst leaking control was `tolerance_too_short_guide` at `0.235147`.
+- Strict +/-1% and +/-2% tolerance pass rates were both `0.0`; dominant failure mode was `object_reference_gain_120khz_below_10`.
+- Sensor artifact controls stayed dead, so the failure is not a readout-only artifact. It is a matched-control leakage problem.
+- Current interpretation: do not build directly from b007. The compact acoustic route needs retiming or reshaping until the shortened-guide matched control stays dead while nominal raw-tap lock, purity, and coherent growth survive.

@@ -55,11 +55,13 @@ What has not survived yet:
 - The differential witness-line pass tested paired OBJECT / matched REFERENCE shadows at raw internal taps before extraction. Ten of 15 paired trials ran successfully, no `electromagnetic_differential_witness_candidate` or near miss promoted, and the aggregate remained `electrical_bridge_real_signal=False`, `extraction_artifact_likely=True`.
 - The phase-slip tomography pass reads the existing differential witness artifacts and locates the coherence break. The dominant failure is `raw_gain_without_coherence`: the closest raw-gain pair fails both 100 MHz and 150 MHz coherence by the 1/8 tap. One relaxed low-frequency magnetic-line near miss appears, but no `electrical_phase_rescue_candidate` promotes, so the current electrical topology remains blocked.
 - The acoustic bench-physicalization pass converts the 40/80/120 kHz analog into a raw-tap bench design. One source-only compact guide promotes as `acoustic_bench_physicalization_candidate`: 36 cells, 0.041 m length, 1.139 mm spacing, 120 kHz lock 0.999478, 80 kHz lock 0.998887, raw pre-readout 120 kHz purity 0.732032, coherent growth 4.432654, object/reference gain 22.190921, plausible pressure stress, and all controls dead.
+- The acoustic bench-robustness validator freezes that `b007 acoustic_compact_short_guide` row and tries to break it without a discovery sweep. It does not clear the strict build gate: final label `not_robust`, decision `no_go`, nominal lock/purity/growth remain strong, but a b007-matched `too_short_guide` control leaks enough to drop nominal object/reference gain to 3.564362 with max control leakage 0.280555. The +/-1% and +/-2% tolerance pass rates are 0.0 under the strict control-leak gate.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
-- Build and bench-validate the compact acoustic source-only tap prototype before returning to the blocked electrical topology.
+- Do not build the compact acoustic prototype directly from b007 yet; retime or redesign the acoustic route until the matched short-guide control stays dead under the robustness validator.
+- Keep the acoustic branch as the cleanest physical path, but treat the bench physicalization result as a candidate that failed independent robustness, not as build-ready hardware.
 - Pause this electrical topology behind the acoustic branch unless testing a different electrical topology, stronger independent readout, or a component-realistic magnetic route.
 - Treat the paired witness result as another blocker for the current electrical topology: object/reference pre-extraction separation can be large, but phase lock/coherent growth gates and shadow leakage still prevent promotion.
 - Treat the measured QPM retiming plan as optional mini-validation only, not a reason for another broad electrical sweep.
@@ -163,6 +165,7 @@ python spice_412_differential_witness_line.py --run --ngspice-path wsl:ngspice -
 python spice_412_phase_slip_tomography.py
 python spice_412_phase_slip_tomography.py --run-rescue --ngspice-path wsl:ngspice --timeout 180
 python acoustic_412_bench_physicalization.py --run
+python acoustic_412_bench_robustness_validator.py --run
 ```
 
 Key bridge modes:
@@ -628,4 +631,17 @@ Standalone result from `python acoustic_412_bench_physicalization.py --run`:
 - Promoted raw-tap metrics: 120 kHz lock `0.999478`, 80 kHz lock `0.998887`, distributed 120 kHz coherent growth `4.432654`, growth slope `0.961162`, raw pre-readout 120 kHz purity `0.732032`, and object/reference gain `22.190921`.
 - Dependency/control metrics stayed clean: generated-path dependency `0.999999901`, phase-mismatch kill `0.999999999995`, QPM/shuffled dependency `0.999998668`, sensor-artifact score `0.0`, max control leakage `0.045063`, and all controls dead.
 - Bench recommendation: build a 40 kHz source-only compact bar or phononic strip, length `0.041 m`, `36` cells, segment spacing about `1.139 mm`, no direct 80/120 kHz drive, estimated pressure `3859.98 Pa`, estimated displacement `1.60e-8 m`, estimated drive `85.78 V` and `0.0233 W`, and broadband tap sensors with at least `250 kHz` flat bandwidth.
-- Current read: this is the first bench-realistic acoustic physicalization candidate where raw taps, not a high-Q readout filter, carry the promotion. Electrical remains paused behind this acoustic prototype.
+- Current read: this is the first bench-realistic acoustic physicalization candidate where raw taps, not a high-Q readout filter, carry the promotion. The later robustness validator supersedes the build recommendation and says not to build directly from b007.
+
+## Latest Acoustic 4->8->12 Bench Robustness Validator
+
+Standalone result from `python acoustic_412_bench_robustness_validator.py --run`:
+
+- Added `acoustic_412_bench_robustness_validator.py`, a frozen-candidate break-it pass for `b007 acoustic_compact_short_guide`.
+- Outputs are written locally to `runs/acoustic_412_bench_robustness_validator/robustness_summary.json`, `robustness_summary.csv`, `tolerance_matrix.csv`, `numerical_sensitivity.csv`, `sensor_sensitivity.csv`, `matched_controls.csv`, `failure_modes.csv`, `build_go_no_go.json`, `build_go_no_go.md`, and `README_ACOUSTIC_412_BENCH_ROBUSTNESS_VALIDATOR.md`.
+- The validator runs numerical, geometry/manufacturing, material/load, drive/readout, and matched-control buckets without launching a new geometry discovery sweep.
+- Final label: `not_robust`; go/no-go decision: `no_go`; recommended next step: route pause or robustness retiming before build.
+- Nominal b007 physics replay stayed strong: 120 kHz lock `0.999478`, 80 kHz lock `0.998887`, raw pre-readout purity `0.732032`, and coherent growth `4.432654`.
+- Strict build gate failed because the b007-matched `too_short_guide` control was not dead enough. Nominal object/reference gain fell to `3.564362`, nominal max control leakage was `0.280555`, and worst explicit leaking control was `tolerance_too_short_guide` at `0.235147`.
+- Under that strict control-leak denominator, +/-1% and +/-2% tolerance pass rates were both `0.0`; dominant failure mode was `object_reference_gain_120khz_below_10`.
+- Current read: do not build directly from b007. The next acoustic step should retime/reshape the compact guide or its matched-control definition until the shortened-guide control remains dead while the nominal raw-tap lock/purity/growth survive.
