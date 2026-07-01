@@ -809,3 +809,25 @@ Standalone result:
 - Controls leaked heavily: 31 matched controls leaked; strongest explicit leak was `g001_missing_satellite_nodes` with leakage score `1.0`.
 - Dominant failure mode was `raw_pre_readout_120khz_purity_below_0.6`.
 - Current interpretation: this first crop-inspired 2D acoustic graph pass does not rescue the acoustic route. Continue only as geometry redesign work, with no crop-circle message claim and no hardware build claim.
+
+## Acoustic 4->8->12 Sacred Modal Triads
+
+Added `acoustic_412_sacred_modal_triads.py`:
+
+- Tests sacred-geometry-inspired graph names only as acoustic topology candidates, not as proof of sacred geometry and not as crop-circle message evidence.
+- Stage 1 builds a 2D weighted graph, computes graph Laplacian acoustic modes, maps modal frequencies onto the 40/80/120 kHz scale, searches 1:2:3 modal triads, and scores A+A->B overlap, A+B->C overlap, source coupling, target/output localization, mode separation, geometry dependency, and modal-control leakage.
+- Stage 2 runs nonlinear time simulation only for the top modal-triad geometry bundles, using source-only 40 kHz drive with no direct 80 kHz drive, no direct 120 kHz drive, and no target-frequency injection.
+- Geometry families: Sri Yantra nested triangles, Metatron's cube, vesica piscis / seed of life, Fibonacci phyllotaxis, golden-angle spiral, Penrose-like quasicrystal patch, dodecagonal 12-fold quasicrystal, hexagram dual-triangle lattice, tree-of-life graph, and synthetic Chladni template.
+- Matched controls include randomized positions, radial angle shuffle, edge weight shuffle, ring-only equivalent, missing key nodes, shortened/cropped graph, phase-shuffled source signs, degree-preserving random graph, and linear/no-nonlinearity.
+- Outputs go to `runs/acoustic_412_sacred_modal_triads/summary.json`, `summary.csv`, `modal_triads.csv`, `promoted_modal_geometries.csv`, `matched_controls.csv`, `failure_modes.csv`, `README_ACOUSTIC_412_SACRED_MODAL_TRIADS.md`, and SVG diagrams.
+
+Standalone result:
+
+- Run command tested: `python acoustic_412_sacred_modal_triads.py --run --workers 8`.
+- Stage 1 evaluated 10 discovery geometries and 90 matched controls; no modal-triad Stage 1 candidate promoted.
+- Stage 2 simulated the top four modal-triad bundles; no nonlinear Stage 2 candidate promoted.
+- Aggregate label was `not_promoted`; decision was `no_hardware_build_readiness`.
+- Best modal row: `m010 chladni_template_synthetic`, with triad ratio error `0.024541`, overlap_448 `0.116918`, overlap_4812 `0.009900`, source coupling `0.485069`, target localization `0.121439`, geometry dependency `0.0`, and modal control leakage `1.0`.
+- Best Stage 2 row was also `m010`, with 120 kHz lock `0.657546`, raw pre-readout 120 kHz purity `3.3614e-9`, coherent growth `0.021928`, object/reference gain `0.007114`, and max control leakage `1.0`.
+- Controls leaked heavily: 57 Stage 1 modal controls leaked and 22 Stage 2 nonlinear controls leaked.
+- Current interpretation: natural-looking modal triad pieces are not enough. This run does not prove sacred geometry and does not rescue the acoustic route because strict controls leak and raw 120 kHz purity/growth remain far below gate.

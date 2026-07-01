@@ -57,12 +57,14 @@ What has not survived yet:
 - The acoustic bench-physicalization pass converts the 40/80/120 kHz analog into a raw-tap bench design. One source-only compact guide promotes as `acoustic_bench_physicalization_candidate`: 36 cells, 0.041 m length, 1.139 mm spacing, 120 kHz lock 0.999478, 80 kHz lock 0.998887, raw pre-readout 120 kHz purity 0.732032, coherent growth 4.432654, object/reference gain 22.190921, plausible pressure stress, and all controls dead.
 - The acoustic bench-robustness validator freezes that `b007 acoustic_compact_short_guide` row and tries to break it without a discovery sweep. It does not clear the strict build gate: final label `not_robust`, decision `no_go`, nominal lock/purity/growth remain strong, but a b007-matched `too_short_guide` control leaks enough to drop nominal object/reference gain to 3.564362 with max control leakage 0.280555. The +/-1% and +/-2% tolerance pass rates are 0.0 under the strict control-leak gate.
 - The crop-geometry acoustic array tests crop-circle-inspired 2D node layouts only as spatial geometry inspiration. No geometry promoted and no near miss appeared: best row `g006 broken_ring_glyph_pattern` reached 80 kHz lock 0.992185 and 120 kHz lock 0.903426, but raw 120 kHz purity was only 4.25e-8, coherent growth 0.401313, object/reference gain 0.734915, max control leakage 1.0, and 31 matched controls leaked.
+- The sacred-modal-triad screen tests sacred-geometry-inspired graphs as candidate acoustic topologies, first by Laplacian modal triads and then by bounded nonlinear time simulation. No Stage 1 modal candidate and no Stage 2 nonlinear candidate promoted. Best modal row `m010 chladni_template_synthetic` had triad score 0.129495 but modal control leakage 1.0; its Stage 2 raw 120 kHz purity was only 3.36e-9, coherent growth 0.021928, object/reference gain 0.007114, and max control leakage 1.0.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
 - Do not build the compact acoustic prototype directly from b007 yet; retime or redesign the acoustic route until the matched short-guide control stays dead under the robustness validator.
 - Do not treat crop-circle-inspired layouts as proven messages or build-ready hardware; the first 2D geometry pass failed strict matched controls.
+- Do not treat sacred-geometry-inspired modal triads as proof or build-ready hardware; the first modal-triad pass failed both matched modal controls and nonlinear raw purity/growth.
 - Keep the acoustic branch as the cleanest physical path, but treat the bench physicalization result as a candidate that failed independent robustness, not as build-ready hardware.
 - Pause this electrical topology behind the acoustic branch unless testing a different electrical topology, stronger independent readout, or a component-realistic magnetic route.
 - Treat the paired witness result as another blocker for the current electrical topology: object/reference pre-extraction separation can be large, but phase lock/coherent growth gates and shadow leakage still prevent promotion.
@@ -169,6 +171,7 @@ python spice_412_phase_slip_tomography.py --run-rescue --ngspice-path wsl:ngspic
 python acoustic_412_bench_physicalization.py --run
 python acoustic_412_bench_robustness_validator.py --run
 python acoustic_412_crop_geometry_array.py --run --workers 8
+python acoustic_412_sacred_modal_triads.py --run --workers 8
 ```
 
 Key bridge modes:
@@ -661,3 +664,17 @@ Standalone result from `python acoustic_412_crop_geometry_array.py --run --worke
 - Best row by strict scoring was `g006 broken_ring_glyph_pattern`, but it still failed: 80 kHz lock `0.992185`, 120 kHz lock `0.903426`, raw pre-readout 120 kHz purity `4.25047e-8`, coherent growth `0.401313`, object/reference gain `0.734915`, and max control leakage `1.0`.
 - Controls did not stay dead: 31 matched controls leaked, with strongest explicit leak `g001_missing_satellite_nodes` at leakage score `1.0`.
 - Current read: the crop-inspired 2D geometry idea is not promoted by this first graph model. Do not treat the diagrams as evidence or build plans; any continuation should redesign the geometry and require strict matched-control defeat.
+
+## Latest Acoustic 4->8->12 Sacred Modal Triads
+
+Standalone result from `python acoustic_412_sacred_modal_triads.py --run --workers 8`:
+
+- Added `acoustic_412_sacred_modal_triads.py`, a two-stage screen for sacred-geometry-inspired acoustic graph topologies. The names are topology labels only, not proof claims.
+- Outputs are written locally to `runs/acoustic_412_sacred_modal_triads/summary.json`, `summary.csv`, `modal_triads.csv`, `promoted_modal_geometries.csv`, `matched_controls.csv`, `failure_modes.csv`, `README_ACOUSTIC_412_SACRED_MODAL_TRIADS.md`, and SVG diagrams for top diagnostics.
+- Stage 1 computes graph Laplacian acoustic modes, searches 1:2:3 modal triads near 40/80/120 kHz after scaling, and scores nonlinear modal overlaps, source coupling, target localization, mode separation, and matched-control leakage.
+- Stage 2 time-simulates only the top modal-triad geometry bundles with source-only 40 kHz drive, no direct 80/120 kHz drive, and no target-frequency injection.
+- No Stage 1 modal candidate and no Stage 2 nonlinear candidate promoted. Aggregate label: `not_promoted`; decision: `no_hardware_build_readiness`.
+- Best modal row was `m010 chladni_template_synthetic`: triad ratio error `0.024541`, overlap_448 `0.116918`, overlap_4812 `0.009900`, source coupling `0.485069`, target localization `0.121439`, geometry dependency `0.0`, and modal control leakage `1.0`.
+- Best Stage 2 row was also `m010`, but nonlinear raw metrics failed: 120 kHz lock `0.657546`, raw pre-readout 120 kHz purity `3.3614e-9`, coherent growth `0.021928`, object/reference gain `0.007114`, and max control leakage `1.0`.
+- Controls did not stay dead: 57 Stage 1 modal controls leaked and 22 Stage 2 nonlinear controls leaked.
+- Current read: modal triads alone are not enough. This pass does not prove sacred geometry and does not rescue the acoustic route; any continuation must improve both modal-control dependency and raw nonlinear 120 kHz purity/growth.
