@@ -56,11 +56,13 @@ What has not survived yet:
 - The phase-slip tomography pass reads the existing differential witness artifacts and locates the coherence break. The dominant failure is `raw_gain_without_coherence`: the closest raw-gain pair fails both 100 MHz and 150 MHz coherence by the 1/8 tap. One relaxed low-frequency magnetic-line near miss appears, but no `electrical_phase_rescue_candidate` promotes, so the current electrical topology remains blocked.
 - The acoustic bench-physicalization pass converts the 40/80/120 kHz analog into a raw-tap bench design. One source-only compact guide promotes as `acoustic_bench_physicalization_candidate`: 36 cells, 0.041 m length, 1.139 mm spacing, 120 kHz lock 0.999478, 80 kHz lock 0.998887, raw pre-readout 120 kHz purity 0.732032, coherent growth 4.432654, object/reference gain 22.190921, plausible pressure stress, and all controls dead.
 - The acoustic bench-robustness validator freezes that `b007 acoustic_compact_short_guide` row and tries to break it without a discovery sweep. It does not clear the strict build gate: final label `not_robust`, decision `no_go`, nominal lock/purity/growth remain strong, but a b007-matched `too_short_guide` control leaks enough to drop nominal object/reference gain to 3.564362 with max control leakage 0.280555. The +/-1% and +/-2% tolerance pass rates are 0.0 under the strict control-leak gate.
+- The crop-geometry acoustic array tests crop-circle-inspired 2D node layouts only as spatial geometry inspiration. No geometry promoted and no near miss appeared: best row `g006 broken_ring_glyph_pattern` reached 80 kHz lock 0.992185 and 120 kHz lock 0.903426, but raw 120 kHz purity was only 4.25e-8, coherent growth 0.401313, object/reference gain 0.734915, max control leakage 1.0, and 31 matched controls leaked.
 - Do not promote to `geometry369` yet.
 
 Best current direction:
 
 - Do not build the compact acoustic prototype directly from b007 yet; retime or redesign the acoustic route until the matched short-guide control stays dead under the robustness validator.
+- Do not treat crop-circle-inspired layouts as proven messages or build-ready hardware; the first 2D geometry pass failed strict matched controls.
 - Keep the acoustic branch as the cleanest physical path, but treat the bench physicalization result as a candidate that failed independent robustness, not as build-ready hardware.
 - Pause this electrical topology behind the acoustic branch unless testing a different electrical topology, stronger independent readout, or a component-realistic magnetic route.
 - Treat the paired witness result as another blocker for the current electrical topology: object/reference pre-extraction separation can be large, but phase lock/coherent growth gates and shadow leakage still prevent promotion.
@@ -166,6 +168,7 @@ python spice_412_phase_slip_tomography.py
 python spice_412_phase_slip_tomography.py --run-rescue --ngspice-path wsl:ngspice --timeout 180
 python acoustic_412_bench_physicalization.py --run
 python acoustic_412_bench_robustness_validator.py --run
+python acoustic_412_crop_geometry_array.py --run --workers 8
 ```
 
 Key bridge modes:
@@ -645,3 +648,16 @@ Standalone result from `python acoustic_412_bench_robustness_validator.py --run`
 - Strict build gate failed because the b007-matched `too_short_guide` control was not dead enough. Nominal object/reference gain fell to `3.564362`, nominal max control leakage was `0.280555`, and worst explicit leaking control was `tolerance_too_short_guide` at `0.235147`.
 - Under that strict control-leak denominator, +/-1% and +/-2% tolerance pass rates were both `0.0`; dominant failure mode was `object_reference_gain_120khz_below_10`.
 - Current read: do not build directly from b007. The next acoustic step should retime/reshape the compact guide or its matched-control definition until the shortened-guide control remains dead while the nominal raw-tap lock/purity/growth survive.
+
+## Latest Acoustic 4->8->12 Crop Geometry Array
+
+Standalone result from `python acoustic_412_crop_geometry_array.py --run --workers 8`:
+
+- Added `acoustic_412_crop_geometry_array.py`, a 2D acoustic graph screen using crop-circle-inspired spatial layouts only as geometry inspiration.
+- Outputs are written locally to `runs/acoustic_412_crop_geometry_array/summary.json`, `summary.csv`, `promoted_geometries.csv`, `geometry_dependency.csv`, `matched_controls.csv`, `failure_modes.csv`, `README_ACOUSTIC_412_CROP_GEOMETRY_ARRAY.md`, and SVG diagrams for the top diagnostic rows.
+- Families tested: concentric rings, concentric rings with satellites, flower-of-life overlap lattice, radial spoke wheel, spiral petal pattern, broken ring glyph pattern, straight guide baseline, and simple ring baseline.
+- Every discovery row stayed source-only at 40 kHz: no direct 80 kHz drive, no direct 120 kHz drive, and no target-frequency injection.
+- No `acoustic_crop_geometry_candidate` and no near miss promoted. Aggregate label: `not_promoted`; decision: `no_hardware_build_readiness`.
+- Best row by strict scoring was `g006 broken_ring_glyph_pattern`, but it still failed: 80 kHz lock `0.992185`, 120 kHz lock `0.903426`, raw pre-readout 120 kHz purity `4.25047e-8`, coherent growth `0.401313`, object/reference gain `0.734915`, and max control leakage `1.0`.
+- Controls did not stay dead: 31 matched controls leaked, with strongest explicit leak `g001_missing_satellite_nodes` at leakage score `1.0`.
+- Current read: the crop-inspired 2D geometry idea is not promoted by this first graph model. Do not treat the diagrams as evidence or build plans; any continuation should redesign the geometry and require strict matched-control defeat.

@@ -787,3 +787,25 @@ Standalone result:
 - Strict +/-1% and +/-2% tolerance pass rates were both `0.0`; dominant failure mode was `object_reference_gain_120khz_below_10`.
 - Sensor artifact controls stayed dead, so the failure is not a readout-only artifact. It is a matched-control leakage problem.
 - Current interpretation: do not build directly from b007. The compact acoustic route needs retiming or reshaping until the shortened-guide matched control stays dead while nominal raw-tap lock, purity, and coherent growth survive.
+
+## Acoustic 4->8->12 Crop Geometry Array
+
+Added `acoustic_412_crop_geometry_array.py`:
+
+- Tests crop-circle-inspired geometry only as 2D spatial-layout inspiration, not as proof of messages and not as hardware readiness.
+- Represents each candidate as a 2D acoustic node graph with source nodes, passive 40/80/120 kHz states, acoustic coupling edges, and nonlinear 40+40->80 plus 40+80->120 generation.
+- Keeps discovery rows source-only at 40 kHz: no direct 80 kHz drive, no direct 120 kHz drive, and no target-frequency injection.
+- Geometry families: concentric rings, concentric rings with satellite nodes, flower-of-life overlap lattice, radial spoke wheel, spiral petal pattern, broken ring glyph pattern, straight guide baseline, and simple ring baseline.
+- Matched controls for every discovery geometry: randomized positions, radial-distribution angle shuffle, ring-only equivalent, phase-shuffled source signs, missing satellites, shortened/cropped geometry, linear no-nonlinearity, generated-path-suppressed 80 kHz, phase-mismatched 120 kHz, and sensor artifact control.
+- Outputs go to `runs/acoustic_412_crop_geometry_array/summary.json`, `summary.csv`, `promoted_geometries.csv`, `geometry_dependency.csv`, `matched_controls.csv`, `failure_modes.csv`, `README_ACOUSTIC_412_CROP_GEOMETRY_ARRAY.md`, and SVG diagrams.
+
+Standalone result:
+
+- Run command tested: `python acoustic_412_crop_geometry_array.py --run --workers 8`.
+- Eight discovery geometries and 80 matched controls were evaluated.
+- No full `acoustic_crop_geometry_candidate` promoted and no near miss appeared.
+- Aggregate label was `not_promoted`; decision was `no_hardware_build_readiness`.
+- Best strict row: `g006 broken_ring_glyph_pattern`, with 80 kHz lock `0.992185`, 120 kHz lock `0.903426`, raw pre-readout 120 kHz purity `4.25047e-8`, distributed coherent growth `0.401313`, object/reference gain `0.734915`, and max control leakage `1.0`.
+- Controls leaked heavily: 31 matched controls leaked; strongest explicit leak was `g001_missing_satellite_nodes` with leakage score `1.0`.
+- Dominant failure mode was `raw_pre_readout_120khz_purity_below_0.6`.
+- Current interpretation: this first crop-inspired 2D acoustic graph pass does not rescue the acoustic route. Continue only as geometry redesign work, with no crop-circle message claim and no hardware build claim.

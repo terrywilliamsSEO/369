@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-06-30
+Last updated: 2026-07-01
 
 ## Scientific Status
 
@@ -54,12 +54,13 @@ This is a clean passive nonlinear bridge test. It asks whether generated 6 can r
 - The standalone `spice_412_phase_slip_tomography.py` script reads the existing differential witness artifacts and locates the coherence break. It found dominant failure mode `raw_gain_without_coherence`: the closest raw-gain pair fails 100 MHz and 150 MHz coherence by the 1/8 tap. No full rescue candidate promoted; one relaxed low-frequency magnetic-line surrogate near miss appeared but does not unblock the topology.
 - The standalone `acoustic_412_bench_physicalization.py` script turns the promoted acoustic analog into a bench-oriented raw-tap design. One source-only compact guide promoted under strict bench gates: 36 cells, 0.041 m guide length, 1.139 mm segment spacing, 120 kHz lock 0.999478, 80 kHz lock 0.998887, raw pre-readout 120 kHz purity 0.732032, distributed coherent growth 4.432654, object/reference gain 22.190921, plausible pressure stress, and all controls dead.
 - The standalone `acoustic_412_bench_robustness_validator.py` script freezes that b007 compact guide and tries to break it across numerical, tolerance, material/load, drive/readout, and matched-control buckets. It returns `not_robust` / `no_go`: nominal lock/purity/growth survive, but a b007-matched `too_short_guide` control leaks enough to drop nominal object/reference gain to 3.564362 with nominal max control leakage 0.280555. The strict +/-1% and +/-2% tolerance pass rates are both 0.0.
+- The standalone `acoustic_412_crop_geometry_array.py` script tests crop-circle-inspired 2D graph layouts only as geometry inspiration. It found no promoted geometry and no near miss. Best strict row was `g006 broken_ring_glyph_pattern`, but raw 120 kHz purity was only 4.25e-8, coherent growth 0.401313, object/reference gain 0.734915, max control leakage 1.0, and 31 matched controls leaked.
 
 ## Current Blocker
 
 No 3 -> 6 -> 9 passive model has passed the strict 4x runtime lock gate.
 
-The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, a promoted acoustic/phononic waveguide analog, an electrical candidate race across realistic line families, a focused hybrid magnetic electrical refinement, a hybrid purity lock-in pass, a strict electrical control-forensics pass, a paired differential witness-line pass, a phase-slip tomography pass over that result, a bench-oriented acoustic physicalization candidate, and a frozen-candidate acoustic robustness no-go. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, acoustic waveguide analog, and compact acoustic bench model recover coherent raw-tap lock. Realistic hybrid electrical rows can recover lock, bridge gain, and moderate 150 MHz purity, and forensics confirms some pre-extraction 150 MHz is real. However, the tested electrical topology still fails as a clean proof because extraction dominates apparent purity, tuned pure-varactor/target-detuned controls leak, paired witness rows do not beat their hardest matched shadows with stable pre-extraction lock and coherent growth, and tomography shows raw gain without coherent phase accumulation by early taps. The acoustic bench row is also not build-ready yet: the robustness validator found that a b007-matched shortened guide leaks too much target response, so the compact geometry needs retiming before hardware.
+The main 3 -> 6 -> 9 failure is still generated-stage lock quality and phase slips. The harmonic-family quick smoke did not support 369 uniqueness. The 4 -> 8 -> 12 branch now has strict substep-4 candidate rows, standalone independent validation, a first LC physicalization, first local ngspice execution, a behavioral-only SPICE refinement candidate, a component-realism sweep, a component phase-lock sweep, a distributed phase-matching topology model, a first distributed SPICE ladder export, a less-behavioral transmission-line SPICE refinement, a physical waveguide interpretation layer, a first concrete varactor NLTL SPICE design, a focused varactor NLTL refinement, a promoted acoustic/phononic waveguide analog, an electrical candidate race across realistic line families, a focused hybrid magnetic electrical refinement, a hybrid purity lock-in pass, a strict electrical control-forensics pass, a paired differential witness-line pass, a phase-slip tomography pass over that result, a bench-oriented acoustic physicalization candidate, a frozen-candidate acoustic robustness no-go, and a crop-inspired 2D acoustic geometry no-promotion result. The blocker has narrowed further: lumped component rows can generate target-band energy without coherent phase lock, while the normalized distributed phase-matched model, SPICE envelope ladder, explicit LC transmission-line ladder, acoustic waveguide analog, and compact acoustic bench model recover coherent raw-tap lock. Realistic hybrid electrical rows can recover lock, bridge gain, and moderate 150 MHz purity, and forensics confirms some pre-extraction 150 MHz is real. However, the tested electrical topology still fails as a clean proof because extraction dominates apparent purity, tuned pure-varactor/target-detuned controls leak, paired witness rows do not beat their hardest matched shadows with stable pre-extraction lock and coherent growth, and tomography shows raw gain without coherent phase accumulation by early taps. The acoustic bench row is also not build-ready yet: the robustness validator found that a b007-matched shortened guide leaks too much target response. The first crop-inspired 2D graph experiment did not rescue the acoustic route, because raw 120 kHz purity and coherent growth stayed far below gate and many matched controls leaked.
 
 ## Latest Magnetic Autolock Summary
 
@@ -1213,6 +1214,41 @@ Standalone result:
 - Dominant failure mode was `object_reference_gain_120khz_below_10`; failure counts were object/reference gain below 10 on 63 rows, coherent growth below 2 on 2 rows, and raw purity below 0.6 on 1 row.
 - Current interpretation: b007 is a real-looking compact acoustic bench candidate but not robust enough to build directly. The next acoustic task should retime or reshape the compact guide so the short-guide matched control dies while the nominal raw-tap lock, purity, and coherent growth survive.
 
+## Acoustic 4->8->12 Crop Geometry Array
+
+Run command:
+
+```bash
+python acoustic_412_crop_geometry_array.py --run --workers 8
+```
+
+Outputs:
+
+- `runs/acoustic_412_crop_geometry_array/summary.json`
+- `runs/acoustic_412_crop_geometry_array/summary.csv`
+- `runs/acoustic_412_crop_geometry_array/promoted_geometries.csv`
+- `runs/acoustic_412_crop_geometry_array/geometry_dependency.csv`
+- `runs/acoustic_412_crop_geometry_array/matched_controls.csv`
+- `runs/acoustic_412_crop_geometry_array/failure_modes.csv`
+- `runs/acoustic_412_crop_geometry_array/README_ACOUSTIC_412_CROP_GEOMETRY_ARRAY.md`
+- SVG diagrams for the nominal/top diagnostic row, strongest leaking control, and best failed row.
+
+What it tests:
+
+- Crop-circle-inspired geometry only as spatial-layout inspiration, not as proof of messages or hardware readiness.
+- 2D acoustic graphs for concentric rings, concentric rings with satellites, flower-of-life overlap lattice, radial spoke wheel, spiral petal pattern, broken ring glyph pattern, straight guide baseline, and simple ring baseline.
+- Source-only 40 kHz drive: no direct 80 kHz drive, no direct 120 kHz drive, and no target-frequency injection.
+- Matched controls for each discovery geometry: randomized positions, same radial distribution with shuffled angles, ring-only equivalent, phase-shuffled source signs, missing satellites, shortened/cropped geometry, linear no-nonlinearity, generated-path suppression, phase-mismatched 120 kHz, and sensor artifact control.
+
+Standalone result:
+
+- Eight discovery geometries and 80 matched controls were evaluated.
+- No `acoustic_crop_geometry_candidate` promoted and no near miss appeared. Aggregate label: `not_promoted`; decision: `no_hardware_build_readiness`.
+- Best strict row was `g006 broken_ring_glyph_pattern`, with 80 kHz lock `0.992185`, 120 kHz lock `0.903426`, raw pre-readout 120 kHz purity `4.25047e-8`, distributed coherent growth `0.401313`, object/reference gain `0.734915`, and max control leakage `1.0`.
+- Controls did not stay dead: 31 matched controls leaked. Strongest explicit leak was `g001_missing_satellite_nodes` with leakage score `1.0`.
+- Dominant failure mode was `raw_pre_readout_120khz_purity_below_0.6`; five discovery rows failed first on raw purity and three failed first on 120 kHz phase lock.
+- Current interpretation: this first crop-inspired 2D graph pass does not rescue the acoustic route. The diagrams are diagnostic artifacts only; continuation should redesign the geometry and require strict matched-control defeat before any stronger claim.
+
 ## Recommendation
 
 Do not promote to `geometry369` yet.
@@ -1221,8 +1257,9 @@ Next options:
 
 1. Retime or reshape the compact acoustic source-only guide before hardware; rerun `acoustic_412_bench_robustness_validator.py --run` and require the matched short-guide control to stay dead.
 2. Pause direct b007 hardware build until the robustness validator returns `acoustic_bench_robust_candidate` or a clearly justified near miss.
-3. Pause the current electrical topology behind the acoustic branch; only continue electrical work through a different topology, independent readout, or more physical nonlinear magnetic-line model that can beat its matched witness shadow before extraction and preserve tap-level coherence.
-4. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
-5. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
-6. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
-7. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.
+3. Treat crop-inspired 2D layouts as failed in this first graph model; only continue with a redesigned geometry if it explicitly targets raw 120 kHz purity, coherent growth, and matched-control leakage.
+4. Pause the current electrical topology behind the acoustic branch; only continue electrical work through a different topology, independent readout, or more physical nonlinear magnetic-line model that can beat its matched witness shadow before extraction and preserve tap-level coherence.
+5. Run the expanded `harmonic_bridge_412_detuning_refine --quick --sweeps` grid when runtime is acceptable.
+6. Treat the entire f->2f->3f family as first-class until 369 beats it under normalized budget scoring.
+7. If staying on 369, use either a true PLL or a more physical limiter redesign; predictive timing alone did not clear jump/CV gates.
+8. Add a geometry/evolve mode only after a 4x-stable 3 -> 6 -> 9 seed beats non-369 controls under the same accounting.
